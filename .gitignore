@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.wrangler/
+coverage/
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+*.xlsx
+*.xls
+*.xlsm
+*.log
+*.tsbuildinfo

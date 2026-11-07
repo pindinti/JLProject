@@ -1,0 +1,57 @@
+:root {
+  color: #172b3a;
+  background: #f4f7f9;
+  font-family: Arial, Helvetica, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.application-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.application-card {
+  width: min(100%, 38rem);
+  border: 1px solid #cbd6de;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  box-shadow: 0 0.75rem 2rem rgb(23 50 77 / 12%);
+  padding: 2rem;
+}
+
+.application-brand {
+  margin: 0;
+  color: #17324d;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0.75rem 0;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.application-status {
+  margin: 0;
+  color: #476170;
+}

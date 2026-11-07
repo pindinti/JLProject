@@ -1,0 +1,73 @@
+# 04 — Gantt User Experience and Visualization
+
+## Proposed navigation
+
+- **Home:** searchable/filterable product portfolio and entry to consolidated Gantt.
+- **Product view:** product name, active revision/scenario, `pt-BR` actions for Import, Export, Compare, Revisions, New Scenario; target date panel.
+- **Detailed Gantt:** discipline → stage → activity expandable tree with date columns and timeline.
+- **Portfolio Gantt:** one logical row per product, including all stage bars even if they overlap.
+- **Activity editor:** side drawer or modal with dates, kind, notes, dependencies, and audit history; changing a date requires a reason.
+- **Impact preview:** compare before/after date changes, affected activities, audit reason, and threatened goals before commit.
+
+## Detailed Gantt within a product
+
+- Header offers day/week/month zoom, date navigation, `Hoje`, filters, and legend, all labeled in `pt-BR`.
+- Discipline and stage rows expand/collapse; individual activities appear underneath.
+- A stage bar represents aggregate `MIN(child start_date)` → `MAX(child end_date)` in the selected revision; activities may overlap.
+- Activity bars reflect actual civil dates, not fabricated sequential spans from the source worksheet order.
+- Optional dependency connectors can be shown or hidden. Selecting one bar highlights immediate predecessor/successor links; avoid noisy default views.
+- Left table can scroll alongside the timeline while retaining visible task names, start, end, duration, kind, and compared-revision differences.
+- Clicking opens details. Start with safe form-based editing before introducing drag-to-move or resize interactions.
+
+## Consolidated Gantt across the portfolio
+
+**Core invariant: exactly one logical row per product, with a dynamic number of inner lanes when time intervals overlap.** A fixed-height row must never hide one of its overlapping stage bars.
+
+Conceptual layout (all positions are calendar-based):
+
+```text
+                  NOV       DEC       JAN       FEB
+Torre A  ┌ ARQ·EC ────┐ ┌ ARQ·EP ─────┐
+         └ PAI·EC ─────────────┐
+             └ LUM·EP ───────────────┐
+Torre B  ┌ ARQ·AP ───────────────────────┐
+         └ PAI·EP ─────┐ ┌ GAR·AP ───┐
+Torre C  ┌ ARQ·PL ───────────────┐
+```
+
+- For each product, load activities from its selected version, then aggregate by product + discipline + stage, producing **one interval per stage**.
+- Pack overlapping intervals into non-overlapping *visual* lanes using an interval-partitioning algorithm. Preserve all original start/end dates; visual placement must never change schedule values.
+- Default display label: `ARQ · EP`, `PAI · EC`, `LUM · AP`; accessible descriptions and tooltips provide the complete names.
+- Switch between **color by discipline** and **color by stage**, with consistent palettes. The `EC` stage uses the same stage color in any discipline; discipline coloring follows each discipline's identity.
+- Clicking a bar opens the corresponding product/stage in the detailed Gantt.
+- Support filtering disciplines/products, zoom, collapsible details, and navigation to a selected date.
+- In comparisons, render a ghost/outline of the old position, displacement in days, and clear source/destination revision labels.
+
+## Target dates on Gantt charts
+
+- Each target has name, civil date, and optional color; quantity is unlimited.
+- **Product Gantt:** a named vertical marker crosses the product's schedule area on the target date.
+- **Portfolio Gantt:** a product-specific marker crosses **only that product's logical row**, with a readable tooltip. Never draw the targets of Torre A over Torre B.
+- At dense zoom scales, prevent overlapping target captions without hiding database records.
+- Targets do not move automatically when activities shift. Show alerts when relevant activities exceed their deadlines.
+- Portfolio-wide markers across all products are a future option; never assume that the five source goals are global.
+
+## Accessibility and layout
+
+- Desktop-first, synchronized vertical scrolling between pinned left table and timeline, and sticky time headers.
+- Brazilian Portuguese (`pt-BR`) display, `DD/MM/YYYY` dates, multiple zoom levels, and local business terminology.
+- Use icons/labels in addition to color to indicate risk, comparisons, and status.
+- Provide keyboard navigation, adequate contrast, readable tooltips, and empty/loading/error states.
+- Do not require paid Gantt libraries or licenses incompatible with corporate usage or free hosting. Evaluate license, interval overlaps, custom portfolio lanes, performance, and flexibility before choosing a library.
+
+## Dependency editor UX
+
+When editing a stage or activity, provide a section titled **`Depende de`**:
+
+1. Searchable picker of other stages/tasks **within the same product**, grouped by discipline and stage.
+2. Multiple predecessor links for a single successor.
+3. Each link has its own type (`TI` by default; advanced `II`, `TT`, `IT`) and optional lag.
+4. Immediate feedback on cycles and on constraints conflicting with existing dates.
+5. Preview required date shifts before persisting the new link.
+
+Example: `Torre A / Arquitetura / EP / Validação` depends on `Torre A / Paisagismo / EC / Análise`.
