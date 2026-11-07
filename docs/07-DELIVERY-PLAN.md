@@ -16,6 +16,8 @@
 
 **Acceptance:** viewer cannot edit, editor cannot manage members, session without membership cannot read data, two accounts can work securely within one workspace, visible UI texts are Portuguese.
 
+Phase 1B.1 implements the hierarchy schema and secure Worker API. Phase 1B.2 adds a compact schedule hierarchy editor using that API and a read-only stage-definition catalog endpoint. Activity dates remain immutable after creation until a dedicated audited operation is approved. Targets, importer, dependencies, revisions, and Gantt views remain later reviewable steps.
+
 ## Phase 2 — Excel importer and baseline R00
 
 **Goal:** `.xlsx` selection, mapping/preview, and import of activities and targets from Multi 05 Beach; immutable `R00`. **No dependencies created.**

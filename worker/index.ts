@@ -1,6 +1,65 @@
-const healthPath = "/api/health";
+import {
+  type WorkerEnvironment,
+  verifyDatabaseConnectivity
+} from "./database";
+import { verifyIdentity, type Identity } from "./auth";
+import { authorizeWorkspace, type MembershipRepository } from "./authorization";
+import { createMembershipRepository } from "./membership-repository";
+import { createMemberAdminRepository, type MemberAdminRepository } from "./member-admin";
+import type { WorkspaceRole } from "./authorization";
+import { handleProductRequest, isProductRoute, type ProductRepositoryFactory } from "./product-api";
+import { createProductRepository } from "./products";
+import { handleScheduleRequest, isScheduleRoute, type ScheduleRepositoryFactory } from "./schedule-api";
+import { createScheduleRepository } from "./schedule-repository";
 
-export function handleRequest(request: Request): Response {
+const healthPath = "/api/health";
+const databaseConnectivityPath = "/api/internal/database-connectivity";
+const sessionPath = "/api/auth/session";
+const workspaceMembershipPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/membership$/i;
+const workspacesPath = "/api/workspaces";
+const membersPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships$/i;
+const memberPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships\/([0-9a-f-]{36})$/i;
+const stageCatalogPath = /^\/api\/workspaces\/([^/]+)\/stage-definitions$/;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type IdentityVerifier = (request: Request, environment: WorkerEnvironment) => Promise<Identity | null>;
+type MembershipRepositoryFactory = (environment: WorkerEnvironment) => MembershipRepository;
+type MemberAdminRepositoryFactory = (environment: WorkerEnvironment) => MemberAdminRepository;
+
+function privateResponse(body: Record<string, unknown>, status: number): Response {
+  return Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" }
+  });
+}
+
+async function parseMembershipChange(request: Request): Promise<{ role: WorkspaceRole } | { active: boolean } | null> {
+  if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) return null;
+  const body = await request.text();
+  if (body.length > 512) return null;
+  let value: unknown;
+  try { value = JSON.parse(body); } catch { return null; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const fields = Object.keys(value);
+  if (fields.length !== 1) return null;
+  if (fields[0] === "role" && ["admin", "editor", "viewer"].includes((value as { role?: string }).role ?? "")) {
+    return { role: (value as { role: WorkspaceRole }).role };
+  }
+  if (fields[0] === "active" && typeof (value as { active?: unknown }).active === "boolean") {
+    return { active: (value as { active: boolean }).active };
+  }
+  return null;
+}
+
+export async function handleRequest(
+  request: Request,
+  environment: WorkerEnvironment = {},
+  identityVerifier: IdentityVerifier = verifyIdentity,
+  membershipRepositoryFactory: MembershipRepositoryFactory = createMembershipRepository,
+  memberAdminRepositoryFactory: MemberAdminRepositoryFactory = createMemberAdminRepository,
+  productRepositoryFactory: ProductRepositoryFactory = createProductRepository,
+  scheduleRepositoryFactory: ScheduleRepositoryFactory = createScheduleRepository
+): Promise<Response> {
   const url = new URL(request.url);
 
   if (request.method === "GET" && url.pathname === healthPath) {
@@ -14,11 +73,137 @@ export function handleRequest(request: Request): Response {
     );
   }
 
+  const workspaceMatch = url.pathname.match(workspaceMembershipPath);
+  const membersMatch = url.pathname.match(membersPath);
+  const memberMatch = url.pathname.match(memberPath);
+  const productRoute = isProductRoute(url.pathname);
+  const scheduleRoute = isScheduleRoute(url.pathname);
+  const stageCatalogMatch = url.pathname.match(stageCatalogPath);
+  const protectedRoute = request.method === "GET" &&
+    (url.pathname === sessionPath || url.pathname === workspacesPath || workspaceMatch || membersMatch) ||
+    request.method === "PATCH" && !!memberMatch || productRoute || scheduleRoute || !!stageCatalogMatch;
+  if (protectedRoute) {
+    const origin = request.headers.get("Origin");
+    if (origin && origin !== url.origin) {
+      return privateResponse({ error: "Origem não permitida." }, 403);
+    }
+    if (!environment.NEON_AUTH_BASE_URL) {
+      return privateResponse({ error: "Serviço indisponível." }, 503);
+    }
+
+    let identity: Identity | null;
+    try {
+      identity = await identityVerifier(request, environment);
+    } catch {
+      return privateResponse({ error: "Serviço indisponível." }, 503);
+    }
+    if (!identity) {
+      return privateResponse({ error: "Sessão inválida ou expirada." }, 401);
+    }
+
+    try {
+      const repository = membershipRepositoryFactory(environment);
+      if (url.pathname === sessionPath) {
+        if (!(await repository.hasAnyActiveMembership(identity.subject))) {
+          return privateResponse({ error: "Acesso pendente." }, 403);
+        }
+        return privateResponse({ status: "authorized" }, 200);
+      }
+
+      if (url.pathname === workspacesPath) {
+        if (!(await repository.hasAnyActiveMembership(identity.subject))) {
+          return privateResponse({ error: "Acesso não autorizado." }, 403);
+        }
+        const workspaces = await memberAdminRepositoryFactory(environment).listOwnWorkspaces(identity.subject);
+        return privateResponse({ workspaces }, 200);
+      }
+
+      if (productRoute) {
+        return await handleProductRequest(request, identity, repository, environment, productRepositoryFactory);
+      }
+
+      if (stageCatalogMatch) {
+        if (!uuidPattern.test(stageCatalogMatch[1])) return privateResponse({ error: "Identificador inválido." }, 400);
+        const membership = await authorizeWorkspace(identity, stageCatalogMatch[1], "read", repository);
+        if (!membership) return privateResponse({ error: "Acesso não autorizado." }, 403);
+        if (request.method !== "GET") return privateResponse({ error: "Método não permitido." }, 405);
+        const stageDefinitions = await scheduleRepositoryFactory(environment).listStageDefinitions(membership.workspaceId);
+        return privateResponse({ stageDefinitions }, 200);
+      }
+
+      if (scheduleRoute) {
+        return await handleScheduleRequest(request, identity, repository, environment, scheduleRepositoryFactory);
+      }
+
+      if (membersMatch || memberMatch) {
+        const workspaceId = (membersMatch ?? memberMatch)![1];
+        if (!uuidPattern.test(workspaceId) || (memberMatch && !uuidPattern.test(memberMatch[2]))) {
+          return privateResponse({ error: "Dados inválidos." }, 400);
+        }
+        const membership = await authorizeWorkspace(identity, workspaceId, "manage", repository);
+        if (!membership) return privateResponse({ error: "Acesso não autorizado." }, 403);
+        const adminRepository = memberAdminRepositoryFactory(environment);
+        if (request.method === "GET") {
+          const memberships = await adminRepository.listMembers(identity.subject, membership.workspaceId);
+          return privateResponse({ memberships }, 200);
+        }
+        const change = await parseMembershipChange(request);
+        if (!change) return privateResponse({ error: "Dados inválidos." }, 400);
+        const result = await adminRepository.updateMember(
+          identity.subject, membership.workspaceId, memberMatch![2].toLowerCase(), change
+        );
+        if (result === "denied") return privateResponse({ error: "Acesso não autorizado." }, 403);
+        if (result === "not_found") return privateResponse({ error: "Não encontrado." }, 404);
+        if (result === "last_admin") return privateResponse({ error: "É necessário manter um administrador ativo." }, 409);
+        if (result !== "updated") return privateResponse({ error: "Dados inválidos." }, 400);
+        return privateResponse({ status: "updated" }, 200);
+      }
+
+      const membership = await authorizeWorkspace(identity, workspaceMatch![1], "read", repository);
+      if (!membership) {
+        return privateResponse({ error: "Acesso não autorizado." }, 403);
+      }
+      return privateResponse({ workspaceId: membership.workspaceId, role: membership.role }, 200);
+    } catch {
+      return privateResponse({ error: "Serviço indisponível." }, 503);
+    }
+  }
+
+  if (
+    request.method === "GET" &&
+    url.pathname === databaseConnectivityPath &&
+    environment.JLPROJECT_ENV === "development"
+  ) {
+    try {
+      const isConnected = await verifyDatabaseConnectivity(environment);
+
+      return Response.json(
+        { status: isConnected ? "ok" : "unavailable" },
+        {
+          status: isConnected ? 200 : 503,
+          headers: {
+            "Cache-Control": "no-store"
+          }
+        }
+      );
+    } catch {
+      return Response.json(
+        { status: "unavailable" },
+        {
+          status: 503,
+          headers: {
+            "Cache-Control": "no-store"
+          }
+        }
+      );
+    }
+  }
+
   return Response.json({ error: "Não encontrado" }, { status: 404 });
 }
 
 export default {
-  fetch(request: Request): Response {
-    return handleRequest(request);
+  fetch(request: Request, environment: WorkerEnvironment): Promise<Response> {
+    return handleRequest(request, environment);
   }
 };

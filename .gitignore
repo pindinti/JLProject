@@ -8,8 +8,10 @@ coverage/
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+.neon
 *.xlsx
 *.xls
 *.xlsm
 *.log
 *.tsbuildinfo
+db/*.local.sql

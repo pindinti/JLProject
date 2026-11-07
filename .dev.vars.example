@@ -1,2 +1,5 @@
-# This file intentionally contains no secrets.
-# Copy to .dev.vars only when a later approved Worker-only configuration needs it.
+# Development-only Worker configuration. Copy this file to .dev.vars.
+# Keep the real value local; never commit it or expose it to the browser.
+DATABASE_URL=
+JLPROJECT_ENV=development
+NEON_AUTH_BASE_URL=

@@ -52,6 +52,236 @@ h1 {
 }
 
 .application-status {
-  margin: 0;
+  margin: 0 0 1.5rem;
   color: #476170;
+}
+
+h2 {
+  margin: 0 0 1rem;
+  font-size: 1.35rem;
+}
+
+form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+label {
+  font-weight: 600;
+}
+
+input {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid #8298a7;
+  border-radius: 0.35rem;
+  padding: 0.55rem 0.75rem;
+}
+
+input:focus-visible,
+button:focus-visible {
+  outline: 3px solid #196ba5;
+  outline-offset: 2px;
+}
+
+button {
+  min-height: 2.75rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: #173f64;
+  color: #fff;
+  cursor: pointer;
+  padding: 0.55rem 0.85rem;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+form button {
+  margin-top: 0.7rem;
+}
+
+.secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.secondary-actions button,
+.back-button {
+  background: transparent;
+  color: #173f64;
+  text-decoration: underline;
+}
+
+.back-button {
+  margin-top: 0.7rem;
+}
+
+.feedback {
+  border-left: 4px solid #174d75;
+  background: #edf5fa;
+  padding: 0.75rem;
+  margin: 1rem 0 0;
+}
+
+.application-card:has(.administration),
+.application-card:has(.products) {
+  width: min(100%, 60rem);
+}
+
+.application-card:has(.schedule-editor) {
+  width: min(100%, 72rem);
+}
+
+.schedule-editor {
+  min-width: 0;
+}
+
+.schedule-toolbar,
+.hierarchy-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.schedule-toolbar {
+  margin: 1rem 0;
+}
+
+.hierarchy-list {
+  display: grid;
+  gap: 0.7rem;
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.hierarchy-discipline,
+.hierarchy-stage {
+  border: 1px solid #cbd6de;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.hierarchy-children {
+  border-left: 3px solid #cbd6de;
+  margin: 0.75rem 0 0 0.5rem;
+  padding-left: 0.85rem;
+}
+
+.hierarchy-row > span {
+  overflow-wrap: anywhere;
+}
+
+.hierarchy-row button[aria-expanded] {
+  text-align: left;
+}
+
+.color-chip {
+  display: inline-block;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex: 0 0 auto;
+  border: 1px solid #8298a7;
+  border-radius: 0.25rem;
+}
+
+.hierarchy-activity {
+  border-bottom: 1px solid #dce5eb;
+  padding: 0.5rem 0;
+}
+
+.hierarchy-form {
+  border-top: 2px solid #cbd6de;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+
+.hierarchy-form textarea,
+.hierarchy-form select {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid #8298a7;
+  border-radius: 0.35rem;
+  padding: 0.55rem 0.75rem;
+}
+
+.product-list {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+}
+
+.product-link {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 1rem;
+  text-align: left;
+}
+
+.product-details,
+.product-form {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1.5rem;
+}
+
+.product-form textarea {
+  width: 100%;
+  min-height: 6rem;
+  border: 1px solid #8298a7;
+  border-radius: 0.35rem;
+  padding: 0.55rem 0.75rem;
+}
+
+.product-details dd {
+  margin: 0 0 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.member-list {
+  display: grid;
+  gap: 0.75rem;
+  list-style: none;
+  padding: 0;
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 2fr) minmax(9rem, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid #cbd6de;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.member-identity,
+.member-row label {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.member-identity span {
+  overflow-wrap: anywhere;
+}
+
+.member-row select {
+  min-height: 2.75rem;
+  border: 1px solid #8298a7;
+  border-radius: 0.35rem;
+  background: #fff;
+  padding: 0.4rem;
+}
+
+@media (max-width: 46rem) {
+  .member-row { grid-template-columns: 1fr; }
 }

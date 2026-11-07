@@ -1,0 +1,26 @@
+-- Manual development-only bootstrap. Never run against production.
+-- Replace the UUID and workspace name after verifying the identity in Neon Auth.
+-- An unverified or missing identity, or an existing workspace, inserts zero rows.
+-- Save a private copy as UTF-8 without a byte-order mark for Neon's embedded psql.
+BEGIN;
+
+LOCK TABLE public.workspaces IN EXCLUSIVE MODE;
+
+WITH selected_user AS (
+  SELECT id
+  FROM neon_auth."user"
+  WHERE id = '<verified-auth-user-uuid>'::uuid
+    AND "emailVerified" = true
+), new_workspace AS (
+  INSERT INTO public.workspaces (name)
+  SELECT '<workspace-name>'
+  FROM selected_user
+  WHERE NOT EXISTS (SELECT 1 FROM public.workspaces)
+  RETURNING id
+)
+INSERT INTO public.workspace_memberships (workspace_id, auth_user_id, role, active)
+SELECT new_workspace.id, selected_user.id, 'admin', true
+FROM new_workspace CROSS JOIN selected_user
+RETURNING workspace_id, role;
+
+COMMIT;

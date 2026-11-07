@@ -43,6 +43,20 @@ Workspace
 
 The above is a **conceptual sketch**; PostgreSQL constraints, foreign keys, indexes, tenancy isolation, and performance choices remain to be designed.
 
+## Phase 0C.2A authorization schema
+
+`db/migrations/0001_workspace_authorization.sql` implements only `public.workspaces` and `public.workspace_memberships` on the isolated development branch. Both have UUID primary keys and UTC-capable creation timestamps. Membership has a foreign key to the workspace and to `neon_auth."user"`, one row per workspace/user pair, a checked `admin`/`editor`/`viewer` role, and an inactive default. A partial index supports active-membership lookup by authenticated user and workspace. Foreign keys restrict deletion so identity or workspace removal cannot silently orphan authorization records. There are no business-data tables in this phase.
+
+## Phase 1A product schema
+
+`db/migrations/0003_products.sql` introduces a stable product UUID and workspace foreign key. Names are required, trimmed, and unique per workspace without regard to case, including archived products; archived names cannot be silently reused. Description is optional and limited to 2,000 characters. `active` records archive state without deleting identity. `created_by` and `updated_by` reference managed user identities; UTC-capable creation and update timestamps and a monotonically increasing `version` support attribution and stale-edit rejection. A workspace/status/name index supports the product list. Future disciplines and schedule versions can reference the product UUID; `code` and `active_version_id` from the conceptual sketch are deferred until their semantics are approved.
+
+## Phase 1B.1 schedule hierarchy
+
+`db/migrations/0004_schedule_hierarchy.sql` adds `product_disciplines`, workspace-level `stage_definitions`, `discipline_stages`, and `stage_activities`. Each row has an opaque stable UUID. Composite foreign keys bind every child to the same workspace/product ancestry; deletes are restricted. Names and codes are configurable, with no seeded discipline or stage list. A shared stage definition supplies one code/color pair per workspace; a discipline stage supplies its own display name and order. The same code cannot acquire a different color in another discipline. `PL` is not hard-constrained to Architecture.
+
+Activities have optional `source_external_id` reserved for import, with uniqueness within a product when present. It is not accepted from the Phase 1B.1 public API. Planned dates are PostgreSQL `date` values and may be both absent for a draft activity, or both valid with start no later than end. Stage dates are never stored: reads derive the minimum child start and maximum child end. Existing activity dates are protected by a database trigger that rejects updates until an audited date-edit operation is implemented. Metadata updates use a version token and cannot include date fields. The future immutable `R00` and scenario/version tables can reference the stable activity IDs without replacing them.
+
 ## Data integrity invariants
 
 1. Each product belongs to exactly one workspace; requests are scoped to an actively authorized membership.
