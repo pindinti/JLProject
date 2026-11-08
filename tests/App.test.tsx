@@ -162,6 +162,30 @@ describe("products UI", () => {
     expect(screen.queryByRole("button", { name: "Novo produto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Salvar" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Arquivar produto" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Importar planilha" })).not.toBeInTheDocument();
+  });
+
+  it("opens the preview-only import entry for editors", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Importar planilha" }));
+    expect(await screen.findByRole("heading", { name: "Importar planilha" })).toBeInTheDocument();
+    expect(screen.getByText("As predecessoras da planilha serão ignoradas.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirmar importação" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the import picker mounted when the window regains focus and restores its route", async () => {
+    const first = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Importar planilha" }));
+    const input = await screen.findByLabelText("Selecionar arquivo XLSX");
+    fireEvent.focus(window);
+    await waitFor(() => expect(auth.getSession).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText("Selecionar arquivo XLSX")).toBe(input);
+    expect(window.location.pathname).toBe("/produtos/importar");
+    first.unmount();
+    render(<App />);
+    expect(await screen.findByLabelText("Selecionar arquivo XLSX")).toBeInTheDocument();
   });
 
   it("shows loading, error, retry, and empty states", async () => {

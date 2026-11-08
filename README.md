@@ -2,7 +2,7 @@
 
 **Product and discipline schedule management** — English-language reference documentation for incremental development with Codex in VS Code.
 
-- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1B.2.
+- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1C.2.
 - **Application UI locale:** Brazilian Portuguese (`pt-BR`) only.
 - **Documentation/prompt language:** English only.
 - **Initial users:** the product-development team of a Brazilian company.
@@ -220,3 +220,34 @@ From Products, open a product and choose **Abrir cronograma**. The editor shows 
 `GET /api/workspaces/:workspaceId/stage-definitions` is a read-only, workspace-scoped catalog for the stage selector. It uses the same Worker JWT and active-membership boundary as the hierarchy API. Stage creation can reuse a catalog entry or create a new workspace code/color through the existing stage-create endpoint. No new migration or seeded catalog is required for this phase.
 
 A signed-in development administrator verified the UI with synthetic data: creating a discipline, stage, and dated activity, then reloading and seeing the hierarchy and Brazilian-formatted dates persist. This browser check supplements the automated API and component tests; viewer restrictions and concurrency conflicts were verified through automated tests.
+
+## Phase 1C.1 local XLSX preview
+
+Admin and editor members can open **Importar planilha** from Products and select a reference-format `.xlsx` file. The browser parses only `Cronograma Produto` and `Metas e Premissas`; raw workbook bytes are not sent to the Worker, stored in the database, or logged. The screen displays source counts, disciplines/stages/activities, original civil dates, official targets, and validation issues. Phase 1C.2 adds an explicit confirmation and a structured import request; no data is saved merely by selecting a file. The file can be replaced or canceled. Do not place the confidential reference workbook in this repository.
+
+The preview uses `/produtos/importar` so it can survive page reloads. Window-focus session revalidation keeps the active screen mounted while validating; this is needed because closing the native file picker emits a focus event before the file selection is handled. A failed session check still changes the view through the existing authentication boundary.
+
+The development administrator selected the confidential reference workbook locally and reported the expected 46 source records, 41 activities, five targets, seven disciplines, zero dependencies, and 21/10/2026–17/01/2028 source span. The parser reported no errors and three target-reconciliation warnings at source rows 15, 24, and 50. Phase 1C.2 proposes unique date-only matches for review; it never silently accepts them.
+
+The lazy-loaded reader is `read-excel-file` 9.3.14 (MIT), with `fflate` 0.8.3 for archive preflight. The browser rejects files above 2 MB and archives with more than 100 entries, more than 8 MB in one entry, or more than 16 MB of declared expanded data. Source data is limited to rows 5–50; official targets to rows 4–8. The parser ignores predecessor, duration, and Gantt presentation columns entirely. Five `Meta` source rows are excluded from operational activities and reconciled against official targets. Ambiguous cases block persistence.
+
+## Phase 1C.2 structured import
+
+The admin/editor preview requires confirmation for each unique date-only `Meta` match, then shows a final confirmation before creating a **new** product. It sends normalized JSON to `POST /api/workspaces/:workspaceId/imports`; the Worker repeats all structural, date, count, ordering, and mapping checks and never accepts predecessor/dependency fields. The response contains the created product and immutable R00 identifiers. A retry with the same idempotency key returns the original result; the same source submitted under another key is rejected. Existing products are not overwritten.
+
+`db/migrations/0005_initial_import.sql` is additive and was applied once after explicit approval to the verified JLProject Neon `development` branch. It adds four tables and a single-call PostgreSQL import function. `db/verification/phase1c2-development.sql` is a rollback-only synthetic integrity check; it passed after migration, and a read-only count found zero rows in all four new tables. Do not run the migration again on this branch. Verify the project/branch before any database command:
+
+```powershell
+npx neon@latest status --output json --no-analytics
+```
+
+For a fresh development branch only, obtain separate migration approval, then apply it once and run the rollback-only check:
+
+```powershell
+npx neon@latest psql development --project-id rapid-mud-63974868 -- -v ON_ERROR_STOP=1 -f db/migrations/0005_initial_import.sql
+npx neon@latest psql development --project-id rapid-mud-63974868 -- -v ON_ERROR_STOP=1 -f db/verification/phase1c2-development.sql
+```
+
+The actual confidential workbook must **not** be imported during development verification or without separate explicit authorization. Use only synthetic data for integration checks. The R00 snapshot does not implement later revisions, scheduling, or date-edit audit events.
+
+After migration, a development administrator ran two simultaneous synthetic requests against the local Worker: one returned `201`, the other an idempotent `200`, both with `R00`. The authorized hierarchy read returned seven disciplines, 21 stages, and 41 activities. A read-only development query confirmed one import batch, one R00, five targets, 51 provenance references, an empty R00 dependency array, and distinct official/operational target dates. The hierarchy API does not yet return dependencies or targets; those checks used the database. An unauthenticated import POST returned `401`. The confidential workbook was not submitted.

@@ -59,6 +59,10 @@ Activities have optional `source_external_id` reserved for import, with uniquene
 
 ## Data integrity invariants
 
+### Phase 1C.2 initial import schema
+
+`db/migrations/0005_initial_import.sql` adds `business_targets`, `import_batches`, `import_source_rows`, and `initial_schedule_revisions`. Targets are product/workspace-scoped and retain both the official business date and optional operational date. Source references link each of the 46 source records and each of the five official target rows to its persisted activity or target. Import batches have workspace-scoped unique idempotency keys and normalized-source hashes. A product can have one initial import batch and one R00 baseline. The R00 JSON snapshot includes stable database IDs, source order/IDs, activity civil dates, target dates, actual shared stage colors, and an empty dependency array. A database trigger rejects R00 updates and deletes. This is the initial baseline only; the broader schedule-version and audit model remains future work. The additive migration was applied to the verified development branch after explicit approval.
+
 1. Each product belongs to exactly one workspace; requests are scoped to an actively authorized membership.
 2. An activity belongs to one stage, which belongs to a product discipline.
 3. Each schedule version belongs to one product; its dates, dependencies, and targets cannot reference another product.

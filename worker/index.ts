@@ -11,6 +11,8 @@ import { handleProductRequest, isProductRoute, type ProductRepositoryFactory } f
 import { createProductRepository } from "./products";
 import { handleScheduleRequest, isScheduleRoute, type ScheduleRepositoryFactory } from "./schedule-api";
 import { createScheduleRepository } from "./schedule-repository";
+import { handleImportRequest, isImportRoute, type ImportRepositoryFactory } from "./import-api";
+import { createImportRepository } from "./import-repository";
 
 const healthPath = "/api/health";
 const databaseConnectivityPath = "/api/internal/database-connectivity";
@@ -58,7 +60,8 @@ export async function handleRequest(
   membershipRepositoryFactory: MembershipRepositoryFactory = createMembershipRepository,
   memberAdminRepositoryFactory: MemberAdminRepositoryFactory = createMemberAdminRepository,
   productRepositoryFactory: ProductRepositoryFactory = createProductRepository,
-  scheduleRepositoryFactory: ScheduleRepositoryFactory = createScheduleRepository
+  scheduleRepositoryFactory: ScheduleRepositoryFactory = createScheduleRepository,
+  importRepositoryFactory: ImportRepositoryFactory = createImportRepository
 ): Promise<Response> {
   const url = new URL(request.url);
 
@@ -78,10 +81,11 @@ export async function handleRequest(
   const memberMatch = url.pathname.match(memberPath);
   const productRoute = isProductRoute(url.pathname);
   const scheduleRoute = isScheduleRoute(url.pathname);
+  const importRoute = isImportRoute(url.pathname);
   const stageCatalogMatch = url.pathname.match(stageCatalogPath);
   const protectedRoute = request.method === "GET" &&
     (url.pathname === sessionPath || url.pathname === workspacesPath || workspaceMatch || membersMatch) ||
-    request.method === "PATCH" && !!memberMatch || productRoute || scheduleRoute || !!stageCatalogMatch;
+    request.method === "PATCH" && !!memberMatch || productRoute || scheduleRoute || importRoute || !!stageCatalogMatch;
   if (protectedRoute) {
     const origin = request.headers.get("Origin");
     if (origin && origin !== url.origin) {
@@ -120,6 +124,10 @@ export async function handleRequest(
 
       if (productRoute) {
         return await handleProductRequest(request, identity, repository, environment, productRepositoryFactory);
+      }
+
+      if (importRoute) {
+        return await handleImportRequest(request, identity, repository, environment, importRepositoryFactory);
       }
 
       if (stageCatalogMatch) {

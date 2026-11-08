@@ -29,9 +29,9 @@ export function App() {
   );
   const sessionRequest = useRef(0);
 
-  const refreshSession = useCallback(async () => {
+  const refreshSession = useCallback(async (showLoading = true) => {
     const requestNumber = ++sessionRequest.current;
-    setView("loading");
+    if (showLoading) setView("loading");
     setMessage("");
     if (!authClient) {
       setMessage(messages.configurationError);
@@ -100,7 +100,7 @@ export function App() {
     let active = true;
     const requestVersion = sessionRequest;
     queueMicrotask(() => { if (active) void refreshSession(); });
-    const handleFocus = () => void refreshSession();
+    const handleFocus = () => void refreshSession(false);
     window.addEventListener("focus", handleFocus);
     return () => {
       active = false;

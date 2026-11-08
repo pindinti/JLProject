@@ -17,6 +17,8 @@
 **Acceptance:** viewer cannot edit, editor cannot manage members, session without membership cannot read data, two accounts can work securely within one workspace, visible UI texts are Portuguese.
 
 Phase 1B.1 implements the hierarchy schema and secure Worker API. Phase 1B.2 adds a compact schedule hierarchy editor using that API and a read-only stage-definition catalog endpoint. Activity dates remain immutable after creation until a dedicated audited operation is approved. Targets, importer, dependencies, revisions, and Gantt views remain later reviewable steps.
+Phase 1C.1 adds client-only XLSX parsing, validation, and preview. It does not persist targets, activities, imports, or revisions. A later reviewable phase must design a transactional, authorized persistence endpoint and immutable original baseline before imported business data can be committed.
+Phase 1C.2 supplies that reviewed structured write path, target reconciliation, and an additive initial R00 schema. It is limited to new-product imports and needs explicit approval before the development migration runs. Real confidential workbook persistence needs separate explicit approval. Gantt views, dependencies, scheduling, export, and later revisions remain separate phases.
 
 ## Phase 2 — Excel importer and baseline R00
 

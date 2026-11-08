@@ -1,7 +1,9 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, type FormEvent, useCallback, useEffect, useState } from "react";
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
 import { ScheduleEditor } from "./ScheduleEditor";
+
+const ImportPreview = lazy(() => import("./ImportPreview").then((module) => ({ default: module.ImportPreview })));
 
 interface Product {
   id: string;
@@ -28,6 +30,7 @@ export function Products({ workspace, onBack, onAccessLost }: {
   const [scheduleProductId, setScheduleProductId] = useState<string | null>(() =>
     window.location.pathname.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null
   );
+  const [showImport, setShowImport] = useState(() => window.location.pathname === "/produtos/importar");
   const canEdit = workspace.role === "admin" || workspace.role === "editor";
   const endpoint = `/api/workspaces/${workspace.id}/products`;
   const selected = products.find((product) => product.id === selectedId) ?? null;
@@ -113,6 +116,17 @@ export function Products({ workspace, onBack, onAccessLost }: {
     finally { setBusy(false); }
   }
 
+  if (showImport && canEdit) return <Suspense fallback={<p role="status">{messages.importLoading}</p>}>
+    <ImportPreview workspaceId={workspace.id} onAccessLost={onAccessLost}
+      onImported={(productId) => {
+        window.history.pushState(null, "", `/produtos/${productId}/cronograma`);
+        setScheduleProductId(productId);
+        setShowImport(false);
+        void load();
+      }}
+      onBack={() => { window.history.pushState(null, "", "/produtos"); setShowImport(false); }} />
+  </Suspense>;
+
   if (scheduleProductId) {
     const scheduleProduct = products.find((item) => item.id === scheduleProductId);
     const backToProducts = () => {
@@ -134,6 +148,10 @@ export function Products({ workspace, onBack, onAccessLost }: {
       <h2 id="products-title">{messages.products}</h2>
       <p>{workspace.name}</p>
       {canEdit && <button type="button" disabled={busy} onClick={newProduct}>{messages.newProduct}</button>}
+      {canEdit && <button type="button" disabled={busy} onClick={() => {
+        window.history.pushState(null, "", "/produtos/importar");
+        setShowImport(true);
+      }}>{messages.importTitle}</button>}
       {state === "loading" && <p role="status">{messages.productsLoading}</p>}
       {state === "error" && <div role="alert"><p>{messages.productsError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && products.length === 0 && <p>{messages.productsEmpty}</p>}
