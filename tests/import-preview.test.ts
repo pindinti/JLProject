@@ -49,6 +49,23 @@ describe("import preview parser", () => {
     expect(parseImportSheets([], "Synthetic.xlsx").issues[0].code).toBe("structure");
   });
 
+  it("classifies a reference-count mismatch as a blocking error", () => {
+    const fixture = sheets();
+    fixture[0].data.pop();
+    const result = parseImportSheets(fixture, "Synthetic.xlsx");
+    expect(result.issues).toContainEqual(expect.objectContaining({ severity: "error", code: "count" }));
+  });
+
+  it("keeps a Meta-only stage without creating an operational activity", () => {
+    const fixture = sheets();
+    fixture[0].data[49][1] = "Disciplina 1";
+    fixture[0].data[49][2] = "Lanç.";
+    const result = parseImportSheets(fixture, "Synthetic.xlsx");
+    expect(result.summary.activities).toBe(41);
+    expect(result.sourceMeta).toHaveLength(5);
+    expect(result.disciplines[0].stages.find((stage) => stage.name === "Lanç.")?.activities).toEqual([]);
+  });
+
   it("does not guess ambiguous target matches or merge distinct stage labels", () => {
     const fixture = sheets();
     fixture[1].data[4][1] = new Date(Date.UTC(2027, 0, 1));

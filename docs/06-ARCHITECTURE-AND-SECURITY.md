@@ -138,6 +138,11 @@ Apply active membership, role, and resource-scope checks to every future busines
 - The R00 snapshot and source references retain the imported civil dates and provenance. The R00 row cannot be updated or deleted. Existing activity-date update protection remains in force. This phase does not implement revision publication, audited date edits, or provider-session revocation. The previously accepted 15-minute JWT revocation window remains a residual risk. The confidential workbook is never used as a committed test fixture or automatically imported.
 - Live synthetic development verification sent two concurrent identical imports through the local Worker; they returned `201` and idempotent `200`. The protected hierarchy returned seven disciplines, 21 stages, and 41 activities. A read-only database check found one batch, one R00, five targets, 51 source references, an empty baseline dependency array, and a target with different official/operational dates. The rollback-only SQL check also exercised failure rollback, duplicate-source rejection, R00 immutability, and the existing activity-date trigger. The real workbook was not submitted.
 
+### Phase 1D.1 schedule read boundary
+
+- `GET /api/workspaces/:workspaceId/products/:productId/targets` reuses the Worker JWT verification and active workspace membership check, verifies product ownership, and queries `public.business_targets` with both workspace and product IDs. Admin, editor, and viewer roles may read; unauthenticated and inactive members remain denied. Other methods cannot mutate targets through this route.
+- The browser combines this read-only response with the authorized hierarchy in a single visible-row model for the table and Gantt. Timeline geometry uses ISO civil dates and UTC calendar arithmetic; it does not update schedule rows, calculate successors, or modify immutable R00 data. Existing metadata mutation endpoints keep their role and version checks. Authentication and the accepted bounded JWT replay risk remain as documented above.
+
 ## Access-control policy
 
 - **Admin:** members/workspace/catalogs/imports/publication/schedule edits.

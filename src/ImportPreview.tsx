@@ -65,7 +65,20 @@ export function ImportPreview({ workspaceId, onBack, onAccessLost, onImported }:
   }
 
   const submission = preview && buildImportSubmission(preview, productName, sourceFilename, idempotencyKey, confirmed);
-  const canImport = submission && validateImportSubmission(submission);
+  const canImport = Boolean(submission && validateImportSubmission(submission));
+  const pendingMatches = preview?.sourceMeta.filter((meta) => meta.matchKind !== "exact" &&
+    (meta.matchKind !== "date_suggestion" || !confirmed.has(meta.sourceId))) ?? [];
+  const unresolvedMatches = pendingMatches.filter((meta) => meta.matchKind === "unresolved").length;
+  const pendingProposals = pendingMatches.length - unresolvedMatches;
+  const blockingIssues = preview?.issues.filter((issue) => issue.severity === "error" || issue.code === "count") ?? [];
+  const invalidProductName = productName.trim().length < 1 || productName.trim().length > 200;
+  const invalidFilename = sourceFilename.length > 255 || !/\.xlsx$/i.test(sourceFilename);
+  const invalidSubmission = Boolean(preview && !blockingIssues.length && !pendingMatches.length &&
+    !invalidProductName && !invalidFilename && !canImport);
+  const visibleIssues = preview?.issues.filter((issue) => issue.code !== "target_match" ||
+    issue.severity !== "warning" || issue.sheet !== "Cronograma Produto" ||
+    !preview.sourceMeta.some((meta) => meta.sourceRow === issue.row &&
+      (meta.matchKind === "exact" || (meta.matchKind === "date_suggestion" && confirmed.has(meta.sourceId))))) ?? [];
 
   function toggleConfirmation(sourceId: string) {
     setConfirmed((previous) => {
@@ -121,27 +134,13 @@ export function ImportPreview({ workspaceId, onBack, onAccessLost, onImported }:
         <dt>{messages.importDateRange}</dt><dd>{messages.dateRange(formatCivilDate(preview.summary.firstDate), formatCivilDate(preview.summary.lastDate))}</dd>
       </dl>
       <h3>{messages.importValidation}</h3>
-      {preview.issues.length === 0 ? <p>{messages.importNoIssues}</p> : <ul>
-        {preview.issues.map((issue, index) => <li key={`${issue.sheet}-${issue.row}-${issue.code}-${index}`}>
+      {visibleIssues.length === 0 ? <p>{messages.importNoIssues}</p> : <ul>
+        {visibleIssues.map((issue, index) => <li key={`${issue.sheet}-${issue.row}-${issue.code}-${index}`}>
           {issue.severity === "error" ? messages.importErrorLabel : messages.importWarningLabel}: {issueText(issue)}
         </li>)}
       </ul>}
-      <h3>{messages.importActivities}</h3>
-      {preview.disciplines.map((discipline) => <section key={discipline.name} className="import-discipline">
-        <h4>{discipline.name}</h4>
-        {discipline.stages.map((stage) => <div key={stage.name} className="import-stage">
-          <h5>{stage.name}</h5>
-          <ul>{stage.activities.map((activity) => <li key={activity.sourceId}>
-            {activity.sourceId} · {activity.name} · {messages.dateRange(formatCivilDate(activity.plannedStart), formatCivilDate(activity.plannedEnd))}
-          </li>)}</ul>
-        </div>)}
-      </section>)}
-      <h3>{messages.importTargets}</h3>
-      <ul>{preview.targets.map((target) => <li key={target.sourceRow}>
-        {target.name} · {formatCivilDate(target.targetDate)}
-        {target.operationalDate && ` · ${messages.importOperationalDate}: ${formatCivilDate(target.operationalDate)}`}
-      </li>)}</ul>
       <h3>{messages.importReconciliation}</h3>
+      <p role="status" aria-live="polite">{messages.importPendingMatches(pendingMatches.length)}</p>
       <ul>{preview.sourceMeta.map((meta) => {
         const candidate = preview.targets.find((target) => target.sourceRow === meta.suggestedTargetRow);
         return <li key={meta.sourceId}>
@@ -154,15 +153,38 @@ export function ImportPreview({ workspaceId, onBack, onAccessLost, onImported }:
               : messages.importUnresolvedMatch}
         </li>;
       })}</ul>
+      <h3>{messages.importActivities}</h3>
+      {preview.disciplines.map((discipline) => <section key={discipline.name} className="import-discipline">
+        <h4>{discipline.name}</h4>
+        {discipline.stages.map((stage) => <div key={stage.name} className="import-stage">
+          <h5>{stage.name}</h5>
+          {stage.activities.length === 0 && <p>{messages.importNoOperationalActivities}</p>}
+          {stage.activities.length > 0 && <ul>{stage.activities.map((activity) => <li key={activity.sourceId}>
+            {activity.sourceId} · {activity.name} · {messages.dateRange(formatCivilDate(activity.plannedStart), formatCivilDate(activity.plannedEnd))}
+          </li>)}</ul>}
+        </div>)}
+      </section>)}
+      <h3>{messages.importTargets}</h3>
+      <ul>{preview.targets.map((target) => <li key={target.sourceRow}>
+        {target.name} · {formatCivilDate(target.targetDate)}
+        {target.operationalDate && ` · ${messages.importOperationalDate}: ${formatCivilDate(target.operationalDate)}`}
+      </li>)}</ul>
       {!created && <div className="import-confirmation">
-        <label htmlFor="import-product-name">{messages.productName}</label>
+        <label htmlFor="import-product-name">{messages.importProductName}</label>
         <input id="import-product-name" maxLength={200} value={productName}
           onChange={(event) => setProductName(event.target.value)} />
         <p>{messages.importNewProductNotice}</p>
+        {!canImport && <ul className="import-blockers" aria-live="polite">
+          {blockingIssues.length > 0 && <li>{messages.importBlockingErrors(blockingIssues.length)}</li>}
+          {pendingProposals > 0 && <li>{messages.importConfirmProposals(pendingProposals)}</li>}
+          {unresolvedMatches > 0 && <li>{messages.importUnresolvedMatches(unresolvedMatches)}</li>}
+          {invalidProductName && <li>{messages.importInvalidProductName}</li>}
+          {invalidFilename && <li>{messages.importInvalidFilename}</li>}
+          {invalidSubmission && <li>{messages.importInvalidSubmission}</li>}
+        </ul>}
         <button type="button" disabled={!canImport || importing} onClick={() => void confirmImport()}>
           {importing ? messages.importSaving : messages.importConfirm}
         </button>
-        {!canImport && <p>{messages.importBlocked}</p>}
       </div>}
       {importError && <p role="alert">{importError}</p>}
       {created && <div role="status" className="feedback">

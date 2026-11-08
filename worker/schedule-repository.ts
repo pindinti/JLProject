@@ -21,6 +21,7 @@ export interface ScheduleHierarchy {
   disciplines: (Discipline & { stages: (Stage & { activities: Activity[] })[] })[];
 }
 export interface StageDefinition { id: string; code: string; color: string }
+export interface BusinessTarget { id: string; name: string; targetDate: string; operationalDate: string | null; displayOrder: number }
 export type Mutation<T> = { status: "ok"; value: T } |
   { status: "not_found" | "duplicate" | "stale" | "conflict" };
 
@@ -39,6 +40,7 @@ export interface ScheduleRepository {
   createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
   updateActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, activityId: string, actorId: string, input: ActivityMetadataInput, version: number): Promise<Mutation<Activity>>;
   getHierarchy(workspaceId: string, productId: string): Promise<ScheduleHierarchy | null>;
+  listTargets(workspaceId: string, productId: string): Promise<BusinessTarget[]>;
 }
 
 const text = (value: unknown) => String(value);
@@ -302,6 +304,18 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid
         ORDER BY d.display_order, d.id, s.display_order, s.id, a.display_order, a.id`;
       return assembleHierarchy(productId, rows);
+    },
+    async listTargets(ws, productId) {
+      const rows = await sql`SELECT id::text AS id, name,
+        to_char(target_date, 'YYYY-MM-DD') AS "targetDate",
+        to_char(operational_date, 'YYYY-MM-DD') AS "operationalDate",
+        display_order AS "displayOrder"
+        FROM public.business_targets
+        WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+        ORDER BY display_order, id`;
+      return rows.map((row) => ({ id: text(row["id"]), name: text(row["name"]),
+        targetDate: text(row["targetDate"]), operationalDate: nullable(row["operationalDate"]),
+        displayOrder: Number(row["displayOrder"]) }));
     }
   };
 }

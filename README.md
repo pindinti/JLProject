@@ -2,7 +2,7 @@
 
 **Product and discipline schedule management** — English-language reference documentation for incremental development with Codex in VS Code.
 
-- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1C.2.
+- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1D.1.1.
 - **Application UI locale:** Brazilian Portuguese (`pt-BR`) only.
 - **Documentation/prompt language:** English only.
 - **Initial users:** the product-development team of a Brazilian company.
@@ -235,6 +235,10 @@ The lazy-loaded reader is `read-excel-file` 9.3.14 (MIT), with `fflate` 0.8.3 fo
 
 The admin/editor preview requires confirmation for each unique date-only `Meta` match, then shows a final confirmation before creating a **new** product. It sends normalized JSON to `POST /api/workspaces/:workspaceId/imports`; the Worker repeats all structural, date, count, ordering, and mapping checks and never accepts predecessor/dependency fields. The response contains the created product and immutable R00 identifiers. A retry with the same idempotency key returns the original result; the same source submitted under another key is rejected. Existing products are not overwritten.
 
+For the reference workbook preview, the three date-only proposals keep **Confirmar importação** disabled until each is checked under **Correspondência das metas**. This section is immediately below validation and shows the remaining count. A blank product name, source validation error, unexpected reference count, or invalid normalized structure also blocks the action with a specific pt-BR explanation. Informational warnings do not block. Reviewing the preview and checking boxes does not save data; do not press the final import button for the confidential workbook without separate authorization.
+
+The reference workbook has 20 stages containing operational activities and one stage containing only a source `Meta`. The preview retains that empty operational stage, making 21 discipline–stage combinations without turning the `Meta` into an activity. The structured import validator permits an empty stage only when a source `Meta` record belongs to it.
+
 `db/migrations/0005_initial_import.sql` is additive and was applied once after explicit approval to the verified JLProject Neon `development` branch. It adds four tables and a single-call PostgreSQL import function. `db/verification/phase1c2-development.sql` is a rollback-only synthetic integrity check; it passed after migration, and a read-only count found zero rows in all four new tables. Do not run the migration again on this branch. Verify the project/branch before any database command:
 
 ```powershell
@@ -250,4 +254,16 @@ npx neon@latest psql development --project-id rapid-mud-63974868 -- -v ON_ERROR_
 
 The actual confidential workbook must **not** be imported during development verification or without separate explicit authorization. Use only synthetic data for integration checks. The R00 snapshot does not implement later revisions, scheduling, or date-edit audit events.
 
-After migration, a development administrator ran two simultaneous synthetic requests against the local Worker: one returned `201`, the other an idempotent `200`, both with `R00`. The authorized hierarchy read returned seven disciplines, 21 stages, and 41 activities. A read-only development query confirmed one import batch, one R00, five targets, 51 provenance references, an empty R00 dependency array, and distinct official/operational target dates. The hierarchy API does not yet return dependencies or targets; those checks used the database. An unauthenticated import POST returned `401`. The confidential workbook was not submitted.
+After migration, a development administrator ran two simultaneous synthetic requests against the local Worker: one returned `201`, the other an idempotent `200`, both with `R00`. The authorized hierarchy read returned seven disciplines, 21 stages, and 41 activities. A read-only development query confirmed one import batch, one R00, five targets, 51 provenance references, an empty R00 dependency array, and distinct official/operational target dates. The hierarchy API does not return dependencies; those checks used the database. Targets are now available through a separate read-only endpoint. An unauthenticated import POST returned `401`. The confidential workbook was not submitted.
+
+## Phase 1D.1 schedule workspace
+
+Open a product in **Produtos** and choose **Abrir cronograma**. The schedule uses a full-viewport split workspace: a hierarchical table and date-aligned Gantt share one ordered visible-row model and one vertical scroll container. The divider starts at 50% and can be dragged or adjusted with the arrow keys. The timeline scrolls horizontally and offers day, week, and month zoom plus period navigation. Narrow screens switch between table and Gantt panes.
+
+The Worker now serves `GET /api/workspaces/:workspaceId/products/:productId/targets` through the existing JWT, active-membership, workspace, and product checks. It returns only the product's named target dates in display order. Targets appear as vertical markers and are not activities. No migration, target edit, or imported-data change is part of this phase.
+
+Admin and editor metadata forms open in a side panel while the schedule remains mounted. Existing activity dates remain read-only; audited date changes belong to a later phase. Viewer access remains read-only. The Gantt uses pure civil-date positioning in `domain/schedule-workspace.ts` and browser CSS; no Gantt library or scheduling engine was added.
+
+### Phase 1D.1.1 Gantt navigation
+
+The horizontal Gantt scrollbar remains visible in the workspace footer while the activity list scrolls vertically. The timeline header and chart follow that one scrollbar. A teal **Hoje** line uses the current `America/Sao_Paulo` calendar date, separate from dashed business targets. Click the timeline header or an empty chart cell to select an exact date; the selected column is highlighted and its `DD/MM/YYYY` date appears in the toolbar. Use arrow keys while the timeline header has focus to change the date, or **Limpar data selecionada** to clear it. Zoom and row expansion do not alter stored schedule dates.

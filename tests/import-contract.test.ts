@@ -10,6 +10,14 @@ describe("initial import contract", () => {
     expect(new Date(`${submission.targets[0].targetDate}T00:00:00.000Z`).getUTCDay()).toBe(0);
     expect(submission.disciplines.flatMap((discipline) => discipline.stages.flatMap((stage) =>
       stage.activities.map((activity) => activity.sourceId)))).toHaveLength(41);
+    expect(submission.disciplines[6].stages[2].activities).toEqual([]);
+  });
+
+  it("allows a Meta-only stage but rejects an unrelated empty stage", () => {
+    const submission = syntheticImportSubmission();
+    expect(validateImportSubmission(submission)).toBe(true);
+    submission.sourceMeta[0].stage = "E2";
+    expect(validateImportSubmission(submission)).toBe(false);
   });
 
   it("rejects predecessor claims, duplicate IDs, missing rows, and changed dates", () => {

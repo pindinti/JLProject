@@ -71,7 +71,7 @@ function validStage(value: unknown): value is ImportedStage {
   if (!record(value) || !keys(value, ["code", "color", "displayName", "displayOrder", "activities"])) return false;
   return label(value.code, 24) && typeof value.color === "string" && color.test(value.color) &&
     label(value.displayName, 200) && order(value.displayOrder, 50) && Array.isArray(value.activities) &&
-    value.activities.length > 0 && value.activities.length <= 41 && value.activities.every(validActivity);
+    value.activities.length <= 41 && value.activities.every(validActivity);
 }
 function validDiscipline(value: unknown): value is ImportedDiscipline {
   if (!record(value) || !keys(value, ["name", "shortCode", "color", "displayOrder", "stages"])) return false;
@@ -133,6 +133,8 @@ export function validateImportSubmission(value: unknown): value is ImportSubmiss
     for (const [stageIndex, stage] of discipline.stages.entries()) {
       const key = normalized(stage.code);
       if (stage.displayOrder !== stageIndex || stage.code !== stage.displayName || codes.has(key)) return false;
+      if (stage.activities.length === 0 && !submission.sourceMeta.some((meta) =>
+        meta.discipline === discipline.name && meta.stage === stage.code)) return false;
       codes.add(key);
       if (stageColors.has(key) && stageColors.get(key) !== stage.color) return false;
       stageColors.set(key, stage.color);

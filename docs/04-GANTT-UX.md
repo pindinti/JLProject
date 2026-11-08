@@ -11,6 +11,10 @@
 
 ## Detailed Gantt within a product
 
+Phase 1D.1 implementation: the product schedule uses a full-viewport, initially 50/50 table and Gantt with an adjustable divider, a shared vertical scroll container, persistent headers, and synchronized visible rows. Day/week/month zoom changes horizontal scale without changing civil dates. Imported targets are separate vertical markers fetched through a read-only Worker endpoint. Admin/editor metadata forms open in a contextual drawer; existing activity dates are read-only until audited date editing is implemented. Narrow screens switch between table and timeline panes. Filters, dependency connectors, target editing, and drag-based scheduling remain later work.
+
+Phase 1D.1.1 refinement: the only visible horizontal Gantt scrollbar stays in the workspace footer while table and Gantt rows use one vertical scroller. The header, body, and footer reserve matching scrollbar gutters for divider alignment. A distinct Today line uses the current `America/Sao_Paulo` civil date and updates while the workspace is open. Header or empty-grid clicks select an exact civil date, highlighted through the plotted rows and shown as `DD/MM/YYYY`; keyboard arrows change it and a control clears it. Selection does not modify schedule data.
+
 - Header offers day/week/month zoom, date navigation, `Hoje`, filters, and legend, all labeled in `pt-BR`.
 - Discipline and stage rows expand/collapse; individual activities appear underneath.
 - A stage bar represents aggregate `MIN(child start_date)` → `MAX(child end_date)` in the selected revision; activities may overlap.

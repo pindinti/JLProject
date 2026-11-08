@@ -19,9 +19,11 @@ const discipline = { id: stage.disciplineId, productId: product.id, name: "Synth
 const definitions = [{ id: "add2b76e-72b5-4a0a-b8e8-3bd095688a01", code: "EC", color: "#336699" }];
 
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }); }
-function setup(tree: { productId: string; disciplines: unknown[] } = { productId: product.id, disciplines: [discipline] }) {
+function setup(tree: { productId: string; disciplines: unknown[] } = { productId: product.id, disciplines: [discipline] },
+  targets: unknown[] = []) {
   api.fetch.mockImplementation((path: string) => Promise.resolve(path.endsWith("/hierarchy")
-    ? json({ hierarchy: tree }) : json({ stageDefinitions: definitions })));
+    ? json({ hierarchy: tree }) : path.endsWith("/targets")
+      ? json({ targets }) : json({ stageDefinitions: definitions })));
 }
 function mount(role: "admin" | "editor" | "viewer" = "admin") {
   const onAccessLost = vi.fn();
@@ -33,21 +35,71 @@ function mount(role: "admin" | "editor" | "viewer" = "admin") {
 beforeEach(() => { vi.clearAllMocks(); setup(); });
 
 describe("schedule editor", () => {
+  it("shares visible row order, selection, and expansion between the table and Gantt", async () => {
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    const keys = (selector: string) => [...container.querySelectorAll<HTMLElement>(selector)]
+      .map((element) => element.dataset.rowKey);
+    expect(keys(".workspace-table-row")).toEqual(keys(".workspace-chart-row"));
+    fireEvent.click(screen.getByRole("button", { name: "Synthetic activity" }));
+    expect(container.querySelectorAll(".selected[data-row-key='activity:cd960302-0b68-4621-95ed-7d4f57f8eedc']")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Expandir ou recolher Synthetic discipline" }));
+    expect(keys(".workspace-table-row")).toEqual(keys(".workspace-chart-row"));
+    expect(keys(".workspace-table-row")).toHaveLength(2);
+  });
+
+  it("positions target markers, changes zoom, and resizes the split by keyboard", async () => {
+    setup(undefined, [{ id: "target", name: "Synthetic target", targetDate: "2026-11-05",
+      operationalDate: null, displayOrder: 0 }]);
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    expect(container.querySelectorAll(".timeline-target-line")).toHaveLength(1);
+    const chart = container.querySelector<HTMLElement>(".workspace-chart-content")!;
+    const weekWidth = parseInt(chart.style.width);
+    fireEvent.change(screen.getByLabelText("Escala"), { target: { value: "day" } });
+    expect(parseInt(chart.style.width)).toBeGreaterThan(weekWidth);
+    fireEvent.change(screen.getByLabelText("Escala"), { target: { value: "month" } });
+    expect(parseInt(chart.style.width)).toBeLessThan(weekWidth);
+    const separator = screen.getByRole("separator");
+    expect(separator).toHaveAttribute("aria-valuenow", "50");
+    fireEvent.keyDown(separator, { key: "ArrowRight" });
+    expect(separator).toHaveAttribute("aria-valuenow", "55");
+  });
+
+  it("opens edits in a focused side panel without changing the schedule scroll position", async () => {
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    const body = container.querySelector<HTMLElement>(".workspace-body")!;
+    body.scrollTop = 120;
+    fireEvent.click(screen.getByRole("button", { name: "Editar atividade" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Nome da atividade")).toHaveFocus());
+    expect(body.scrollTop).toBe(120);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(body.scrollTop).toBe(120);
+    expect(api.fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "PATCH" }));
+  });
+
   it("loads ordered hierarchy, Brazilian dates, derived dates, and collapses rows", async () => {
     mount();
     expect(screen.getByRole("status")).toHaveTextContent("Carregando cronograma");
     expect(await screen.findByText("Synthetic activity")).toBeInTheDocument();
-    expect(screen.getAllByText("01/11/2026 a 08/11/2026")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Synthetic discipline (ENG)" }));
+    expect(screen.getAllByText("01/11/2026")).toHaveLength(4);
+    expect(screen.getAllByText("08/11/2026")).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button", { name: "Expandir ou recolher Synthetic discipline" }));
     expect(screen.queryByText("Synthetic activity")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Synthetic discipline (ENG)" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Expandir ou recolher Synthetic discipline" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("shows empty groups and gives viewers read-only access", async () => {
     setup({ productId: product.id, disciplines: [{ ...discipline, stages: [{ ...stage, activities: [], derivedStart: null, derivedEnd: null }] }] });
     mount("viewer");
     expect(await screen.findByText("Nenhuma atividade cadastrada nesta etapa.")).toBeInTheDocument();
-    expect(screen.getByText("Sem data a Sem data")).toBeInTheDocument();
+    expect(screen.getAllByText("Sem data").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Adicionar atividade" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Editar etapa" })).not.toBeInTheDocument();
     expect(api.fetch).not.toHaveBeenCalledWith(expect.stringContaining("stage-definitions"));

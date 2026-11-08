@@ -4,10 +4,10 @@ import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput,
   type DisciplineInput, type Mutation, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
-const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|disciplines)(?:\/(.*))?$/;
+const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "disciplines" | "stages" | "activities";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "disciplines" | "stages" | "activities";
   disciplineId?: string; stageId?: string; activityId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
@@ -20,6 +20,7 @@ function parseRoute(pathname: string): Route | null {
   if (!match) return null;
   const [, workspaceId, productId, root, remainder] = match;
   if (root === "hierarchy") return remainder ? null : { workspaceId, productId, kind: "hierarchy" };
+  if (root === "targets") return remainder ? null : { workspaceId, productId, kind: "targets" };
   const parts = remainder?.split("/") ?? [];
   if (parts.length === 0) return { workspaceId, productId, kind: "disciplines" };
   if (parts.length === 1) return { workspaceId, productId, disciplineId: parts[0], kind: "disciplines" };
@@ -150,6 +151,9 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   if (route.kind === "hierarchy" && request.method === "GET") {
     const hierarchy = await repository.getHierarchy(ws, productId);
     return hierarchy ? response({ hierarchy }, 200) : response({ error: "Não encontrado." }, 404);
+  }
+  if (route.kind === "targets" && request.method === "GET") {
+    return response({ targets: await repository.listTargets(ws, productId) }, 200);
   }
   if (route.kind === "disciplines") {
     if (request.method === "GET" && !disciplineId) return response({ disciplines: await repository.listDisciplines(ws, productId) }, 200);

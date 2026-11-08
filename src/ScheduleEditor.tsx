@@ -1,7 +1,9 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
+import { ScheduleWorkspace } from "./ScheduleWorkspace";
+import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
 
 export interface ScheduleProduct { id: string; name: string; active: boolean }
 interface Activity {
@@ -41,31 +43,38 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
 }) {
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
   const [definitions, setDefinitions] = useState<StageDefinition[]>([]);
+  const [targets, setTargets] = useState<ScheduleTarget[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error" | "notFound">("loading");
   const [openDisciplines, setOpenDisciplines] = useState<Set<string> | null>(null);
   const [openStages, setOpenStages] = useState<Set<string> | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
   const canEdit = product.active && (workspace.role === "admin" || workspace.role === "editor");
   const base = `/api/workspaces/${workspace.id}/products/${product.id}`;
 
-  const load = useCallback(async () => {
-    setState("loading");
+  const load = useCallback(async (showLoading = true) => {
+    if (showLoading) setState("loading");
     try {
-      const [treeResponse, definitionsResponse] = await Promise.all([
+      const [treeResponse, targetsResponse, definitionsResponse] = await Promise.all([
         authenticatedFetch(`${base}/hierarchy`),
+        authenticatedFetch(`${base}/targets`),
         canEdit ? authenticatedFetch(`/api/workspaces/${workspace.id}/stage-definitions`) : Promise.resolve(null)
       ]);
-      if ([treeResponse, definitionsResponse].some((result) => result?.status === 401 || result?.status === 403)) {
+      if ([treeResponse, targetsResponse, definitionsResponse].some((result) => result?.status === 401 || result?.status === 403)) {
         onAccessLost(); return;
       }
       if (treeResponse.status === 404) { setState("notFound"); return; }
-      if (!treeResponse.ok || (definitionsResponse && !definitionsResponse.ok)) throw new Error("Hierarchy lookup failed.");
+      if (!treeResponse.ok || !targetsResponse.ok || (definitionsResponse && !definitionsResponse.ok))
+        throw new Error("Schedule lookup failed.");
       const tree = (await treeResponse.json() as { hierarchy: Hierarchy }).hierarchy;
+      const targetList = (await targetsResponse.json() as { targets: ScheduleTarget[] }).targets;
       const catalog = definitionsResponse
         ? (await definitionsResponse.json() as { stageDefinitions: StageDefinition[] }).stageDefinitions : [];
       setHierarchy(tree);
+      setTargets(targetList);
       setDefinitions(catalog);
       setOpenDisciplines((previous) => previous ?? new Set(tree.disciplines.map((item) => item.id)));
       setOpenStages((previous) => previous ?? new Set(tree.disciplines.flatMap((item) => item.stages.map((stage) => stage.id))));
@@ -74,6 +83,33 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   }, [base, canEdit, onAccessLost, workspace.id]);
 
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
+
+  useEffect(() => {
+    if (!draft) return;
+    queueMicrotask(() => {
+      if (!drawerRef.current?.contains(document.activeElement))
+        drawerRef.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    });
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); closeDraft(); return; }
+      if (event.key !== "Tab" || !drawerRef.current) return;
+      const controls = [...drawerRef.current.querySelectorAll<HTMLElement>("button:not(:disabled), input, select, textarea")]
+        .filter((element) => element.tabIndex !== -1);
+      const first = controls[0]; const last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  }, [draft]);
+
+  function closeDraft() {
+    setDraft(null);
+    setFeedback("");
+    queueMicrotask(() => previousFocus.current?.focus());
+  }
+
+  function rememberFocus() { previousFocus.current = document.activeElement as HTMLElement | null; }
 
   function toggle(id: string, level: "discipline" | "stage") {
     const update = (previous: Set<string> | null) => {
@@ -85,6 +121,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   }
 
   function startDiscipline(item?: Discipline) {
+    rememberFocus();
     setFeedback("");
     setDraft(item ? { ...initialDraft("discipline"), id: item.id, version: item.version,
       name: item.name, shortCode: item.shortCode, color: item.color,
@@ -92,6 +129,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       : initialDraft("discipline"));
   }
   function startStage(disciplineId: string, item?: Stage) {
+    rememberFocus();
     const match = item && definitions.find((definition) => definition.code.toLowerCase() === item.code.toLowerCase());
     setFeedback("");
     setDraft(item ? { ...initialDraft("stage"), id: item.id, version: item.version, disciplineId,
@@ -100,6 +138,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       : { ...initialDraft("stage"), disciplineId });
   }
   function startActivity(disciplineId: string, stageId: string, item?: Activity) {
+    rememberFocus();
     setFeedback("");
     setDraft(item ? { ...initialDraft("activity"), id: item.id, version: item.version,
       disciplineId, stageId, name: item.name, activityType: item.activityType ?? "",
@@ -152,9 +191,9 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       if (result.status === 409) { setFeedback(messages.scheduleConflict); return; }
       if (result.status === 404) { setFeedback(messages.scheduleNotFound); return; }
       if (!result.ok) { setFeedback(messages.scheduleSaveError); return; }
-      setDraft(null);
+      closeDraft();
       setFeedback(messages.scheduleSaved);
-      await load();
+      await load(false);
     } catch { setFeedback(messages.scheduleSaveError); }
     finally { setBusy(false); }
   }
@@ -163,6 +202,26 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     const selected = definitions.find((definition) => definition.id === id);
     setDraft((previous) => previous ? { ...previous, definitionId: id,
       code: selected?.code ?? "", color: selected?.color ?? "#336699" } : null);
+  }
+
+  function editRow(row: VisibleRow) {
+    const discipline = hierarchy?.disciplines.find((item) => item.id === row.disciplineId);
+    if (!discipline) return;
+    if (row.kind === "discipline") startDiscipline(discipline);
+    if (row.kind === "stage") {
+      const stage = discipline.stages.find((item) => item.id === row.id);
+      if (stage) startStage(discipline.id, stage);
+    }
+    if (row.kind === "activity") {
+      const stage = discipline.stages.find((item) => item.id === row.stageId);
+      const activity = stage?.activities.find((item) => item.id === row.id);
+      if (stage && activity) startActivity(discipline.id, stage.id, activity);
+    }
+  }
+
+  function addChild(row: VisibleRow) {
+    if (row.kind === "discipline") startStage(row.id);
+    if (row.kind === "stage" && row.disciplineId) startActivity(row.disciplineId, row.id);
   }
 
   return (
@@ -176,55 +235,22 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
         <>
           <div className="schedule-toolbar">
             {canEdit && <button type="button" onClick={() => startDiscipline()}>{messages.addDiscipline}</button>}
-            <button type="button" onClick={() => { setDraft(null); void load(); }}>{messages.refreshHierarchy}</button>
+            <button type="button" onClick={() => { closeDraft(); void load(false); }}>{messages.refreshHierarchy}</button>
           </div>
+          {feedback && !draft && <div role="alert" className="feedback"><p>{feedback}</p></div>}
           {hierarchy.disciplines.length === 0 && <p>{messages.noDisciplines}</p>}
-          <ul className="hierarchy-list">
-            {hierarchy.disciplines.map((discipline) => (
-              <li key={discipline.id} className="hierarchy-discipline">
-                <div className="hierarchy-row">
-                  <button type="button" aria-expanded={openDisciplines?.has(discipline.id) ?? false}
-                    aria-controls={`discipline-${discipline.id}`}
-                    onClick={() => toggle(discipline.id, "discipline")}>{discipline.name} ({discipline.shortCode})</button>
-                  <span className="color-chip" style={{ backgroundColor: discipline.color }} aria-label={messages.disciplineColor(discipline.color)} />
-                  {canEdit && <button type="button" onClick={() => startDiscipline(discipline)}>{messages.editDiscipline}</button>}
-                </div>
-                {openDisciplines?.has(discipline.id) && <div id={`discipline-${discipline.id}`} className="hierarchy-children">
-                  {canEdit && <button type="button" onClick={() => startStage(discipline.id)}>{messages.addStage}</button>}
-                  {discipline.stages.length === 0 && <p>{messages.noStages}</p>}
-                  <ul className="hierarchy-list">
-                    {discipline.stages.map((stage) => (
-                      <li key={stage.id} className="hierarchy-stage">
-                        <div className="hierarchy-row">
-                          <button type="button" aria-expanded={openStages?.has(stage.id) ?? false}
-                            aria-controls={`stage-${stage.id}`}
-                            onClick={() => toggle(stage.id, "stage")}>{stage.displayName} ({stage.code})</button>
-                          <span className="color-chip" style={{ backgroundColor: stage.color }} aria-label={messages.stageColor(stage.color)} />
-                          <span>{messages.dateRange(formatCivilDate(stage.derivedStart), formatCivilDate(stage.derivedEnd))}</span>
-                          {canEdit && <button type="button" onClick={() => startStage(discipline.id, stage)}>{messages.editStage}</button>}
-                        </div>
-                        {openStages?.has(stage.id) && <div id={`stage-${stage.id}`} className="hierarchy-children">
-                          {canEdit && <button type="button" onClick={() => startActivity(discipline.id, stage.id)}>{messages.addActivity}</button>}
-                          {stage.activities.length === 0 && <p>{messages.noActivities}</p>}
-                          <ul className="hierarchy-list">
-                            {stage.activities.map((activity) => <li key={activity.id} className="hierarchy-row hierarchy-activity">
-                              <span>{activity.name}</span>
-                              <span>{messages.dateRange(formatCivilDate(activity.plannedStart), formatCivilDate(activity.plannedEnd))}</span>
-                              {canEdit && <button type="button" onClick={() => startActivity(discipline.id, stage.id, activity)}>{messages.editActivity}</button>}
-                            </li>)}
-                          </ul>
-                        </div>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>}
-              </li>
-            ))}
-          </ul>
+          <ScheduleWorkspace product={product} tree={hierarchy} targets={targets}
+            openDisciplines={openDisciplines ?? new Set()} openStages={openStages ?? new Set()}
+            canEdit={canEdit} onToggle={(row) => {
+              if (row.kind === "discipline" || row.kind === "stage") toggle(row.id, row.kind);
+            }} onEdit={editRow} onAdd={addChild} />
         </>
       )}
-      {draft && canEdit && <form className="hierarchy-form" onSubmit={(event) => void save(event)}>
-        <h3>{draft.id ? messages.editItem : messages.newItem}</h3>
+      {draft && canEdit && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) closeDraft();
+      }}><div ref={drawerRef} className="schedule-drawer" role="dialog" aria-modal="true"
+        aria-labelledby="schedule-drawer-title"><form className="hierarchy-form" onSubmit={(event) => void save(event)}>
+        <h3 id="schedule-drawer-title">{draft.id ? messages.editItem : messages.newItem}</h3>
         {draft.kind === "discipline" && <>
           <label htmlFor="hierarchy-name">{messages.disciplineName}</label>
           <input id="hierarchy-name" required maxLength={200} value={draft.name}
@@ -284,12 +310,12 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
           onChange={(event) => setDraft({ ...draft, displayOrder: event.target.value })} />
         <div className="schedule-toolbar">
           <button type="submit" disabled={busy}>{messages.save}</button>
-          <button type="button" className="back-button" onClick={() => setDraft(null)}>{messages.cancel}</button>
+          <button type="button" className="back-button" onClick={closeDraft}>{messages.cancel}</button>
         </div>
-      </form>}
-      {feedback && <div role="alert" className="feedback"><p>{feedback}</p>
-        {feedback === messages.scheduleConflict && <button type="button" onClick={() => { setDraft(null); void load(); }}>{messages.refreshHierarchy}</button>}
-      </div>}
+        {feedback && <div role="alert" className="feedback"><p>{feedback}</p>
+          {feedback === messages.scheduleConflict && <button type="button" onClick={() => { closeDraft(); void load(false); }}>{messages.refreshHierarchy}</button>}
+        </div>}
+      </form></div></div>}
     </section>
   );
 }

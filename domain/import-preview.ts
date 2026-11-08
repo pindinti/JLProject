@@ -115,15 +115,15 @@ export function parseImportSheets(sheets: ImportSheet[], filename: string, date1
     if (!start || !end) { issues.push({ severity: "error", code: "date", sheet: sourceSheet, row: index + 1 }); continue; }
     if (start > end) { issues.push({ severity: "error", code: "range", sheet: sourceSheet, row: index + 1 }); continue; }
     const type = sourceText(row[10]);
+    let discipline = disciplines.find((item) => item.name === disciplineName);
+    if (!discipline) { discipline = { name: disciplineName, stages: [] }; disciplines.push(discipline); }
+    let stage = discipline.stages.find((item) => item.name === stageName);
+    if (!stage) { stage = { name: stageName, activities: [] }; discipline.stages.push(stage); }
     if (type && matchKey(type) === "meta") sourceMeta.push({ sourceId: id, sourceRow: index + 1,
       name, discipline: disciplineName, stage: stageName, plannedStart: start, plannedEnd: end,
       status: sourceText(row[9]), notes: sourceText(row[11]),
       matchKind: "unresolved", suggestedTargetRow: null });
     else {
-      let discipline = disciplines.find((item) => item.name === disciplineName);
-      if (!discipline) { discipline = { name: disciplineName, stages: [] }; disciplines.push(discipline); }
-      let stage = discipline.stages.find((item) => item.name === stageName);
-      if (!stage) { stage = { name: stageName, activities: [] }; discipline.stages.push(stage); }
       stage.activities.push({ sourceId: id, sourceRow: index + 1, name, type,
         status: sourceText(row[9]), notes: sourceText(row[11]), plannedStart: start, plannedEnd: end });
       summary.activities++;
@@ -179,6 +179,6 @@ export function parseImportSheets(sheets: ImportSheet[], filename: string, date1
   summary.targets = targets.length;
   summary.disciplines = disciplines.length;
   if (summary.sourceRecords !== 46 || summary.activities !== 41 || targets.length !== 5 || sourceMeta.length !== 5 || disciplines.length !== 7)
-    issues.push({ severity: "warning", code: "count", sheet: sourceSheet });
+    issues.push({ severity: "error", code: "count", sheet: sourceSheet });
   return preview;
 }

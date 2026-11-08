@@ -34,7 +34,9 @@ function repository(): ScheduleRepository {
     updateStage: vi.fn(async () => ({ status: "ok" as const, value: { ...s, version: 2 } })),
     listActivities: vi.fn(async () => [a]), createActivity: vi.fn(async () => ({ status: "ok" as const, value: a })),
     updateActivity: vi.fn(async () => ({ status: "ok" as const, value: { ...a, version: 2 } })),
-    getHierarchy: vi.fn(async () => ({ productId: product, disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] }))
+    getHierarchy: vi.fn(async () => ({ productId: product, disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] })),
+    listTargets: vi.fn(async () => [{ id: "f7777777-7777-4777-8777-777777777777", name: "Meta sintética",
+      targetDate: "2026-11-08", operationalDate: null, displayOrder: 0 }])
   };
 }
 function membership(role: WorkspaceRole | null, active = true): MembershipRepository {
@@ -55,6 +57,21 @@ async function call(input: Request, role: WorkspaceRole | null, repo = repositor
 }
 
 describe("schedule hierarchy API", () => {
+  it("scopes read-only targets to an authenticated product member", async () => {
+    const repo = repository();
+    const path = `${base}/targets`;
+    const listed = await call(request(path), "viewer", repo);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ targets: [{ targetDate: "2026-11-08" }] });
+    expect(repo.listTargets).toHaveBeenCalledWith(ws, product);
+    expect((await call(request(path, "POST", {}), "admin", repo)).status).toBe(405);
+    expect((await call(request(path.replace(ws, otherWs)), "admin", repo)).status).toBe(403);
+    expect((await call(request(path), "admin", repo, false)).status).toBe(403);
+    expect((await call(request(path), "admin", { ...repo, productExists: async () => false })).status).toBe(404);
+    const anonymous = await handleRequest(request(path), environment, async () => null,
+      () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+  });
   it("reads lists and the complete hierarchy for active viewers", async () => {
     const repo = repository();
     for (const [path, key] of [[disciplines, "disciplines"], [stages, "stages"],

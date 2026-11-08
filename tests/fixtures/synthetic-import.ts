@@ -10,7 +10,8 @@ export function syntheticImportSubmission(): ImportSubmission {
       displayOrder: disciplineIndex,
       stages: Array.from({ length: 3 }, (_, stageIndex) => {
         const code = `E${stageIndex + 1}`;
-        const count = disciplineIndex === 6 && stageIndex === 2 ? 1 : 2;
+        const count = disciplineIndex === 6 && stageIndex === 1 ? 3 :
+          disciplineIndex === 6 && stageIndex === 2 ? 0 : 2;
         return { code, color: colorForLabel(code), displayName: code, displayOrder: stageIndex,
           activities: Array.from({ length: count }, () => {
             activityNumber++;
@@ -24,7 +25,8 @@ export function syntheticImportSubmission(): ImportSubmission {
   const dates = ["2027-01-03", "2027-02-04", "2027-03-05", "2027-04-06", "2027-05-07"];
   const sourceMeta = dates.map((date, index) => ({ sourceId: id(index + 42), sourceRow: index + 46,
     name: index < 2 ? `Synthetic target ${index + 1}` : `Alternate source label ${index + 1}`,
-    discipline: "Synthetic discipline 1", stage: "E1", plannedStart: date,
+    discipline: index === 0 ? "Synthetic discipline 7" : "Synthetic discipline 1",
+    stage: index === 0 ? "E3" : "E1", plannedStart: date,
     plannedEnd: date, status: null, notes: null }));
   const targets = dates.map((date, index) => ({ name: `Synthetic target ${index + 1}`,
     sourceRow: index + 4, targetDate: date,

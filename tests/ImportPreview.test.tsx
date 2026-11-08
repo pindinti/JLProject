@@ -88,12 +88,21 @@ describe("local import preview", () => {
     });
     const button = await screen.findByRole("button", { name: "Confirmar importação" });
     expect(button).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("3 correspondências de metas pendentes");
     const matches = screen.getAllByRole("checkbox");
     expect(matches).toHaveLength(3);
+    expect(screen.getByText("Esta etapa contém apenas uma meta, sem atividades operacionais.")).toBeInTheDocument();
     expect(matches[0].closest("label")).toHaveTextContent("Alternate source label 3");
     expect(matches[0].closest("label")).toHaveTextContent("Synthetic target 3");
-    for (const match of matches) fireEvent.click(match);
+    fireEvent.click(button);
+    expect(auth.fetch).not.toHaveBeenCalled();
+    for (const [index, match] of matches.entries()) {
+      fireEvent.click(match);
+      expect(screen.getByRole("status")).toHaveTextContent(`${2 - index} correspondência`);
+      if (index < 2) expect(button).toBeDisabled();
+    }
     expect(button).toBeEnabled();
+    expect(screen.queryByText(/A correspondência desta meta exige confirmação/)).not.toBeInTheDocument();
     fireEvent.click(button);
     await waitFor(() => expect(auth.fetch).toHaveBeenCalledTimes(1));
     const [path, options] = auth.fetch.mock.calls[0];
@@ -125,5 +134,44 @@ describe("local import preview", () => {
     expect(button).toBeEnabled();
     expect(screen.getByText("Synthetic target 1", { exact: false })).toBeInTheDocument();
     confirmation.mockRestore();
+  });
+
+  it("keeps a real validation error blocking after every proposed match is confirmed", async () => {
+    const fixture = completePreview();
+    fixture.issues.push({ severity: "error", code: "date", sheet: "Cronograma Produto", row: 5 });
+    parser.parse.mockResolvedValueOnce(fixture);
+    render(<ImportPreview workspaceId="e97c159e-3f7b-4e27-8b1e-38036bf47a3f"
+      onBack={vi.fn()} onAccessLost={vi.fn()} onImported={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Selecionar arquivo XLSX"), {
+      target: { files: [new File(["synthetic"], "Synthetic.xlsx")] }
+    });
+    const button = await screen.findByRole("button", { name: "Confirmar importação" });
+    for (const match of screen.getAllByRole("checkbox")) fireEvent.click(match);
+    expect(screen.getByRole("status")).toHaveTextContent("0 correspondências de metas pendentes");
+    expect(screen.getByText(/1 erro de validação bloqueia a importação/)).toBeInTheDocument();
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(auth.fetch).not.toHaveBeenCalled();
+  });
+
+  it("requires a nonblank product name while informational warnings remain nonblocking", async () => {
+    const fixture = completePreview();
+    fixture.issues.push({ severity: "warning", code: "untrusted_text", sheet: "Cronograma Produto", row: 5 });
+    parser.parse.mockResolvedValueOnce(fixture);
+    render(<ImportPreview workspaceId="e97c159e-3f7b-4e27-8b1e-38036bf47a3f"
+      onBack={vi.fn()} onAccessLost={vi.fn()} onImported={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Selecionar arquivo XLSX"), {
+      target: { files: [new File(["synthetic"], "Synthetic.xlsx")] }
+    });
+    const button = await screen.findByRole("button", { name: "Confirmar importação" });
+    for (const match of screen.getAllByRole("checkbox")) fireEvent.click(match);
+    expect(button).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Nome do produto"), { target: { value: "   " } });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/Espaços em branco não são um nome válido/)).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(auth.fetch).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Nome do produto"), { target: { value: "Teste válido" } });
+    expect(button).toBeEnabled();
   });
 });

@@ -140,7 +140,8 @@ describe("products UI", () => {
   it("opens a product schedule and restores the route after remount", async () => {
     auth.authenticatedFetch.mockImplementation((path: string) => Promise.resolve(new Response(JSON.stringify(
       path.endsWith("/hierarchy") ? { hierarchy: { productId: product.id, disciplines: [] } }
-        : path.endsWith("/stage-definitions") ? { stageDefinitions: [] } : { products: [product] }
+        : path.endsWith("/stage-definitions") ? { stageDefinitions: [] }
+          : path.endsWith("/targets") ? { targets: [] } : { products: [product] }
     ), { status: 200 })));
     const first = render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
