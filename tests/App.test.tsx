@@ -67,6 +67,21 @@ describe("administration UI", () => {
     confirmation.mockRestore();
   });
 
+  it("adds a user with editor as the default role and shows setup guidance", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Administração" }));
+    await screen.findByText("Test User");
+    fireEvent.change(screen.getByLabelText("E-mail do novo usuário"), { target: { value: "new@example.com" } });
+    auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ status: "created" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ memberships: [member] }), { status: 200 }));
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar usuário" }));
+    await waitFor(() => expect(auth.authenticatedFetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/memberships`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ email: "new@example.com", role: "editor" }) })
+    ));
+    expect(await screen.findByText(/Esqueci minha senha/)).toBeInTheDocument();
+  });
+
   it("hides administration from non-admins and denies a direct route", async () => {
     auth.listMyWorkspaces.mockResolvedValue([{ ...workspace, role: "viewer" }]);
     window.history.replaceState(null, "", "/administracao");

@@ -6,6 +6,7 @@ import { verifyIdentity, type Identity } from "./auth";
 import { authorizeWorkspace, type MembershipRepository } from "./authorization";
 import { createMembershipRepository } from "./membership-repository";
 import { createMemberAdminRepository, type MemberAdminRepository } from "./member-admin";
+import { provisionDevelopmentAuthUser, type ProvisionResult } from "./neon-auth-users";
 import type { WorkspaceRole } from "./authorization";
 import { handleProductRequest, isProductRoute, type ProductRepositoryFactory } from "./product-api";
 import { createProductRepository } from "./products";
@@ -27,6 +28,7 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 type IdentityVerifier = (request: Request, environment: WorkerEnvironment) => Promise<Identity | null>;
 type MembershipRepositoryFactory = (environment: WorkerEnvironment) => MembershipRepository;
 type MemberAdminRepositoryFactory = (environment: WorkerEnvironment) => MemberAdminRepository;
+type AuthUserProvisioner = (email: string, environment: WorkerEnvironment) => Promise<ProvisionResult>;
 
 function privateResponse(body: Record<string, unknown>, status: number): Response {
   return Response.json(body, {
@@ -53,6 +55,24 @@ async function parseMembershipChange(request: Request): Promise<{ role: Workspac
   return null;
 }
 
+async function parseNewMember(request: Request): Promise<{ email: string; role: WorkspaceRole } | null> {
+  if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) return null;
+  const text = await request.text();
+  if (text.length > 512) return null;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return null; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const fields = Object.keys(value);
+  if (fields.some((field) => field !== "email" && field !== "role") || !fields.includes("email")) return null;
+  const input = value as { email?: unknown; role?: unknown };
+  if (typeof input.email !== "string") return null;
+  const email = input.email.trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  const role = input.role ?? "editor";
+  if (role !== "admin" && role !== "editor" && role !== "viewer") return null;
+  return { email, role };
+}
+
 export async function handleRequest(
   request: Request,
   environment: WorkerEnvironment = {},
@@ -61,7 +81,8 @@ export async function handleRequest(
   memberAdminRepositoryFactory: MemberAdminRepositoryFactory = createMemberAdminRepository,
   productRepositoryFactory: ProductRepositoryFactory = createProductRepository,
   scheduleRepositoryFactory: ScheduleRepositoryFactory = createScheduleRepository,
-  importRepositoryFactory: ImportRepositoryFactory = createImportRepository
+  importRepositoryFactory: ImportRepositoryFactory = createImportRepository,
+  authUserProvisioner: AuthUserProvisioner = provisionDevelopmentAuthUser
 ): Promise<Response> {
   const url = new URL(request.url);
 
@@ -85,6 +106,7 @@ export async function handleRequest(
   const stageCatalogMatch = url.pathname.match(stageCatalogPath);
   const protectedRoute = request.method === "GET" &&
     (url.pathname === sessionPath || url.pathname === workspacesPath || workspaceMatch || membersMatch) ||
+    request.method === "POST" && !!membersMatch ||
     request.method === "PATCH" && !!memberMatch || productRoute || scheduleRoute || importRoute || !!stageCatalogMatch;
   if (protectedRoute) {
     const origin = request.headers.get("Origin");
@@ -154,6 +176,23 @@ export async function handleRequest(
         if (request.method === "GET") {
           const memberships = await adminRepository.listMembers(identity.subject, membership.workspaceId);
           return privateResponse({ memberships }, 200);
+        }
+        if (request.method === "POST" && membersMatch) {
+          const input = await parseNewMember(request);
+          if (!input) return privateResponse({ error: "E-mail ou perfil inválido." }, 400);
+          let userId = await adminRepository.findAuthUserIdByEmail(input.email);
+          if (!userId) {
+            const provision = await authUserProvisioner(input.email, environment);
+            if (provision.kind === "created") userId = provision.userId;
+            else if (provision.kind === "conflict") userId = await adminRepository.findAuthUserIdByEmail(input.email);
+            else return privateResponse({ error: "Não foi possível adicionar o usuário. Tente novamente." }, 503);
+          }
+          if (!userId) return privateResponse({ error: "Não foi possível adicionar o usuário. Tente novamente." }, 503);
+          const result = await adminRepository.addMember(identity.subject, membership.workspaceId, userId, input.role);
+          if (result === "denied") return privateResponse({ error: "Acesso não autorizado." }, 403);
+          if (result === "duplicate") return privateResponse({ error: "Este usuário já pertence ao espaço de trabalho." }, 409);
+          if (result !== "added") return privateResponse({ error: "Não foi possível adicionar o usuário. Tente novamente." }, 503);
+          return privateResponse({ status: "created" }, 201);
         }
         const change = await parseMembershipChange(request);
         if (!change) return privateResponse({ error: "Dados inválidos." }, 400);

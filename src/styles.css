@@ -457,6 +457,22 @@ form button {
   padding: 0;
 }
 
+.member-add-form {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 28rem;
+  margin-bottom: 1.5rem;
+}
+
+.member-add-form input,
+.member-add-form select {
+  min-height: 2.75rem;
+  border: 1px solid #8298a7;
+  border-radius: 0.35rem;
+  background: #fff;
+  padding: 0.4rem;
+}
+
 .member-row {
   display: grid;
   grid-template-columns: minmax(10rem, 2fr) minmax(9rem, 1fr) auto auto;

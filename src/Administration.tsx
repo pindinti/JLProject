@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
 
@@ -24,6 +24,9 @@ export function Administration({ workspace, onBack, onAccessLost }: {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newRole, setNewRole] = useState<Role>("editor");
+  const [adding, setAdding] = useState(false);
   const endpoint = `/api/workspaces/${workspace.id}/memberships`;
 
   const load = useCallback(async () => {
@@ -70,11 +73,51 @@ export function Administration({ workspace, onBack, onAccessLost }: {
     }
   }
 
+  async function addMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback("");
+    setAdding(true);
+    try {
+      const response = await authenticatedFetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: newEmail.trim(), role: newRole })
+      });
+      if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
+      if (response.status === 400) { setFeedback(messages.userInvalid); return; }
+      if (response.status === 409) { setFeedback(messages.userDuplicate); return; }
+      if (!response.ok) { setFeedback(messages.userAddError); return; }
+      setNewEmail("");
+      await load();
+      setFeedback(messages.userAdded);
+    } catch {
+      setFeedback(messages.userAddError);
+    } finally {
+      setAdding(false);
+    }
+  }
+
   return (
     <section className="administration" aria-labelledby="administration-title">
       <h2 id="administration-title">{messages.administration}</h2>
       <p>{workspace.name}</p>
       <h3>{messages.users}</h3>
+      <form className="member-add-form" onSubmit={(event) => void addMember(event)}>
+        <h4>{messages.addUser}</h4>
+        <label htmlFor="new-member-email">{messages.addUserEmail}</label>
+        <input id="new-member-email" type="email" required maxLength={254} autoComplete="email"
+          value={newEmail} onChange={(event) => setNewEmail(event.target.value)} disabled={adding} />
+        <label htmlFor="new-member-role">{messages.addUserRole}</label>
+        <select id="new-member-role" value={newRole} disabled={adding}
+          onChange={(event) => setNewRole(event.target.value as Role)}>
+          <option value="admin">{messages.roleAdmin}</option>
+          <option value="editor">{messages.roleEditor}</option>
+          <option value="viewer">{messages.roleViewer}</option>
+        </select>
+        <button type="submit" disabled={adding || busyId !== null}>
+          {adding ? messages.addingUser : messages.addUser}
+        </button>
+      </form>
       {state === "loading" && <p role="status">{messages.membersLoading}</p>}
       {state === "error" && (
         <div role="alert">

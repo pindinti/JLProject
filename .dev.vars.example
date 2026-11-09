@@ -3,3 +3,6 @@
 DATABASE_URL=
 JLPROJECT_ENV=development
 NEON_AUTH_BASE_URL=
+# Project-scoped Neon organization API key for development-only Auth user creation.
+# Never use a personal or organization-wide key here.
+NEON_MANAGEMENT_API_KEY=

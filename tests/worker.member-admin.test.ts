@@ -25,7 +25,9 @@ function adminRepository(result: UpdateResult = "updated"): MemberAdminRepositor
   return {
     listOwnWorkspaces: vi.fn(async () => [{ id: workspace, name: "JLProject", role: "admin" as const }]),
     listMembers: vi.fn(async () => [{ id: member, name: "Test User", email: "test@example.com", role: "viewer" as const, active: true }]),
-    updateMember: vi.fn(async () => result)
+    updateMember: vi.fn(async () => result),
+    findAuthUserIdByEmail: vi.fn(async () => null),
+    addMember: vi.fn(async () => "added" as const)
   };
 }
 
@@ -42,6 +44,56 @@ async function call(request: Request, role: WorkspaceRole | null, admin = adminR
 }
 
 describe("workspace member administration API", () => {
+  it("provisions a provider user only after current admin authorization", async () => {
+    const admin = adminRepository();
+    const provision = vi.fn(async () => ({ kind: "created" as const, userId: member }));
+    const request = () => new Request(listUrl, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: " NEW@example.com ", role: "viewer" })
+    });
+    const allowed = await handleRequest(request(), environment, async () => ({ subject: actor }),
+      () => membershipRepository("admin"), () => admin, undefined, undefined, undefined, provision);
+    expect(allowed.status).toBe(201);
+    expect(provision).toHaveBeenCalledWith("new@example.com", environment);
+    expect(admin.addMember).toHaveBeenCalledWith(actor, workspace, member, "viewer");
+    for (const role of ["editor", "viewer", null] as const) {
+      const denied = await handleRequest(request(), environment, async () => ({ subject: actor }),
+        () => membershipRepository(role), () => admin, undefined, undefined, undefined, provision);
+      expect(denied.status).toBe(403);
+    }
+    expect(provision).toHaveBeenCalledTimes(1);
+    expect((await handleRequest(request(), environment, async () => null,
+      () => membershipRepository("admin"), () => admin, undefined, undefined, undefined, provision)).status).toBe(401);
+  });
+
+  it("uses a verified provider identity for existing users and rejects duplicates", async () => {
+    const admin = adminRepository();
+    vi.mocked(admin.findAuthUserIdByEmail).mockResolvedValue(member);
+    vi.mocked(admin.addMember).mockResolvedValue("duplicate");
+    const response = await handleRequest(new Request(listUrl, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "existing@example.com" })
+    }), environment, async () => ({ subject: actor }), () => membershipRepository("admin"), () => admin);
+    expect(response.status).toBe(409);
+    expect(admin.addMember).toHaveBeenCalledWith(actor, workspace, member, "editor");
+  });
+
+  it("rejects invalid onboarding inputs and cross-origin provisioning", async () => {
+    const admin = adminRepository();
+    const request = (body: unknown, origin?: string) => new Request(listUrl, {
+      method: "POST", headers: { "Content-Type": "application/json", ...(origin ? { Origin: origin } : {}) },
+      body: JSON.stringify(body)
+    });
+    for (const body of [{ email: "bad" }, { email: "x@y.z", role: "owner" },
+      { email: "x@y.z", authUserId: actor }, { email: "x@y.z", role: "admin", active: true }]) {
+      expect((await call(request(body), "admin", admin)).status).toBe(400);
+    }
+    expect((await call(request({ email: "x@y.z" }), "admin", admin)).status).toBe(503);
+    expect((await call(request({ email: "x@y.z" }), "admin", admin, true)).status).toBe(503);
+    expect((await call(request({ email: "x@y.z" }), "admin", admin, true)).headers.get("Cache-Control")).toBe("no-store");
+    expect((await call(request({ email: "x@y.z" }, "https://evil.test"), "admin", admin)).status).toBe(403);
+    expect(admin.addMember).not.toHaveBeenCalled();
+  });
   it("requires authentication before looking up administration data", async () => {
     const admin = adminRepository();
     for (const request of [new Request(listUrl), patch({ role: "editor" })]) {

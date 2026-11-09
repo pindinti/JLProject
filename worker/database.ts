@@ -4,6 +4,7 @@ export interface WorkerEnvironment {
   DATABASE_URL?: string;
   JLPROJECT_ENV?: string;
   NEON_AUTH_BASE_URL?: string;
+  NEON_MANAGEMENT_API_KEY?: string;
 }
 
 export async function verifyDatabaseConnectivity(

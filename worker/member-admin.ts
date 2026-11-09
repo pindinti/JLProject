@@ -17,12 +17,15 @@ export interface MemberSummary {
 }
 
 export type UpdateResult = "updated" | "denied" | "not_found" | "last_admin" | "invalid";
+export type AddResult = "added" | "duplicate" | "denied" | "missing_user";
 
 export interface MemberAdminRepository {
   listOwnWorkspaces(authUserId: string): Promise<WorkspaceSummary[]>;
   listMembers(authUserId: string, workspaceId: string): Promise<MemberSummary[]>;
   updateMember(authUserId: string, workspaceId: string, membershipId: string,
     change: { role: WorkspaceRole } | { active: boolean }): Promise<UpdateResult>;
+  findAuthUserIdByEmail(email: string): Promise<string | null>;
+  addMember(authUserId: string, workspaceId: string, newUserId: string, role: WorkspaceRole): Promise<AddResult>;
 }
 
 export function createMemberAdminRepository(environment: WorkerEnvironment): MemberAdminRepository {
@@ -44,7 +47,9 @@ export function createMemberAdminRepository(environment: WorkerEnvironment): Mem
     },
     async listMembers(authUserId, workspaceId) {
       const rows = await sql`
-        SELECT membership.id::text AS id, auth_user.name, auth_user.email,
+        SELECT membership.id::text AS id,
+               COALESCE(NULLIF(auth_user.name, ''), auth_user.email) AS name,
+               auth_user.email,
                membership.role, membership.active
         FROM public.workspace_memberships AS membership
         JOIN neon_auth."user" AS auth_user ON auth_user.id = membership.auth_user_id
@@ -72,6 +77,21 @@ export function createMemberAdminRepository(environment: WorkerEnvironment): Mem
         ) AS result
       `;
       return rows[0]?.["result"] as UpdateResult;
+    },
+    async findAuthUserIdByEmail(email) {
+      const rows = await sql`
+        SELECT id::text AS id FROM neon_auth."user"
+        WHERE lower(email) = ${email} LIMIT 2
+      `;
+      return rows.length === 1 ? String(rows[0]?.["id"]) : null;
+    },
+    async addMember(authUserId, workspaceId, newUserId, role) {
+      const rows = await sql`
+        SELECT public.add_workspace_membership(
+          ${authUserId}::uuid, ${workspaceId}::uuid, ${newUserId}::uuid, ${role}::text
+        ) AS result
+      `;
+      return rows[0]?.["result"] as AddResult;
     }
   };
 }
