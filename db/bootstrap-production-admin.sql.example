@@ -1,0 +1,27 @@
+-- Manual production-only first-workspace bootstrap template.
+-- Do not execute until production resources and this exact identity are explicitly approved.
+-- Replace the UUID and workspace name only after verifying the identity in production Neon Auth.
+-- Unverified/missing identity or any existing workspace inserts zero rows.
+-- Save a private copy as UTF-8 without a byte-order mark; never commit filled values.
+BEGIN;
+
+LOCK TABLE public.workspaces IN EXCLUSIVE MODE;
+
+WITH selected_user AS (
+  SELECT id
+  FROM neon_auth."user"
+  WHERE id = '<verified-production-auth-user-uuid>'::uuid
+    AND "emailVerified" = true
+), new_workspace AS (
+  INSERT INTO public.workspaces (name)
+  SELECT '<workspace-name>'
+  FROM selected_user
+  WHERE NOT EXISTS (SELECT 1 FROM public.workspaces)
+  RETURNING id
+)
+INSERT INTO public.workspace_memberships (workspace_id, auth_user_id, role, active)
+SELECT new_workspace.id, selected_user.id, 'admin', true
+FROM new_workspace CROSS JOIN selected_user
+RETURNING workspace_id, role;
+
+COMMIT;

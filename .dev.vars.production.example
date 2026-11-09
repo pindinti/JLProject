@@ -1,0 +1,6 @@
+# Local-only values for testing the production Cloudflare Worker environment.
+# Populate only from the isolated production project. Never commit the filled file.
+JLPROJECT_ENV=production
+DATABASE_URL=
+NEON_AUTH_BASE_URL=
+# Intentionally no NEON_MANAGEMENT_API_KEY. Production identities are provisioned by an operator.

@@ -2,7 +2,7 @@
 
 **Product and discipline schedule management** — English-language reference documentation for incremental development with Codex in VS Code.
 
-- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1D.2A, with Phase 1D.3 target management prepared pending development migration approval.
+- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1E, with Phase 1F.1 production preflight prepared.
 - **Application UI locale:** Brazilian Portuguese (`pt-BR`) only.
 - **Documentation/prompt language:** English only.
 - **Initial users:** the product-development team of a Brazilian company.
@@ -18,6 +18,7 @@
 5. Read `docs/04-GANTT-UX.md` and `docs/05-RESCHEDULING.md` for visualizations and dependencies.
 6. Read `docs/06-ARCHITECTURE-AND-SECURITY.md`, `docs/07-DELIVERY-PLAN.md`, `docs/08-TESTS-AND-DECISIONS.md`, and `docs/09-LOCALIZATION.md`.
 7. Use `CODEX-PHASE-0-PROMPT.md` in the first VS Code Codex conversation. Do not skip the Phase 0 approval gate.
+8. Before production resources or release, complete `docs/10-PRODUCTION-PREFLIGHT.md` and obtain its listed approvals.
 
 ## Approved product decisions
 
