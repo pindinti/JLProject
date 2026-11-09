@@ -15,7 +15,7 @@ const targets = [{ id: "target", name: "Synthetic target", targetDate: "2026-11-
 function mount() {
   return render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
     targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
-    canEdit onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} />);
+    canEdit onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} />);
 }
 
 describe("schedule workspace refinements", () => {

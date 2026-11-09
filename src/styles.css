@@ -306,6 +306,15 @@ form button {
 .schedule-drawer { width: min(100%, 28rem); height: 100%; overflow-y: auto; background: #fff; box-shadow: -0.5rem 0 1.5rem rgb(0 0 0 / 20%); padding: 1.25rem; }
 .schedule-drawer .hierarchy-form { border: 0; margin: 0; padding: 0; }
 .schedule-drawer .schedule-toolbar { position: sticky; bottom: 0; background: #fff; padding: 0.5rem 0; }
+.schedule-date-form,
+.schedule-history { border-top: 1px solid #cbd6de; margin-top: 1rem; padding-top: 1rem; }
+.schedule-date-form h4,
+.schedule-history h4 { margin: 0; }
+.schedule-date-form p { margin: 0.2rem 0; }
+.schedule-date-form textarea { min-height: 5rem; }
+.schedule-history ol { padding-left: 1.25rem; }
+.schedule-history li { margin-bottom: 1rem; overflow-wrap: anywhere; }
+.schedule-history li p { margin: 0.35rem 0; }
 
 @media (max-width: 70rem) {
   .workspace-table-header,

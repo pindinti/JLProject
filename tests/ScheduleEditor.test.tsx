@@ -23,7 +23,8 @@ function setup(tree: { productId: string; disciplines: unknown[] } = { productId
   targets: unknown[] = []) {
   api.fetch.mockImplementation((path: string) => Promise.resolve(path.endsWith("/hierarchy")
     ? json({ hierarchy: tree }) : path.endsWith("/targets")
-      ? json({ targets }) : json({ stageDefinitions: definitions })));
+      ? json({ targets }) : path.endsWith("/date-history")
+        ? json({ changes: [] }) : json({ stageDefinitions: definitions })));
 }
 function mount(role: "admin" | "editor" | "viewer" = "admin") {
   const onAccessLost = vi.fn();
@@ -175,19 +176,133 @@ describe("schedule editor", () => {
     ));
   });
 
-  it("keeps existing activity dates read-only and confirms metadata edits", async () => {
+  it("keeps metadata and date changes separate and confirms metadata edits", async () => {
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
-    expect(screen.getByText(/As datas existentes são somente leitura/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Início planejado")).not.toBeInTheDocument();
+    expect(screen.getByText(/A alteração das datas exige uma justificativa/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Início planejado")).toHaveValue("01/11/2026");
     fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Atualizada" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar dados" }));
     await waitFor(() => expect(confirmation).toHaveBeenCalled());
     const mutation = api.fetch.mock.calls.find(([path, options]) => path.endsWith(`/activities/${activity.id}`) && options?.method === "PATCH");
     expect(mutation?.[1].body).toContain('"version":1');
     expect(mutation?.[1].body).not.toContain("plannedStart");
     confirmation.mockRestore();
+  });
+
+  it("requires a reason, saves audited dates, refreshes stage and Gantt, and preserves workspace state", async () => {
+    let current = activity;
+    let changes: unknown[] = [];
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/date-history")) return Promise.resolve(json({ changes }));
+      if (path.endsWith("/dates") && options?.method === "PATCH") {
+        current = { ...current, plannedStart: "2026-11-03", plannedEnd: "2026-11-10", version: 2 };
+        changes = [{ operationId: "a7777777-7777-4777-8777-777777777777",
+          changedAt: "2026-11-09T12:00:00.000Z", previousStart: "2026-11-01", previousEnd: "2026-11-08",
+          newStart: current.plannedStart, newEnd: current.plannedEnd, reason: "Synthetic approved correction" }];
+        return Promise.resolve(json({ activity: current, changed: true }));
+      }
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id,
+        disciplines: [{ ...discipline, stages: [{ ...stage, derivedStart: current.plannedStart,
+          derivedEnd: current.plannedEnd, activities: [current] }] }] } }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    const body = container.querySelector<HTMLElement>(".workspace-body")!;
+    body.scrollTop = 120;
+    fireEvent.change(screen.getByLabelText("Escala"), { target: { value: "month" } });
+    const initialLeft = container.querySelector<HTMLElement>(".timeline-bar.bar-activity")!.style.left;
+    fireEvent.click(screen.getByRole("button", { name: "Editar atividade" }));
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "03/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "10/11/2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("justificativa");
+    expect(api.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/dates"), expect.anything());
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"),
+      { target: { value: "Synthetic approved correction" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("registradas no histórico"));
+    expect(container.querySelector<HTMLElement>(".workspace-table-row.row-stage")!.textContent).toContain("10/11/2026");
+    expect(container.querySelector<HTMLElement>(".timeline-bar.bar-activity")!.style.left).not.toBe(initialLeft);
+    expect(screen.getByText("Synthetic approved correction")).toBeInTheDocument();
+    expect(body.scrollTop).toBe(120);
+    expect(screen.getByLabelText("Escala")).toHaveValue("month");
+    expect(container.querySelector(".workspace-table-row.row-activity")).toHaveClass("selected");
+  });
+
+  it("does not submit unchanged dates and lets viewers read history without edit controls", async () => {
+    const first = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("não foram alteradas");
+    expect(api.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/dates"), expect.anything());
+    fireEvent.keyDown(window, { key: "Escape" });
+    first.unmount();
+    setup(undefined, [{ id: "target", name: "Synthetic target", targetDate: "2026-11-05",
+      operationalDate: null, displayOrder: 0 }]);
+    const { unmount } = render(<ScheduleEditor workspace={{ ...workspace, role: "viewer" }} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Histórico de datas" }));
+    expect(await screen.findByText("Nenhuma alteração de datas registrada.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Salvar datas" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar atividade" })).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it("shows a retryable history error without exposing a failed response", async () => {
+    setup();
+    const defaultFetch = api.fetch.getMockImplementation()!;
+    let historyCalls = 0;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/date-history") && historyCalls++ === 0)
+        return Promise.resolve(new Response("private history detail", { status: 503 }));
+      return defaultFetch(path, options);
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o histórico");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("private history detail");
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByText("Nenhuma alteração de datas registrada.")).toBeInTheDocument();
+  });
+
+  it("renders audit instants in São Paulo and prevents duplicate date submissions", async () => {
+    const defaultFetch = api.fetch.getMockImplementation()!;
+    let resolveDate!: (value: Response) => void;
+    let dateCalls = 0;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/date-history")) return Promise.resolve(json({ changes: [{
+        operationId: "a7777777-7777-4777-8777-777777777777",
+        changedAt: "2026-11-09T01:00:00.000Z", previousStart: "2026-11-01",
+        previousEnd: "2026-11-08", newStart: "2026-11-03", newEnd: "2026-11-10",
+        reason: "Synthetic approved correction"
+      }] }));
+      if (path.endsWith("/dates") && options?.method === "PATCH") {
+        dateCalls++;
+        return new Promise<Response>((resolve) => { resolveDate = resolve; });
+      }
+      return defaultFetch(path, options);
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
+    const recorded = await screen.findByText(/08\/11\/2026.*22:00/);
+    expect(recorded).toHaveAttribute("dateTime", "2026-11-09T01:00:00.000Z");
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "03/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "10/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"),
+      { target: { value: "Synthetic approved correction" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar datas" })).toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    expect(dateCalls).toBe(1);
+    resolveDate(json({ activity: { ...activity, plannedStart: "2026-11-03",
+      plannedEnd: "2026-11-10", version: 2 }, changed: true }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("registradas no histórico"));
   });
 
   it("shows retry after load failure and safe conflict feedback", async () => {

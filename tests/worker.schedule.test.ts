@@ -27,13 +27,16 @@ function repository(): ScheduleRepository {
   return {
     listStageDefinitions: vi.fn(async () => [{ id: "a9999999-9999-4999-8999-999999999999", code: "EC", color: "#445566" }]),
     productExists: vi.fn(async () => true), disciplineExists: vi.fn(async () => true),
-    stageExists: vi.fn(async () => true),
+    stageExists: vi.fn(async () => true), activityExists: vi.fn(async () => true),
     listDisciplines: vi.fn(async () => [d]), createDiscipline: vi.fn(async () => ({ status: "ok" as const, value: d })),
     updateDiscipline: vi.fn(async () => ({ status: "ok" as const, value: { ...d, version: 2 } })),
     listStages: vi.fn(async () => [s]), createStage: vi.fn(async () => ({ status: "ok" as const, value: s })),
     updateStage: vi.fn(async () => ({ status: "ok" as const, value: { ...s, version: 2 } })),
     listActivities: vi.fn(async () => [a]), createActivity: vi.fn(async () => ({ status: "ok" as const, value: a })),
     updateActivity: vi.fn(async () => ({ status: "ok" as const, value: { ...a, version: 2 } })),
+    changeActivityDates: vi.fn(async () => ({ status: "updated" as const,
+      activity: { ...a, plannedStart: "2026-11-02", version: 2 } })),
+    listActivityDateHistory: vi.fn(async () => []),
     getHierarchy: vi.fn(async () => ({ productId: product, disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] })),
     listTargets: vi.fn(async () => [{ id: "f7777777-7777-4777-8777-777777777777", name: "Meta sintética",
       targetDate: "2026-11-08", operationalDate: null, displayOrder: 0 }])
@@ -146,6 +149,79 @@ describe("schedule hierarchy API", () => {
       name: "Teste", displayOrder: 0, plannedStart: "2026-11-02", version: 1
     }), "editor", repo)).status).toBe(400);
     expect(repo.updateActivity).not.toHaveBeenCalled();
+  });
+
+  it("audits valid date edits through a verified actor and rejects stale or unchanged results safely", async () => {
+    const repo = repository();
+    const path = `${activities}/${activity}/dates`;
+    const input = { plannedStart: "2026-11-02", plannedEnd: "2026-11-06",
+      reason: "Synthetic schedule correction", version: 1 };
+    const changed = await call(request(path, "PATCH", { ...input, actorId: "forged" }), "editor", repo);
+    expect(changed.status).toBe(400);
+    const valid = await call(request(path, "PATCH", input), "editor", repo);
+    expect(valid.status).toBe(200);
+    await expect(valid.json()).resolves.toMatchObject({ changed: true, activity: { plannedStart: "2026-11-02" } });
+    expect(repo.changeActivityDates).toHaveBeenCalledWith(ws, product, discipline, stage, activity, actor,
+      input.plannedStart, input.plannedEnd, input.reason, 1, expect.any(String));
+    const stale = await call(request(path, "PATCH", input), "admin", {
+      ...repo, changeActivityDates: async () => ({ status: "stale" }) });
+    expect(stale.status).toBe(409);
+    expect(await stale.text()).not.toContain("database");
+    const unchanged = await call(request(path, "PATCH", { ...input, reason: null }), "admin", {
+      ...repo, changeActivityDates: async () => ({ status: "unchanged", activity: a }) });
+    expect(unchanged.status).toBe(200);
+    await expect(unchanged.json()).resolves.toMatchObject({ changed: false });
+  });
+
+  it("validates date and reason inputs without calling the date operation", async () => {
+    const repo = repository();
+    const path = `${activities}/${activity}/dates`;
+    for (const input of [
+      { plannedStart: "2026-02-30", plannedEnd: "2026-03-01", reason: "Synthetic correction", version: 1 },
+      { plannedStart: "2026-11-06", plannedEnd: "2026-11-01", reason: "Synthetic correction", version: 1 },
+      { plannedStart: "2026-11-02", plannedEnd: "2026-11-06", reason: "short", version: 1 },
+      { plannedStart: "2026-11-02", plannedEnd: "2026-11-06", reason: "Synthetic correction", version: 0 },
+      { plannedStart: "2026-11-02", plannedEnd: "2026-11-06", reason: "Synthetic correction", version: 1,
+        operationId: "forged" }
+    ]) expect((await call(request(path, "PATCH", input), "admin", repo)).status).toBe(400);
+    expect(repo.changeActivityDates).not.toHaveBeenCalled();
+    const missingReason = await call(request(path, "PATCH", {
+      plannedStart: "2026-11-02", plannedEnd: "2026-11-06", version: 1
+    }), "admin", { ...repo, changeActivityDates: async () => ({ status: "invalid" }) });
+    expect(missingReason.status).toBe(400);
+  });
+
+  it("scopes date writes and history to active workspace membership and activity ownership", async () => {
+    const repo = repository();
+    const path = `${activities}/${activity}/dates`;
+    const history = `${activities}/${activity}/date-history`;
+    const input = { plannedStart: "2026-11-02", plannedEnd: "2026-11-06",
+      reason: "Synthetic correction", version: 1 };
+    expect((await call(request(path, "PATCH", input), "viewer", repo)).status).toBe(403);
+    expect((await call(request(path, "PATCH", input), "admin", repo, false)).status).toBe(403);
+    expect((await call(request(path.replace(ws, otherWs), "PATCH", input), "admin", repo)).status).toBe(403);
+    expect((await call(request(path, "PATCH", input), "admin", {
+      ...repo, activityExists: async () => false })).status).toBe(404);
+    expect((await call(request(history), "viewer", repo)).status).toBe(200);
+    expect(repo.listActivityDateHistory).toHaveBeenCalledWith(ws, product, discipline, stage, activity);
+    expect((await call(request(history), "admin", { ...repo, activityExists: async () => false })).status).toBe(404);
+    expect((await call(request(history.replace(ws, otherWs)), "admin", repo)).status).toBe(403);
+    expect((await call(request(history, "POST", {}), "admin", repo)).status).toBe(405);
+    const anonymous = await handleRequest(request(path, "PATCH", input), environment, async () => null,
+      () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+    expect(repo.changeActivityDates).toHaveBeenCalledTimes(0);
+  });
+
+  it("returns a generic service error if the atomic date operation fails", async () => {
+    const repo = repository();
+    const path = `${activities}/${activity}/dates`;
+    const failed = await call(request(path, "PATCH", { plannedStart: "2026-11-02",
+      plannedEnd: "2026-11-06", reason: "Synthetic correction", version: 1 }), "admin", {
+      ...repo, changeActivityDates: async () => { throw new Error("private audit constraint detail"); }
+    });
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private audit constraint detail");
   });
 
   it("checks versions on metadata updates and reports stale results", async () => {

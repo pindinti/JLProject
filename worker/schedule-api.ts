@@ -7,7 +7,7 @@ import { createScheduleRepository, type ActivityInput, type ActivityMetadataInpu
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "disciplines" | "stages" | "activities";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history";
   disciplineId?: string; stageId?: string; activityId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
@@ -30,6 +30,10 @@ function parseRoute(pathname: string): Route | null {
   if (parts[3] !== "activities") return null;
   if (parts.length === 4) return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], kind: "activities" };
   if (parts.length === 5) return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activities" };
+  if (parts.length === 6 && parts[5] === "dates")
+    return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activity_dates" };
+  if (parts.length === 6 && parts[5] === "date-history")
+    return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activity_history" };
   return null;
 }
 
@@ -98,6 +102,19 @@ function civilDate(value: unknown): value is string {
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   return day <= days[month - 1];
 }
+function dateChangeInput(value: Record<string, unknown>):
+  { start: string; end: string; reason: string | null; version: number } | null {
+  if (!only(value, ["plannedStart", "plannedEnd", "reason", "version"]) ||
+      !civilDate(value["plannedStart"]) || !civilDate(value["plannedEnd"]) ||
+      value["plannedStart"] > value["plannedEnd"] || !version(value["version"])) return null;
+  const rawReason = value["reason"];
+  const reason = rawReason === undefined || rawReason === null || rawReason === ""
+    ? null : label(rawReason, 2000);
+  if (reason === null && rawReason !== undefined && rawReason !== null && rawReason !== "") return null;
+  if (reason && reason.length < 10) return null;
+  return { start: value["plannedStart"], end: value["plannedEnd"], reason,
+    version: value["version"] as number };
+}
 function activityInput(value: Record<string, unknown>, editing: boolean):
   { input: ActivityInput | ActivityMetadataInput; version?: number } | null {
   const keys = ["name", "activityType", "displayOrder", "notes",
@@ -147,6 +164,9 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     return response({ error: "Não encontrado." }, 404);
   if (stageId && !(await repository.stageExists(ws, productId, disciplineId!, stageId, write)))
     return response({ error: "Não encontrado." }, 404);
+  if ((route.kind === "activity_dates" || route.kind === "activity_history") && activityId &&
+      !(await repository.activityExists(ws, productId, disciplineId!, stageId!, activityId, write)))
+    return response({ error: "Não encontrado." }, 404);
 
   if (route.kind === "hierarchy" && request.method === "GET") {
     const hierarchy = await repository.getHierarchy(ws, productId);
@@ -154,6 +174,21 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   }
   if (route.kind === "targets" && request.method === "GET") {
     return response({ targets: await repository.listTargets(ws, productId) }, 200);
+  }
+  if (route.kind === "activity_history" && request.method === "GET" && activityId) {
+    return response({ changes: await repository.listActivityDateHistory(ws, productId, disciplineId!, stageId!, activityId) }, 200);
+  }
+  if (route.kind === "activity_dates" && request.method === "PATCH" && activityId) {
+    const value = await body(request); const parsed = value && dateChangeInput(value);
+    if (!parsed) return response({ error: "Datas ou justificativa inválidas." }, 400);
+    const result = await repository.changeActivityDates(ws, productId, disciplineId!, stageId!, activityId,
+      identity.subject, parsed.start, parsed.end, parsed.reason, parsed.version, crypto.randomUUID());
+    if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+    if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
+    if (result.status === "stale") return response({ error: "A atividade foi alterada. Atualize os dados e tente novamente." }, 409);
+    if (result.status === "invalid") return response({ error: "Datas ou justificativa inválidas." }, 400);
+    if ("activity" in result) return response({ activity: result.activity, changed: result.status === "updated" }, 200);
+    return response({ error: "Serviço indisponível." }, 503);
   }
   if (route.kind === "disciplines") {
     if (request.method === "GET" && !disciplineId) return response({ disciplines: await repository.listDisciplines(ws, productId) }, 200);

@@ -22,6 +22,11 @@ export interface ScheduleHierarchy {
 }
 export interface StageDefinition { id: string; code: string; color: string }
 export interface BusinessTarget { id: string; name: string; targetDate: string; operationalDate: string | null; displayOrder: number }
+export interface DateChange { operationId: string; changedAt: string;
+  previousStart: string | null; previousEnd: string | null;
+  newStart: string; newEnd: string; reason: string }
+export type DateChangeResult = { status: "updated" | "unchanged"; activity: Activity } |
+  { status: "not_found" | "stale" | "invalid" | "forbidden" };
 export type Mutation<T> = { status: "ok"; value: T } |
   { status: "not_found" | "duplicate" | "stale" | "conflict" };
 
@@ -30,6 +35,8 @@ export interface ScheduleRepository {
   productExists(workspaceId: string, productId: string, activeOnly: boolean): Promise<boolean>;
   disciplineExists(workspaceId: string, productId: string, disciplineId: string, activeOnly: boolean): Promise<boolean>;
   stageExists(workspaceId: string, productId: string, disciplineId: string, stageId: string, activeOnly: boolean): Promise<boolean>;
+  activityExists(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+    activityId: string, activeOnly: boolean): Promise<boolean>;
   listDisciplines(workspaceId: string, productId: string): Promise<Discipline[]>;
   createDiscipline(workspaceId: string, productId: string, actorId: string, input: DisciplineInput): Promise<Mutation<Discipline>>;
   updateDiscipline(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: DisciplineInput, version: number): Promise<Mutation<Discipline>>;
@@ -39,6 +46,11 @@ export interface ScheduleRepository {
   listActivities(workspaceId: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]>;
   createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
   updateActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, activityId: string, actorId: string, input: ActivityMetadataInput, version: number): Promise<Mutation<Activity>>;
+  changeActivityDates(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+    activityId: string, actorId: string, start: string, end: string, reason: string | null,
+    version: number, operationId: string): Promise<DateChangeResult>;
+  listActivityDateHistory(workspaceId: string, productId: string, disciplineId: string,
+    stageId: string, activityId: string): Promise<DateChange[]>;
   getHierarchy(workspaceId: string, productId: string): Promise<ScheduleHierarchy | null>;
   listTargets(workspaceId: string, productId: string): Promise<BusinessTarget[]>;
 }
@@ -138,6 +150,15 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
     return rows.length > 0;
   }
+  async function activityExists(ws: string, productId: string, disciplineId: string,
+    stageId: string, activityId: string, activeOnly: boolean) {
+    const rows = await sql`SELECT 1 FROM public.stage_activities AS a
+      JOIN public.products AS p ON p.id = a.product_id AND p.workspace_id = a.workspace_id
+      WHERE a.workspace_id = ${ws}::uuid AND a.product_id = ${productId}::uuid
+        AND a.discipline_id = ${disciplineId}::uuid AND a.stage_id = ${stageId}::uuid
+        AND a.id = ${activityId}::uuid AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
+    return rows.length > 0;
+  }
   async function listDisciplines(ws: string, productId: string): Promise<Discipline[]> {
     const rows = await sql`SELECT id::text AS id, product_id::text AS "productId", name,
       short_code AS "shortCode", color, display_order AS "displayOrder", description, version
@@ -205,7 +226,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         WHERE workspace_id = ${ws}::uuid ORDER BY lower(code), id`;
       return rows.map((row) => ({ id: text(row["id"]), code: text(row["code"]), color: text(row["color"]) }));
     },
-    productExists, disciplineExists, stageExists,
+    productExists, disciplineExists, stageExists, activityExists,
     listDisciplines,
     async createDiscipline(ws, productId, actorId, input) {
       const rows = await sql`INSERT INTO public.product_disciplines
@@ -283,6 +304,37 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       if (!rows[0]) return { status: await findActivity(ws, productId, disciplineId, stageId, activityId) ? "stale" : "not_found" };
       const value = await findActivity(ws, productId, disciplineId, stageId, activityId);
       return value ? { status: "ok", value } : { status: "not_found" };
+    },
+    async changeActivityDates(ws, productId, disciplineId, stageId, activityId, actorId,
+      start, end, reason, version, operationId) {
+      const rows = await sql`SELECT public.change_activity_dates(
+        ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
+        ${activityId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
+        ${start}::date, ${end}::date, ${reason}, ${version}::bigint) AS result`;
+      const result = rows[0]?.["result"] as { status?: string } | undefined;
+      if (!result || !["updated", "unchanged", "not_found", "stale", "invalid", "forbidden"].includes(result.status ?? ""))
+        throw new Error("Unexpected date change result.");
+      if (result.status !== "updated" && result.status !== "unchanged")
+        return { status: result.status as "not_found" | "stale" | "invalid" | "forbidden" };
+      const value = await findActivity(ws, productId, disciplineId, stageId, activityId);
+      return value ? { status: result.status, activity: value } : { status: "not_found" };
+    },
+    async listActivityDateHistory(ws, productId, disciplineId, stageId, activityId) {
+      const rows = await sql`SELECT operation_id::text AS "operationId",
+        to_char(changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "changedAt",
+        to_char(previous_start, 'YYYY-MM-DD') AS "previousStart",
+        to_char(previous_end, 'YYYY-MM-DD') AS "previousEnd",
+        to_char(new_start, 'YYYY-MM-DD') AS "newStart",
+        to_char(new_end, 'YYYY-MM-DD') AS "newEnd", reason
+        FROM public.activity_date_changes
+        WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+          AND discipline_id = ${disciplineId}::uuid AND stage_id = ${stageId}::uuid
+          AND activity_id = ${activityId}::uuid
+        ORDER BY changed_at DESC, operation_id DESC`;
+      return rows.map((row) => ({ operationId: text(row["operationId"]),
+        changedAt: text(row["changedAt"]), previousStart: nullable(row["previousStart"]),
+        previousEnd: nullable(row["previousEnd"]), newStart: text(row["newStart"]),
+        newEnd: text(row["newEnd"]), reason: text(row["reason"]) }));
     },
     async getHierarchy(ws, productId) {
       const rows = await sql`SELECT p.id::text AS "productId",

@@ -75,12 +75,12 @@ export interface TimelineScale {
 }
 
 export function makeTimeline(tree: ScheduleTree, targets: ScheduleTarget[], zoom: Zoom,
-  today = saoPauloCivilDate(new Date())): TimelineScale {
+  today = saoPauloCivilDate(new Date()), previous?: Pick<TimelineScale, "startDay" | "endDay">): TimelineScale {
   const activities = tree.disciplines.flatMap((discipline) => discipline.stages.flatMap((stage) => stage.activities));
   const dates = [...activities.flatMap((activity) => [activity.plannedStart, activity.plannedEnd]),
     ...targets.map((target) => target.targetDate), today].filter((date): date is string => date !== null);
-  const startDay = Math.min(...dates.map(dayNumber)) - 14;
-  const endDay = Math.max(...dates.map(dayNumber)) + 14;
+  const startDay = Math.min(Math.min(...dates.map(dayNumber)) - 14, previous?.startDay ?? Infinity);
+  const endDay = Math.max(Math.max(...dates.map(dayNumber)) + 14, previous?.endDay ?? -Infinity);
   const dayWidth = zoom === "day" ? 30 : zoom === "week" ? 12 : 4;
   const months: TimelineScale["months"] = [];
   for (let day = startDay; day <= endDay;) {

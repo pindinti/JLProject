@@ -8,17 +8,21 @@ import { messages } from "./locales/pt-BR";
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
 
 export function ScheduleWorkspace({ product, tree, targets, openDisciplines, openStages,
-  canEdit, onToggle, onEdit, onAdd }: {
+  canEdit, onToggle, onEdit, onAdd, onHistory }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[];
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
-  onAdd: (row: VisibleRow) => void;
+  onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
 }) {
   const [zoom, setZoom] = useState<Zoom>("week");
   const [tableWidth, setTableWidth] = useState(50);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [today, setToday] = useState(() => saoPauloCivilDate(new Date()));
+  const [bounds, setBounds] = useState(() => {
+    const initial = makeTimeline(tree, targets, "week", today);
+    return { startDay: initial.startDay, endDay: initial.endDay };
+  });
   const [productExpanded, setProductExpanded] = useState(true);
   const [mobilePane, setMobilePane] = useState<"table" | "gantt">("table");
   const splitRef = useRef<HTMLDivElement>(null);
@@ -28,7 +32,12 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   const dragging = useRef(false);
   const rows = useMemo(() => visibleScheduleRows(product, tree, openDisciplines, openStages, productExpanded),
     [product, tree, openDisciplines, openStages, productExpanded]);
-  const scale = useMemo(() => makeTimeline(tree, targets, zoom, today), [tree, targets, zoom, today]);
+  const scale = useMemo(() => makeTimeline(tree, targets, zoom, today, bounds), [tree, targets, zoom, today, bounds]);
+
+  useEffect(() => {
+    if (scale.startDay !== bounds.startDay || scale.endDay !== bounds.endDay)
+      queueMicrotask(() => setBounds({ startDay: scale.startDay, endDay: scale.endDay }));
+  }, [scale.startDay, scale.endDay, bounds.startDay, bounds.endDay]);
 
   useEffect(() => {
     const refresh = () => setToday(saoPauloCivilDate(new Date()));
@@ -164,7 +173,9 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
               onClick={() => { setSelected(row.key); onEdit(row); }}>{messages.edit}</button>}
               {canEdit && (row.kind === "discipline" || row.kind === "stage") && <button type="button"
                 aria-label={row.kind === "discipline" ? messages.addStage : messages.addActivity}
-                onClick={() => { setSelected(row.key); onAdd(row); }}>{messages.add}</button>}</span>
+                onClick={() => { setSelected(row.key); onAdd(row); }}>{messages.add}</button>}
+              {row.kind === "activity" && !canEdit && <button type="button" onClick={() => { setSelected(row.key); onHistory(row); }}
+                aria-label={messages.activityDateHistory}>{messages.historyAction}</button>}</span>
           </div>)}
         </div>
         <div className="workspace-divider" role="separator" tabIndex={0} aria-orientation="vertical"

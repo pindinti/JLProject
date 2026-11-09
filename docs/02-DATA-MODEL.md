@@ -57,6 +57,12 @@ The above is a **conceptual sketch**; PostgreSQL constraints, foreign keys, inde
 
 Activities have optional `source_external_id` reserved for import, with uniqueness within a product when present. It is not accepted from the Phase 1B.1 public API. Planned dates are PostgreSQL `date` values and may be both absent for a draft activity, or both valid with start no later than end. Stage dates are never stored: reads derive the minimum child start and maximum child end. Existing activity dates are protected by a database trigger that rejects updates until an audited date-edit operation is implemented. Metadata updates use a version token and cannot include date fields. The future immutable `R00` and scenario/version tables can reference the stable activity IDs without replacing them.
 
+### Phase 1D.2A working-date audit
+
+`db/migrations/0006_activity_date_audit.sql` adds `activity_date_changes` for one immutable event per actual working-date change. Its operation UUID is unique; composite foreign keys retain the full workspace/product/discipline/stage/activity scope and the actor's workspace membership. Each row stores a UTC instant, previous and new civil dates, mandatory reason, and before/after activity versions. An index supports newest-first activity history. An append-only trigger rejects updates and deletes. Deleting an audited activity or actor membership is restricted by foreign keys. The existing privileged database owner can still insert directly; migration `0007` therefore installs a limited Worker role that cannot mutate the audit table.
+
+The controlled `change_activity_dates` function locks the active admin/editor membership and target activity, checks product status and expected version, and performs the working-date update and audit insertion in one PostgreSQL statement. A no-op creates no event or version increment. The date trigger accepts a changed date only while the no-login executor role runs that function; session settings alone cannot authorize an update. R00 remains an independent JSON snapshot protected by its existing mutation trigger. No target, unrelated activity, dependency, or schedule revision changes occur in this phase. Both migrations were separately approved for the development branch, and rollback-only synthetic database verification passed with the limited Worker role.
+
 ## Data integrity invariants
 
 ### Phase 1C.2 initial import schema
