@@ -2,7 +2,7 @@
 
 **Product and discipline schedule management** — English-language reference documentation for incremental development with Codex in VS Code.
 
-- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1D.1.1.
+- **Specification:** v0.2 — November 6, 2026; implementation through Phase 1D.2A, with Phase 1D.3 target management prepared pending development migration approval.
 - **Application UI locale:** Brazilian Portuguese (`pt-BR`) only.
 - **Documentation/prompt language:** English only.
 - **Initial users:** the product-development team of a Brazilian company.

@@ -286,6 +286,40 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     finally { setBusy(false); }
   }
 
+  async function targetRequest(path: string, method: string, data?: unknown): Promise<Response> {
+    let result: Response;
+    try {
+      result = await authenticatedFetch(path, { method, ...(data === undefined ? {} : {
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(data)
+      }) });
+    } catch { throw new Error(messages.milestoneSaveError); }
+    if (result.status === 401 || result.status === 403) {
+      onAccessLost();
+      throw new Error(messages.accessDenied);
+    }
+    return result;
+  }
+  async function createTarget(value: Omit<ScheduleTarget, "id" | "operationalDate" | "displayOrder" | "version">): Promise<ScheduleTarget> {
+    const result = await targetRequest(`${base}/targets`, "POST", value);
+    if (!result.ok) throw new Error((await result.json().catch(() => null))?.error ?? messages.milestoneSaveError);
+    const target = (await result.json() as { target: ScheduleTarget }).target;
+    setTargets((current) => [...current, target].sort((a, b) => a.displayOrder - b.displayOrder));
+    return target;
+  }
+  async function updateTarget(target: ScheduleTarget, value: { name: string; description: string | null;
+    targetDate: string; color: string; reason: string | null }): Promise<ScheduleTarget> {
+    const result = await targetRequest(`${base}/targets/${target.id}`, "PATCH", { ...value, version: target.version });
+    if (!result.ok) throw new Error((await result.json().catch(() => null))?.error ?? messages.milestoneSaveError);
+    const updated = (await result.json() as { target: ScheduleTarget }).target;
+    setTargets((current) => current.map((item) => item.id === updated.id ? updated : item));
+    return updated;
+  }
+  async function deleteTarget(target: ScheduleTarget): Promise<void> {
+    const result = await targetRequest(`${base}/targets/${target.id}`, "DELETE", { version: target.version });
+    if (!result.ok) throw new Error((await result.json().catch(() => null))?.error ?? messages.milestoneDeleteError);
+    setTargets((current) => current.filter((item) => item.id !== target.id));
+  }
+
   function changeDefinition(id: string) {
     const selected = definitions.find((definition) => definition.id === id);
     setDraft((previous) => previous ? { ...previous, definitionId: id,
@@ -343,7 +377,8 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
             openDisciplines={openDisciplines ?? new Set()} openStages={openStages ?? new Set()}
             canEdit={canEdit} onToggle={(row) => {
               if (row.kind === "discipline" || row.kind === "stage") toggle(row.id, row.kind);
-            }} onEdit={editRow} onAdd={addChild} onHistory={openHistory} />
+            }} onEdit={editRow} onAdd={addChild} onHistory={openHistory}
+            onCreateTarget={createTarget} onUpdateTarget={updateTarget} onDeleteTarget={deleteTarget} />
         </>
       )}
       {((draft && canEdit) || historySubject) && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {

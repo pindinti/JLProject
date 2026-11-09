@@ -21,14 +21,16 @@ export interface ScheduleHierarchy {
   disciplines: (Discipline & { stages: (Stage & { activities: Activity[] })[] })[];
 }
 export interface StageDefinition { id: string; code: string; color: string }
-export interface BusinessTarget { id: string; name: string; targetDate: string; operationalDate: string | null; displayOrder: number }
+export interface BusinessTarget { id: string; name: string; description: string | null; color: string;
+  targetDate: string; operationalDate: string | null; displayOrder: number; version: number }
+export interface TargetInput { name: string; description: string | null; targetDate: string; color: string }
 export interface DateChange { operationId: string; changedAt: string;
   previousStart: string | null; previousEnd: string | null;
   newStart: string; newEnd: string; reason: string }
 export type DateChangeResult = { status: "updated" | "unchanged"; activity: Activity } |
   { status: "not_found" | "stale" | "invalid" | "forbidden" };
 export type Mutation<T> = { status: "ok"; value: T } |
-  { status: "not_found" | "duplicate" | "stale" | "conflict" };
+  { status: "not_found" | "duplicate" | "stale" | "conflict" | "invalid" | "forbidden" };
 
 export interface ScheduleRepository {
   listStageDefinitions(workspaceId: string): Promise<StageDefinition[]>;
@@ -53,6 +55,11 @@ export interface ScheduleRepository {
     stageId: string, activityId: string): Promise<DateChange[]>;
   getHierarchy(workspaceId: string, productId: string): Promise<ScheduleHierarchy | null>;
   listTargets(workspaceId: string, productId: string): Promise<BusinessTarget[]>;
+  createTarget(workspaceId: string, productId: string, actorId: string, input: TargetInput): Promise<Mutation<BusinessTarget>>;
+  updateTarget(workspaceId: string, productId: string, targetId: string, actorId: string,
+    input: TargetInput, version: number, reason: string | null, operationId: string): Promise<Mutation<BusinessTarget>>;
+  deleteTarget(workspaceId: string, productId: string, targetId: string, actorId: string,
+    version: number, operationId: string): Promise<Mutation<BusinessTarget>>;
 }
 
 const text = (value: unknown) => String(value);
@@ -359,15 +366,55 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     async listTargets(ws, productId) {
       const rows = await sql`SELECT id::text AS id, name,
+        description, color,
         to_char(target_date, 'YYYY-MM-DD') AS "targetDate",
         to_char(operational_date, 'YYYY-MM-DD') AS "operationalDate",
-        display_order AS "displayOrder"
+        display_order AS "displayOrder", version
         FROM public.business_targets
         WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+          AND deleted_at IS NULL
         ORDER BY display_order, id`;
       return rows.map((row) => ({ id: text(row["id"]), name: text(row["name"]),
+        description: nullable(row["description"]), color: text(row["color"]),
         targetDate: text(row["targetDate"]), operationalDate: nullable(row["operationalDate"]),
-        displayOrder: Number(row["displayOrder"]) }));
+        displayOrder: Number(row["displayOrder"]), version: Number(row["version"]) }));
+    },
+    async createTarget(ws, productId, actorId, input) {
+      try {
+        const rows = await sql`INSERT INTO public.business_targets
+          (workspace_id, product_id, name, description, color, target_date, source_external_id,
+           source_row, display_order, created_by)
+          SELECT p.workspace_id, p.id, ${input.name}, ${input.description}, ${input.color},
+            ${input.targetDate}::date, NULL, NULL,
+            (SELECT COALESCE(max(display_order) + 1, 0) FROM public.business_targets
+              WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid), ${actorId}::uuid
+          FROM public.products AS p WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid AND p.active
+          RETURNING id::text AS id`;
+        if (!rows[0]) return { status: "not_found" };
+        const value = (await this.listTargets(ws, productId)).find((target) => target.id === text(rows[0]["id"]));
+        return value ? { status: "ok", value } : { status: "not_found" };
+      } catch (error) { if (duplicate(error)) return { status: "duplicate" }; throw error; }
+    },
+    async updateTarget(ws, productId, targetId, actorId, input, version, reason, operationId) {
+      let rows;
+      try {
+        rows = await sql`SELECT public.update_business_target(
+          ${ws}::uuid, ${productId}::uuid, ${targetId}::uuid, ${actorId}::uuid,
+          ${operationId}::uuid, ${input.name}, ${input.description}, ${input.color},
+          ${input.targetDate}::date, ${version}::bigint, ${reason}) AS result`;
+      } catch (error) { if (duplicate(error)) return { status: "duplicate" }; throw error; }
+      const result = text(rows[0]?.["result"]);
+      if (result !== "updated") return { status: result as "not_found" | "stale" | "duplicate" };
+      const value = (await this.listTargets(ws, productId)).find((target) => target.id === targetId);
+      return value ? { status: "ok", value } : { status: "not_found" };
+    },
+    async deleteTarget(ws, productId, targetId, actorId, version, operationId) {
+      const rows = await sql`SELECT public.delete_business_target(
+        ${ws}::uuid, ${productId}::uuid, ${targetId}::uuid, ${actorId}::uuid,
+        ${operationId}::uuid, ${version}::bigint) AS result`;
+      const result = text(rows[0]?.["result"]);
+      return result === "deleted" ? { status: "ok", value: { id: targetId } as BusinessTarget }
+        : { status: result as "not_found" | "stale" };
     }
   };
 }

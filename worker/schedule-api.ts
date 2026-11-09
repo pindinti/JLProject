@@ -7,8 +7,8 @@ import { createScheduleRepository, type ActivityInput, type ActivityMetadataInpu
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history";
-  disciplineId?: string; stageId?: string; activityId?: string };
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history";
+  disciplineId?: string; stageId?: string; activityId?: string; targetId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
 function response(body: Record<string, unknown>, status: number) {
@@ -20,7 +20,8 @@ function parseRoute(pathname: string): Route | null {
   if (!match) return null;
   const [, workspaceId, productId, root, remainder] = match;
   if (root === "hierarchy") return remainder ? null : { workspaceId, productId, kind: "hierarchy" };
-  if (root === "targets") return remainder ? null : { workspaceId, productId, kind: "targets" };
+  if (root === "targets") return !remainder ? { workspaceId, productId, kind: "targets" }
+    : /^[^/]+$/.test(remainder) ? { workspaceId, productId, kind: "target", targetId: remainder } : null;
   const parts = remainder?.split("/") ?? [];
   if (parts.length === 0) return { workspaceId, productId, kind: "disciplines" };
   if (parts.length === 1) return { workspaceId, productId, disciplineId: parts[0], kind: "disciplines" };
@@ -134,12 +135,39 @@ function activityInput(value: Record<string, unknown>, editing: boolean):
   return { input: { ...metadata, plannedStart: start as string | null, plannedEnd: end as string | null } };
 }
 
+function targetInput(value: Record<string, unknown>, editing: boolean):
+  { input: { name: string; description: string | null; targetDate: string; color: string };
+    version?: number; reason?: string | null } | null {
+  const keys = ["name", "description", "targetDate", "color", ...(editing ? ["version", "reason"] : [])];
+  if (!only(value, keys)) return null;
+  const name = label(value["name"], 200);
+  const description = optional(value["description"], 2000);
+  if (!name || description === undefined || !civilDate(value["targetDate"]) || !color.test(String(value["color"])) ||
+      (editing && !version(value["version"]))) return null;
+  const rawReason = value["reason"];
+  const reason = rawReason === undefined || rawReason === null || rawReason === "" ? null : label(rawReason, 2000);
+  if (reason === null && rawReason !== undefined && rawReason !== null && rawReason !== "") return null;
+  if (reason && reason.length < 10) return null;
+  return { input: { name, description, targetDate: value["targetDate"], color: String(value["color"]).toUpperCase() },
+    ...(editing ? { version: value["version"] as number, reason } : {}) };
+}
+
 function mutation<T>(result: Mutation<T>, noun: string, created = false): Response {
   if (result.status === "ok") return response({ [noun]: result.value }, created ? 201 : 200);
   if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
   if (result.status === "duplicate") return response({ error: "Já existe um item com esse nome ou código." }, 409);
+  if (result.status === "invalid") return response({ error: "Informe uma justificativa válida para alterar a data." }, 400);
+  if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
   if (result.status === "conflict") return response({ error: "O código da etapa já possui outra cor neste espaço de trabalho." }, 409);
   return response({ error: "O item foi alterado. Atualize os dados e tente novamente." }, 409);
+}
+function targetMutation(result: Mutation<unknown>, created = false): Response {
+  if (result.status === "ok") return response({ target: result.value }, created ? 201 : 200);
+  if (result.status === "not_found") return response({ error: "Meta não encontrada." }, 404);
+  if (result.status === "duplicate") return response({ error: "Já existe uma meta com esse nome neste produto." }, 409);
+  if (result.status === "invalid") return response({ error: "Informe dados válidos e uma justificativa adequada para alterar a data." }, 400);
+  if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+  return response({ error: "A meta foi alterada. Atualize os dados e tente novamente." }, 409);
 }
 
 export async function handleScheduleRequest(request: Request, identity: Identity,
@@ -147,7 +175,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   factory: ScheduleRepositoryFactory = createScheduleRepository): Promise<Response> {
   const route = parseRoute(new URL(request.url).pathname);
   if (!route) return response({ error: "Não encontrado." }, 404);
-  const ids = [route.workspaceId, route.productId, route.disciplineId, route.stageId, route.activityId]
+  const ids = [route.workspaceId, route.productId, route.disciplineId, route.stageId, route.activityId, route.targetId]
     .filter((item): item is string => item !== undefined);
   if (ids.some((item) => !uuid.test(item))) return response({ error: "Identificador inválido." }, 400);
   const write = request.method !== "GET";
@@ -174,6 +202,31 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   }
   if (route.kind === "targets" && request.method === "GET") {
     return response({ targets: await repository.listTargets(ws, productId) }, 200);
+  }
+  if (route.kind === "targets" && request.method === "POST") {
+    const value = await body(request); const parsed = value && targetInput(value, false);
+    if (!parsed) return response({ error: "Informe nome, data e cor válidos." }, 400);
+    try { return targetMutation(await repository.createTarget(ws, productId, identity.subject, parsed.input), true); }
+    catch { return response({ error: "Não foi possível salvar a meta. Tente novamente." }, 503); }
+  }
+  if (route.kind === "target" && route.targetId && request.method === "PATCH") {
+    const value = await body(request); const parsed = value && targetInput(value, true);
+    if (!parsed || parsed.version === undefined) return response({ error: "Informe dados válidos para a meta." }, 400);
+    let result;
+    try {
+      result = await repository.updateTarget(ws, productId, route.targetId.toLowerCase(), identity.subject,
+        parsed.input, parsed.version, parsed.reason ?? null, crypto.randomUUID());
+    } catch { return response({ error: "Não foi possível salvar a meta. Tente novamente." }, 503); }
+    return targetMutation(result);
+  }
+  if (route.kind === "target" && route.targetId && request.method === "DELETE") {
+    const value = await body(request);
+    if (!value || !only(value, ["version"]) || !version(value["version"]))
+      return response({ error: "Atualize os dados da meta antes de excluí-la." }, 400);
+    try {
+      return targetMutation(await repository.deleteTarget(ws, productId, route.targetId.toLowerCase(), identity.subject,
+        value["version"] as number, crypto.randomUUID()));
+    } catch { return response({ error: "Não foi possível excluir a meta. Tente novamente." }, 503); }
   }
   if (route.kind === "activity_history" && request.method === "GET" && activityId) {
     return response({ changes: await repository.listActivityDateHistory(ws, productId, disciplineId!, stageId!, activityId) }, 200);

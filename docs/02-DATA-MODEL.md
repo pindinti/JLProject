@@ -63,6 +63,10 @@ Activities have optional `source_external_id` reserved for import, with uniquene
 
 The controlled `change_activity_dates` function locks the active admin/editor membership and target activity, checks product status and expected version, and performs the working-date update and audit insertion in one PostgreSQL statement. A no-op creates no event or version increment. The date trigger accepts a changed date only while the no-login executor role runs that function; session settings alone cannot authorize an update. R00 remains an independent JSON snapshot protected by its existing mutation trigger. No target, unrelated activity, dependency, or schedule revision changes occur in this phase. Both migrations were separately approved for the development branch, and rollback-only synthetic database verification passed with the limited Worker role.
 
+### Phase 1D.3 target management proposal
+
+Migration `0008_target_management.sql` is prepared but has not been applied. It adds optional target description, selectable color, soft-delete timestamp, and version; user-created targets have nullable import identifiers while imported source identifiers and provenance remain unchanged. Active target names remain unique within a product. Updates and soft deletion are scoped to workspace/product and use optimistic versions. A target date change requires a reason and operation UUID and is written atomically to an append-only event table by the existing no-login date executor. Worker SQL cannot directly update `target_date` or write audit rows. R00 and import source references are unchanged. The workspace-local migration is waiting for explicit development-branch approval.
+
 ## Data integrity invariants
 
 ### Phase 1C.2 initial import schema

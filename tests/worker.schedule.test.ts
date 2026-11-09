@@ -11,6 +11,7 @@ const product = "e3aa998a-a2c3-4376-9105-90af0d1dbfe3";
 const discipline = "d4444444-4444-4444-8444-444444444444";
 const stage = "a5555555-5555-4555-8555-555555555555";
 const activity = "a6666666-6666-4666-8666-666666666666";
+const targetId = "f7777777-7777-4777-8777-777777777777";
 const base = `https://app.test/api/workspaces/${ws}/products/${product}`;
 const disciplines = `${base}/disciplines`;
 const stages = `${disciplines}/${discipline}/stages`;
@@ -39,7 +40,13 @@ function repository(): ScheduleRepository {
     listActivityDateHistory: vi.fn(async () => []),
     getHierarchy: vi.fn(async () => ({ productId: product, disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] })),
     listTargets: vi.fn(async () => [{ id: "f7777777-7777-4777-8777-777777777777", name: "Meta sintética",
-      targetDate: "2026-11-08", operationalDate: null, displayOrder: 0 }])
+      description: null, color: "#AA4557", targetDate: "2026-11-08", operationalDate: null, displayOrder: 0, version: 1 }]),
+    createTarget: vi.fn(async (_ws, _product, _actor, input) => ({ status: "ok" as const,
+      value: { id: "f8888888-8888-4888-8888-888888888888", ...input, operationalDate: null, displayOrder: 1, version: 1 } })),
+    updateTarget: vi.fn(async (_ws, _product, id, _actor, input) => ({ status: "ok" as const,
+      value: { id, ...input, operationalDate: null, displayOrder: 0, version: 2 } })),
+    deleteTarget: vi.fn(async () => ({ status: "ok" as const,
+      value: { id: "f7777777-7777-4777-8777-777777777777" } as never }))
   };
 }
 function membership(role: WorkspaceRole | null, active = true): MembershipRepository {
@@ -67,13 +74,56 @@ describe("schedule hierarchy API", () => {
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toMatchObject({ targets: [{ targetDate: "2026-11-08" }] });
     expect(repo.listTargets).toHaveBeenCalledWith(ws, product);
-    expect((await call(request(path, "POST", {}), "admin", repo)).status).toBe(405);
+    expect((await call(request(path, "POST", {}), "admin", repo)).status).toBe(400);
     expect((await call(request(path.replace(ws, otherWs)), "admin", repo)).status).toBe(403);
     expect((await call(request(path), "admin", repo, false)).status).toBe(403);
     expect((await call(request(path), "admin", { ...repo, productExists: async () => false })).status).toBe(404);
     const anonymous = await handleRequest(request(path), environment, async () => null,
       () => membership("admin"), undefined, undefined, () => repo);
     expect(anonymous.status).toBe(401);
+  });
+
+  it("creates, edits, and soft-deletes targets only for active editors with scoped identities", async () => {
+    const repo = repository();
+    const path = `${base}/targets`;
+    const input = { name: "Synthetic milestone", description: "Synthetic description",
+      targetDate: "2026-11-09", color: "#336699" };
+    expect((await call(request(path, "POST", input), "viewer", repo)).status).toBe(403);
+    const created = await call(request(path, "POST", input), "editor", repo);
+    expect(created.status).toBe(201);
+    expect(repo.createTarget).toHaveBeenCalledWith(ws, product, actor, input);
+    const updated = await call(request(`${path}/${targetId}`, "PATCH", {
+      ...input, name: "Renamed synthetic milestone", targetDate: "2026-11-10",
+      version: 1, reason: "Synthetic date correction"
+    }), "admin", repo);
+    expect(updated.status).toBe(200);
+    expect(repo.updateTarget).toHaveBeenCalledWith(ws, product, targetId, actor,
+      { ...input, name: "Renamed synthetic milestone", targetDate: "2026-11-10" }, 1,
+      "Synthetic date correction", expect.any(String));
+    expect((await call(request(`${path}/${targetId}`, "DELETE", { version: 2 }), "editor", repo)).status).toBe(200);
+    expect(repo.deleteTarget).toHaveBeenCalledWith(ws, product, targetId, actor, 2, expect.any(String));
+    expect((await call(request(`${path}/${targetId}`, "PATCH", input), "viewer", repo)).status).toBe(403);
+    expect((await call(request(`${path}/${targetId}`, "DELETE", { version: 1 }), "admin", repo, false)).status).toBe(403);
+    expect((await call(request(`${path}/${targetId}`.replace(ws, otherWs), "PATCH", input), "admin", repo)).status).toBe(403);
+  });
+
+  it("validates target input and hides persistence errors", async () => {
+    const repo = repository();
+    const path = `${base}/targets`;
+    for (const value of [
+      { name: " ", targetDate: "2026-11-09", color: "#112233" },
+      { name: "Synthetic", targetDate: "2026-02-30", color: "#112233" },
+      { name: "Synthetic", targetDate: "2026-11-09", color: "red" },
+      { name: "Synthetic", targetDate: "2026-11-09", color: "#112233", userId: actor }
+    ]) expect((await call(request(path, "POST", value), "admin", repo)).status).toBe(400);
+    expect(repo.createTarget).not.toHaveBeenCalled();
+    expect((await call(request(`${path}/bad`, "PATCH", {}), "admin", repo)).status).toBe(400);
+    const failed = await call(request(`${path}/${targetId}`, "PATCH", {
+      name: "Synthetic", description: null, targetDate: "2026-11-09", color: "#112233",
+      version: 1, reason: null
+    }), "admin", { ...repo, updateTarget: async () => { throw new Error("private sql detail"); } });
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private sql detail");
   });
   it("reads lists and the complete hierarchy for active viewers", async () => {
     const repo = repository();

@@ -10,8 +10,8 @@ const tree: ScheduleTree = { disciplines: [{ id: "d", name: "Design", shortCode:
       { id: "b", name: "Overlap", plannedStart: "2026-11-05", plannedEnd: "2026-11-12", displayOrder: 1 }
     ] }, { id: "empty", displayName: "Empty", code: "EP", color: "#445566", displayOrder: 1,
     derivedStart: null, derivedEnd: null, activities: [] }] }] };
-const targets: ScheduleTarget[] = [{ id: "t", name: "Target", targetDate: "2026-11-10",
-  operationalDate: null, displayOrder: 0 }];
+const targets: ScheduleTarget[] = [{ id: "t", name: "Target", description: null, color: "#AA4557",
+  targetDate: "2026-11-10", operationalDate: null, displayOrder: 0, version: 1 }];
 
 describe("schedule workspace model", () => {
   it("flattens expanded hierarchy once and keeps empty stages visible", () => {

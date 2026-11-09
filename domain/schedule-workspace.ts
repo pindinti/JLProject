@@ -10,7 +10,8 @@ export interface ScheduleDiscipline {
   id: string; name: string; shortCode: string; color: string; displayOrder: number; stages: ScheduleStage[];
 }
 export interface ScheduleTree { disciplines: ScheduleDiscipline[] }
-export interface ScheduleTarget { id: string; name: string; targetDate: string; operationalDate: string | null; displayOrder: number }
+export interface ScheduleTarget { id: string; name: string; description: string | null; color: string;
+  targetDate: string; operationalDate: string | null; displayOrder: number; version: number }
 export type VisibleRow = { key: string; kind: "product" | "discipline" | "stage" | "activity";
   id: string; disciplineId?: string; stageId?: string; label: string; code?: string;
   color?: string; start: string | null; end: string | null; hasChildren: boolean; expanded: boolean };

@@ -1,18 +1,22 @@
-import { type CSSProperties, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateAtPosition,
   timelineInterval, timelinePosition, visibleScheduleRows,
   type ScheduleTarget, type ScheduleTree, type VisibleRow, type Zoom } from "../domain/schedule-workspace";
-import { formatCivilDate } from "./civil-date";
+import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { messages } from "./locales/pt-BR";
 
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
 
 export function ScheduleWorkspace({ product, tree, targets, openDisciplines, openStages,
-  canEdit, onToggle, onEdit, onAdd, onHistory }: {
+  canEdit, onToggle, onEdit, onAdd, onHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[];
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
   onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
+  onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
+  onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
+    targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
+  onDeleteTarget: (target: ScheduleTarget) => Promise<void>;
 }) {
   const [zoom, setZoom] = useState<Zoom>("week");
   const [tableWidth, setTableWidth] = useState(50);
@@ -25,6 +29,7 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   });
   const [productExpanded, setProductExpanded] = useState(true);
   const [mobilePane, setMobilePane] = useState<"table" | "gantt">("table");
+  const [targetDialog, setTargetDialog] = useState<ScheduleTarget | "new" | null>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -110,6 +115,7 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
         {messages.selectedDate(formatCivilDate(selectedDate))}
         <button type="button" onClick={() => setSelectedDate(null)}>{messages.clearSelectedDate}</button>
       </span>}
+      {canEdit && <button type="button" onClick={() => setTargetDialog("new")}>{messages.addMilestone}</button>}
       <span>{messages.targetCount(targets.length)}</span>
       <div className="workspace-mobile-switch" role="group" aria-label={messages.schedulePane}>
         <button type="button" aria-pressed={mobilePane === "table"} onClick={() => setMobilePane("table")}>{messages.scheduleTable}</button>
@@ -139,11 +145,13 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
               style={{ left: (day - scale.startDay) * scale.dayWidth }}>
               {zoom === "month" ? formatCivilDate(civilFromDay(day)).slice(3) : formatCivilDate(civilFromDay(day)).slice(0, 5)}
             </span>)}</div>
-            <div className="timeline-target-head">{targets.map((target) => <span key={target.id}
-              className="timeline-target-label" style={{ left: timelinePosition(scale, target.targetDate) }}
-              title={messages.targetDetail(target.name, formatCivilDate(target.targetDate))}>
+            <div className="timeline-target-head">{targets.map((target) => <button type="button" key={target.id}
+              className="timeline-target-label" style={{ left: timelinePosition(scale, target.targetDate), color: target.color }}
+              title={messages.targetDetail(target.name, formatCivilDate(target.targetDate))}
+              aria-label={`${messages.targetDetail(target.name, formatCivilDate(target.targetDate))}. ${canEdit ? messages.edit : messages.milestoneView}`}
+              onClick={(event) => { event.stopPropagation(); setTargetDialog(target); }}>
               {messages.targetShortLabel(target.name)}
-            </span>)}<span className="timeline-today-label" style={{ left: timelinePosition(scale, today) }}
+            </button>)}<span className="timeline-today-label" style={{ left: timelinePosition(scale, today) }}
               title={`${messages.today}: ${formatCivilDate(today)}`}>{messages.today}</span></div>
           </div>
         </div>
@@ -192,9 +200,11 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
           <div className="workspace-chart-content" style={{ width: scale.width, backgroundSize: `${scale.dayWidth}px 100%` }}>
             {selectedDate && <div className="timeline-selected-column" data-date={selectedDate}
               style={{ left: timelinePosition(scale, selectedDate), width: scale.dayWidth }} />}
-            {targets.map((target) => <div key={target.id} className="timeline-target-line"
-              style={{ left: timelinePosition(scale, target.targetDate) }}
-              title={messages.targetDetail(target.name, formatCivilDate(target.targetDate))} />)}
+            {targets.map((target) => <button type="button" key={target.id} className="timeline-target-line"
+              style={{ left: timelinePosition(scale, target.targetDate), borderColor: target.color }}
+              title={messages.targetDetail(target.name, formatCivilDate(target.targetDate))}
+              aria-label={`${messages.targetDetail(target.name, formatCivilDate(target.targetDate))}. ${canEdit ? messages.edit : messages.milestoneView}`}
+              onClick={(event) => { event.stopPropagation(); setTargetDialog(target); }} />)}
             <div className="timeline-today-line" data-date={today}
               style={{ left: timelinePosition(scale, today) }}
               title={`${messages.today}: ${formatCivilDate(today)}`} />
@@ -223,5 +233,83 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
         </div>
       </div>
     </div>
+    {targetDialog && <TargetDialog target={targetDialog === "new" ? null : targetDialog}
+      initialDate={selectedDate ?? today} canEdit={canEdit}
+      onClose={() => setTargetDialog(null)} onCreate={onCreateTarget} onUpdate={onUpdateTarget}
+      onDelete={onDeleteTarget} />}
   </section>;
+}
+
+function TargetDialog({ target, initialDate, canEdit, onClose, onCreate, onUpdate, onDelete }: {
+  target: ScheduleTarget | null; initialDate: string; canEdit: boolean; onClose: () => void;
+  onCreate: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
+  onUpdate: (target: ScheduleTarget, value: { name: string; description: string | null;
+    targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
+  onDelete: (target: ScheduleTarget) => Promise<void>;
+}) {
+  const [name, setName] = useState(target?.name ?? "");
+  const [description, setDescription] = useState(target?.description ?? "");
+  const [date, setDate] = useState(formatCivilDate(target?.targetDate ?? initialDate));
+  const [color, setColor] = useState(target?.color ?? "#AA4557");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const dateChanged = !!target && parseBrazilianDate(date) !== target.targetDate;
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim()) { setError(messages.milestoneNameRequired); return; }
+    const iso = parseBrazilianDate(date);
+    if (!iso) { setError(messages.milestoneDateInvalid); return; }
+    if (dateChanged && reason.trim().length < 10) { setError(messages.milestoneReasonRequired); return; }
+    setBusy(true); setError("");
+    try {
+      const value = { name: name.trim(), description: description.trim() || null, targetDate: iso, color };
+      if (target) await onUpdate(target, { ...value, reason: dateChanged ? reason.trim() : null });
+      else await onCreate(value);
+      onClose();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : messages.milestoneSaveError); }
+    finally { setBusy(false); }
+  }
+  async function remove() {
+    if (!target || !window.confirm(messages.milestoneDeleteConfirm(target.name))) return;
+    setBusy(true); setError("");
+    try { await onDelete(target); onClose(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : messages.milestoneDeleteError); }
+    finally { setBusy(false); }
+  }
+  return <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
+    if (event.target === event.currentTarget && !busy) onClose();
+  }}><form className="milestone-dialog" role="dialog" aria-modal="true"
+    aria-labelledby="milestone-dialog-title" onSubmit={(event) => void save(event)}>
+    <h3 id="milestone-dialog-title">{target ? (canEdit ? messages.milestoneEdit : messages.milestoneView) : messages.milestoneCreate}</h3>
+    <label htmlFor="milestone-name">{messages.milestoneName}</label>
+    <input id="milestone-name" aria-required="true" maxLength={200} value={name} disabled={!canEdit || busy}
+      onChange={(event) => setName(event.target.value)} />
+    <label htmlFor="milestone-description">{messages.milestoneDescription}</label>
+    <textarea id="milestone-description" maxLength={2000} value={description} disabled={!canEdit || busy}
+      onChange={(event) => setDescription(event.target.value)} />
+    <label htmlFor="milestone-date">{messages.milestoneDate}</label>
+    <input id="milestone-date" inputMode="numeric" placeholder="DD/MM/AAAA" aria-required="true" value={date}
+      disabled={!canEdit || busy} onChange={(event) => setDate(event.target.value)} />
+    <label htmlFor="milestone-color">{messages.milestoneColor}</label>
+    <select id="milestone-color" value={color} disabled={!canEdit || busy} onChange={(event) => setColor(event.target.value)}>
+      {["#AA4557", "#336699", "#4A7C59", "#8A6D1D", "#704C8C", "#287B82"].map((option) =>
+        <option value={option} key={option}>{option}</option>)}
+      {!["#AA4557", "#336699", "#4A7C59", "#8A6D1D", "#704C8C", "#287B82"].includes(color) &&
+        <option value={color}>{color}</option>}
+    </select>
+    {dateChanged && canEdit && <>
+      <label htmlFor="milestone-reason">{messages.milestoneReason}</label>
+      <textarea id="milestone-reason" maxLength={2000} aria-required="true" value={reason}
+        aria-describedby="milestone-reason-hint" disabled={busy}
+        onChange={(event) => setReason(event.target.value)} />
+      <small id="milestone-reason-hint">{messages.milestoneReasonHint}</small>
+    </>}
+    {error && <p role="alert">{error}</p>}
+    <div className="milestone-actions">
+      {canEdit && <button type="submit" disabled={busy}>{messages.milestoneSave}</button>}
+      {target && canEdit && <button type="button" disabled={busy} onClick={() => void remove()}>{messages.milestoneDelete}</button>}
+      <button type="button" disabled={busy} onClick={onClose}>{target && !canEdit ? messages.milestoneClose : messages.milestoneCancel}</button>
+    </div>
+  </form></div>;
 }

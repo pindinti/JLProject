@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { makeTimeline, timelinePosition, type ScheduleTree } from "../domain/schedule-workspace";
+import { makeTimeline, timelinePosition, type ScheduleTarget, type ScheduleTree } from "../domain/schedule-workspace";
 import { ScheduleWorkspace } from "../src/ScheduleWorkspace";
 
 const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic discipline",
@@ -10,12 +10,15 @@ const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic 
     activities: [{ id: "activity", name: "Synthetic activity", plannedStart: "2026-11-01",
       plannedEnd: "2028-01-17", displayOrder: 0 }] }] }] };
 const targets = [{ id: "target", name: "Synthetic target", targetDate: "2026-11-07",
-  operationalDate: null, displayOrder: 0 }];
+  description: null, color: "#AA4557", operationalDate: null, displayOrder: 0, version: 1 }];
 
-function mount() {
+function mount(canEdit = true) {
   return render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
     targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
-    canEdit onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} />);
+    canEdit={canEdit} onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()}
+    onCreateTarget={vi.fn(async (value) => ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }))}
+    onUpdateTarget={vi.fn(async (target, value) => ({ ...target, ...value, version: target.version + 1 }))}
+    onDeleteTarget={vi.fn(async () => undefined)} />);
 }
 
 describe("schedule workspace refinements", () => {
@@ -78,6 +81,73 @@ describe("schedule workspace refinements", () => {
     expect(container.querySelector(".timeline-selected-column")).not.toBeInTheDocument();
     expect(container.querySelector(".timeline-today-line")).toBeInTheDocument();
     expect(container.querySelector(".timeline-target-line")).toBeInTheDocument();
+  });
+
+  it("opens a create dialog from the toolbar with the selected date and creates a synthetic milestone", async () => {
+    const onCreate = vi.fn(async (value: { name: string; description: string | null; targetDate: string; color: string }) =>
+      ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }));
+    const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
+      targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onCreateTarget={onCreate}
+      onUpdateTarget={vi.fn(async (target, value) => ({ ...target, ...value, version: 2 }))}
+      onDeleteTarget={vi.fn(async () => undefined)} />);
+    const header = container.querySelector<HTMLElement>(".workspace-timeline-header")!;
+    vi.spyOn(header, "getBoundingClientRect").mockReturnValue({ left: 0 } as DOMRect);
+    const today = container.querySelector<HTMLElement>(".timeline-today-line")!.dataset.date!;
+    const scale = makeTimeline(tree, targets, "week", today);
+    fireEvent.click(header, { clientX: timelinePosition(scale, "2026-11-08") + 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar marco" }));
+    expect(screen.getByLabelText("Data")).toHaveValue("08/11/2026");
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Marco sintético" } });
+    fireEvent.submit(screen.getByRole("dialog"));
+    await act(async () => { await Promise.resolve(); });
+    expect(onCreate).toHaveBeenCalledWith({ name: "Marco sintético", description: null,
+      targetDate: "2026-11-08", color: "#AA4557" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens existing targets for viewer inspection without mutation controls", () => {
+    const { container } = mount(false);
+    fireEvent.click(container.querySelector(".timeline-target-line")!);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nome")).toHaveValue("Synthetic target");
+    expect(screen.getByLabelText("Nome")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Salvar meta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Excluir meta" })).not.toBeInTheDocument();
+  });
+
+  it("requires an audit reason for date edits and confirms synthetic target deletion", async () => {
+    const onUpdate = vi.fn(async (target: ScheduleTarget, value: { name: string; description: string | null;
+      targetDate: string; color: string; reason: string | null }) => ({ ...target, ...value, version: 2 }));
+    const onDelete = vi.fn(async () => undefined);
+    const first = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree} targets={targets}
+      openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onCreateTarget={vi.fn()}
+      onUpdateTarget={onUpdate} onDeleteTarget={onDelete} />);
+    fireEvent.click(first.container.querySelector(".timeline-target-label")!);
+    fireEvent.change(screen.getByLabelText("Data"), { target: { value: "08/11/2026" } });
+    fireEvent.submit(screen.getByRole("dialog"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("justificativa com pelo menos 10 caracteres");
+    expect(onUpdate).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração da data"),
+      { target: { value: "Synthetic date adjustment" } });
+    fireEvent.submit(screen.getByRole("dialog"));
+    await act(async () => { await Promise.resolve(); });
+    expect(onUpdate).toHaveBeenCalledWith(targets[0], expect.objectContaining({
+      targetDate: "2026-11-08", reason: "Synthetic date adjustment"
+    }));
+
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const second = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree} targets={targets}
+      openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onCreateTarget={vi.fn()}
+      onUpdateTarget={onUpdate} onDeleteTarget={onDelete} />);
+    fireEvent.click(second.container.querySelector(".timeline-target-label")!);
+    fireEvent.click(within(second.container).getByRole("button", { name: "Excluir meta" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Synthetic target"));
+    expect(onDelete).toHaveBeenCalledWith(targets[0]);
+    confirm.mockRestore();
   });
 
   it("updates the Today marker when São Paulo reaches a new calendar date", () => {
