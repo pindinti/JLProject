@@ -15,9 +15,8 @@ const roleLabels: Record<Role, string> = {
   admin: messages.roleAdmin, editor: messages.roleEditor, viewer: messages.roleViewer
 };
 
-export function Administration({ workspace, onBack, onAccessLost }: {
+export function Administration({ workspace, onAccessLost }: {
   workspace: WorkspaceSummary;
-  onBack: () => void;
   onAccessLost: () => void;
 }) {
   const [members, setMembers] = useState<Member[]>([]);
@@ -28,6 +27,7 @@ export function Administration({ workspace, onBack, onAccessLost }: {
   const [newRole, setNewRole] = useState<Role>("editor");
   const [adding, setAdding] = useState(false);
   const endpoint = `/api/workspaces/${workspace.id}/memberships`;
+  const canProvisionUsers = import.meta.env.DEV;
 
   const load = useCallback(async () => {
     setState("loading");
@@ -99,10 +99,10 @@ export function Administration({ workspace, onBack, onAccessLost }: {
 
   return (
     <section className="administration" aria-labelledby="administration-title">
-      <h2 id="administration-title">{messages.administration}</h2>
+      <h3 id="administration-title">{messages.administration}</h3>
       <p>{workspace.name}</p>
-      <h3>{messages.users}</h3>
-      <form className="member-add-form" onSubmit={(event) => void addMember(event)}>
+      <h4>{messages.users}</h4>
+      {canProvisionUsers ? <form className="member-add-form" onSubmit={(event) => void addMember(event)}>
         <h4>{messages.addUser}</h4>
         <label htmlFor="new-member-email">{messages.addUserEmail}</label>
         <input id="new-member-email" type="email" required maxLength={254} autoComplete="email"
@@ -117,7 +117,7 @@ export function Administration({ workspace, onBack, onAccessLost }: {
         <button type="submit" disabled={adding || busyId !== null}>
           {adding ? messages.addingUser : messages.addUser}
         </button>
-      </form>
+      </form> : <p className="settings-notice" role="note">{messages.productionProvisioningUnavailable}</p>}
       {state === "loading" && <p role="status">{messages.membersLoading}</p>}
       {state === "error" && (
         <div role="alert">
@@ -151,7 +151,6 @@ export function Administration({ workspace, onBack, onAccessLost }: {
         </ul>
       )}
       {feedback && <p role="alert" className="feedback">{feedback}</p>}
-      <button className="back-button" type="button" onClick={onBack}>{messages.back}</button>
     </section>
   );
 }

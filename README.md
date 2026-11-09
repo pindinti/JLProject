@@ -228,6 +228,17 @@ From Products, open a product and choose **Abrir cronograma**. The editor shows 
 
 `GET /api/workspaces/:workspaceId/stage-definitions` is a read-only, workspace-scoped catalog for the stage selector. It uses the same Worker JWT and active-membership boundary as the hierarchy API. Stage creation can reuse a catalog entry or create a new workspace code/color through the existing stage-create endpoint. No new migration or seeded catalog is required for this phase.
 
+### Shared stage-definition color updates
+
+Admins and editors can update the color of an existing workspace stage definition with `PATCH /api/workspaces/:workspaceId/stage-definitions/:definitionId`. The request includes the new HEX `color` and the previously read `expectedColor`; the latter is an optimistic concurrency token, and stale updates receive HTTP 409. The endpoint changes only `stage_definitions.color`; it does not write schedule revisions, imported provenance, activity dates, or R00 snapshots. The Worker requires active edit permission and scopes the update to the authorized workspace. Migration `0010_shared_stage_definition_color.sql` grants the limited Worker role UPDATE on only the `color` column. It was applied once to the verified JLProject `development` branch after explicit approval. The rollback-only verification confirmed the column grant, synthetic color persistence within a transaction, and the R00 immutability trigger; the transaction rolled back without retaining test rows.
+
+Run the development verification only after confirming the linked Neon project and branch:
+
+```powershell
+npx neon@latest status --output json --no-analytics
+npx neon@latest psql development --project-id rapid-mud-63974868 -- -v ON_ERROR_STOP=1 -f db/verification/phase2c3-development.sql
+```
+
 A signed-in development administrator verified the UI with synthetic data: creating a discipline, stage, and dated activity, then reloading and seeing the hierarchy and Brazilian-formatted dates persist. This browser check supplements the automated API and component tests; viewer restrictions and concurrency conflicts were verified through automated tests.
 
 ## Phase 1C.1 local XLSX preview

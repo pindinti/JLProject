@@ -59,3 +59,13 @@ When documentation conflicts or a critical requirement is ambiguous, explain the
 ## Current authorization boundary
 
 The first Codex interaction is a **Phase 0 planning request only**. Do not create or modify application code until the human approves that plan. Later phases require separate prompts and approvals. See `CODEX-PHASE-0-PROMPT.md`.
+
+## UI Design System
+
+Follow docs/11-DESIGN-SYSTEM.md and
+src/design/jlproject-tokens.css.
+
+The existing full-width table + Gantt layout takes precedence
+over the sidebar layout proposed in the design system document.
+
+Preserve user-configurable Gantt and milestone colors.

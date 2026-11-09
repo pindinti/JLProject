@@ -4,15 +4,18 @@ import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateA
   type ScheduleTarget, type ScheduleTree, type VisibleRow, type Zoom } from "../domain/schedule-workspace";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { messages } from "./locales/pt-BR";
+import { ColorField } from "./ColorField";
+import { layoutMilestoneLabels } from "./design/gantt-colors";
 
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
 
 export function ScheduleWorkspace({ product, tree, targets, openDisciplines, openStages,
-  canEdit, onToggle, onEdit, onAdd, onHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
+  canEdit, onToggle, onEdit, onAdd, onAddDiscipline, onRefresh, onHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[];
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
   onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
+  onAddDiscipline: () => void; onRefresh: () => void;
   onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
     targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
@@ -38,6 +41,11 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   const rows = useMemo(() => visibleScheduleRows(product, tree, openDisciplines, openStages, productExpanded),
     [product, tree, openDisciplines, openStages, productExpanded]);
   const scale = useMemo(() => makeTimeline(tree, targets, zoom, today, bounds), [tree, targets, zoom, today, bounds]);
+  const milestoneLabels = useMemo(() => layoutMilestoneLabels(targets,
+    (date) => timelinePosition(scale, date), scale.width), [targets, scale]);
+  const milestoneLaneCount = milestoneLabels.reduce((count, label) => Math.max(count, label.lane + 1), 0);
+  const targetHeadHeight = Math.max(29, milestoneLaneCount * 18 + 22);
+  const headerHeight = Math.max(82, 28 + 24 + targetHeadHeight);
 
   useEffect(() => {
     if (scale.startDay !== bounds.startDay || scale.endDay !== bounds.endDay)
@@ -101,16 +109,21 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   }
 
   const style = { "--table-width": `${tableWidth}%` } as CSSProperties;
-  return <section className="schedule-workspace" aria-label={messages.scheduleWorkspace}>
+  return <section className="schedule-workspace" data-density="compact" aria-label={messages.scheduleWorkspace}>
     <div className="workspace-controls">
-      <label htmlFor="schedule-zoom">{messages.scheduleZoom}</label>
-      <select id="schedule-zoom" value={zoom} onChange={(event) => setZoom(event.target.value as Zoom)}>
-        <option value="day">{messages.zoomDay}</option>
-        <option value="week">{messages.zoomWeek}</option>
-        <option value="month">{messages.zoomMonth}</option>
-      </select>
-      <button type="button" className="timeline-navigation" onClick={() => shiftTimeline(-1)}>{messages.timelineEarlier}</button>
-      <button type="button" className="timeline-navigation" onClick={() => shiftTimeline(1)}>{messages.timelineLater}</button>
+      <div className="workspace-toolbar-actions">
+        {canEdit && <button type="button" onClick={onAddDiscipline}>{messages.addDiscipline}</button>}
+        <button type="button" onClick={onRefresh}>{messages.refreshHierarchy}</button>
+      </div>
+      <div className="workspace-zoom" role="group" aria-label={messages.scheduleZoom}>
+        {([ ["day", messages.zoomDay], ["week", messages.zoomWeek], ["month", messages.zoomMonth] ] as const).map(([value, label]) =>
+          <button key={value} type="button" aria-pressed={zoom === value}
+            onClick={() => setZoom(value)}>{label}</button>)}
+      </div>
+      <div className="workspace-timeline-navigation" role="group" aria-label={messages.scheduleTimeline}>
+        <button type="button" className="timeline-navigation" onClick={() => shiftTimeline(-1)}>{messages.timelineEarlier}</button>
+        <button type="button" className="timeline-navigation" onClick={() => shiftTimeline(1)}>{messages.timelineLater}</button>
+      </div>
       {selectedDate && <span role="status" className="workspace-selected-date">
         {messages.selectedDate(formatCivilDate(selectedDate))}
         <button type="button" onClick={() => setSelectedDate(null)}>{messages.clearSelectedDate}</button>
@@ -123,10 +136,10 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
       </div>
     </div>
     <div ref={splitRef} className={`workspace-split mobile-${mobilePane}`} style={style}>
-      <div className="workspace-headers">
-        <div className="workspace-table-header">
+      <div className="workspace-headers" style={{ height: headerHeight, flexBasis: headerHeight }}>
+        <div className="workspace-table-header" style={{ height: headerHeight }}>
           <span>{messages.scheduleItem}</span><span>{messages.plannedStart}</span>
-          <span>{messages.plannedEnd}</span><span>{messages.scheduleActions}</span>
+          <span>{messages.plannedEnd}</span>
         </div>
         <div className="workspace-divider-header" />
         <div ref={headerRef} className="workspace-timeline-header" onScroll={() => syncScroll("header")}
@@ -136,7 +149,7 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
               changeSelectedDate(event.key === "ArrowLeft" ? -1 : 1);
             }
           }} tabIndex={0} role="group" aria-label={messages.timelineDateInstructions}>
-          <div className="timeline-head-content" style={{ width: scale.width }}>
+          <div className="timeline-head-content" style={{ width: scale.width, height: headerHeight }}>
             <div className="timeline-months">{scale.months.map((month) => <div key={month.startDay}
               className="timeline-month" style={{ width: month.days * scale.dayWidth }}>
               {monthLabel.format(new Date(month.startDay * 86_400_000))}
@@ -145,14 +158,21 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
               style={{ left: (day - scale.startDay) * scale.dayWidth }}>
               {zoom === "month" ? formatCivilDate(civilFromDay(day)).slice(3) : formatCivilDate(civilFromDay(day)).slice(0, 5)}
             </span>)}</div>
-            <div className="timeline-target-head">{targets.map((target) => <button type="button" key={target.id}
-              className="timeline-target-label" style={{ left: timelinePosition(scale, target.targetDate), color: target.color }}
-              title={messages.targetDetail(target.name, formatCivilDate(target.targetDate))}
-              aria-label={`${messages.targetDetail(target.name, formatCivilDate(target.targetDate))}. ${canEdit ? messages.edit : messages.milestoneView}`}
-              onClick={(event) => { event.stopPropagation(); setTargetDialog(target); }}>
-              {messages.targetShortLabel(target.name)}
-            </button>)}<span className="timeline-today-label" style={{ left: timelinePosition(scale, today) }}
-              title={`${messages.today}: ${formatCivilDate(today)}`}>{messages.today}</span></div>
+            <div className="timeline-target-head" style={{ height: targetHeadHeight }}>
+              {milestoneLabels.map((label) => {
+                const target = targets.find((item) => item.id === label.id);
+                if (!target) return null;
+                return <button type="button" key={target.id} className="timeline-target-label"
+                  style={{ left: label.left, top: 2 + label.lane * 18, width: label.width, color: target.color }}
+                  title={messages.targetDetail(target.name, formatCivilDate(target.targetDate))}
+                  aria-label={`${messages.targetDetail(target.name, formatCivilDate(target.targetDate))}. ${canEdit ? messages.edit : messages.milestoneView}`}
+                  onClick={(event) => { event.stopPropagation(); setTargetDialog(target); }}>
+                  {label.name}
+                </button>;
+              })}
+              <span className="timeline-today-label" style={{ left: timelinePosition(scale, today), top: targetHeadHeight - 17 }}
+                title={`${messages.today}: ${formatCivilDate(today)}`}>{messages.today}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -171,19 +191,37 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
               {!row.hasChildren && <span className="workspace-expand-spacer" />}
               {row.color && <span className="color-chip" style={{ backgroundColor: row.color }}
                 aria-label={messages.scheduleColor(row.color)} />}
+              <span className="workspace-inline-actions">
+                {canEdit && row.kind !== "product" && <button type="button" className="workspace-icon-action"
+                  aria-label={row.kind === "discipline" ? messages.editDiscipline : row.kind === "stage" ? messages.editStage : messages.editActivity}
+                  title={row.kind === "discipline" ? messages.editDiscipline : row.kind === "stage" ? messages.editStage : messages.editActivity}
+                  onClick={() => { setSelected(row.key); onEdit(row); }}>
+                  <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="m13.8 3.2 3 3-9.9 9.9-3.6.7.7-3.6 9.8-10Z" /><path d="m11.9 5.1 3 3M3.5 16.5l3.6-.7" /></svg>
+                </button>}
+                {canEdit && (row.kind === "discipline" || row.kind === "stage") && <button type="button" className="workspace-icon-action"
+                  aria-label={row.kind === "discipline" ? messages.addStage : messages.addActivity}
+                  title={row.kind === "discipline" ? messages.addStage : messages.addActivity}
+                  onClick={() => { setSelected(row.key); onAdd(row); }}>
+                  <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M10 3v14M3 10h14" /></svg>
+                </button>}
+                {row.kind === "activity" && !canEdit && <button type="button" className="workspace-icon-action"
+                  title={messages.activityDateHistory} onClick={() => { setSelected(row.key); onHistory(row); }}
+                  aria-label={messages.activityDateHistory}>
+                  <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M3 4.5h14v12H3zM6 2.5v4M14 2.5v4M3 8h14M6 11h2m2 0h2m-6 3h2" /></svg>
+                </button>}
+              </span>
               <button type="button" className="workspace-row-name" title={row.label}
-                onClick={() => setSelected(row.key)}>{row.label}{row.code ? ` (${row.code})` : ""}</button>
+                onClick={() => setSelected(row.key)}
+                onDoubleClick={() => { if (canEdit) { setSelected(row.key); onEdit(row); } }}>
+                {row.label}{row.code ? ` (${row.code})` : ""}
+              </button>
             </div>
-            <span role="cell" className="workspace-date-cell">{formatCivilDate(row.start)}</span>
-            <span role="cell" className="workspace-date-cell">{formatCivilDate(row.end)}</span>
-            <span role="cell" className="workspace-row-actions">{canEdit && row.kind !== "product" && <button type="button"
-              aria-label={row.kind === "discipline" ? messages.editDiscipline : row.kind === "stage" ? messages.editStage : messages.editActivity}
-              onClick={() => { setSelected(row.key); onEdit(row); }}>{messages.edit}</button>}
-              {canEdit && (row.kind === "discipline" || row.kind === "stage") && <button type="button"
-                aria-label={row.kind === "discipline" ? messages.addStage : messages.addActivity}
-                onClick={() => { setSelected(row.key); onAdd(row); }}>{messages.add}</button>}
-              {row.kind === "activity" && !canEdit && <button type="button" onClick={() => { setSelected(row.key); onHistory(row); }}
-                aria-label={messages.activityDateHistory}>{messages.historyAction}</button>}</span>
+            <span role="cell" className="workspace-date-cell" onDoubleClick={() => {
+              if (canEdit) { setSelected(row.key); onEdit(row); }
+            }}>{formatCivilDate(row.start)}</span>
+            <span role="cell" className="workspace-date-cell" onDoubleClick={() => {
+              if (canEdit) { setSelected(row.key); onEdit(row); }
+            }}>{formatCivilDate(row.end)}</span>
           </div>)}
         </div>
         <div className="workspace-divider" role="separator" tabIndex={0} aria-orientation="vertical"
@@ -214,7 +252,7 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
                 data-row-key={row.key}
                 onClick={() => setSelected(row.key)}>
                 {interval && <button type="button" className={`timeline-bar bar-${row.kind}`}
-                  style={{ left: interval.left, width: interval.width, backgroundColor: row.color ?? "#173f64" }}
+                  style={{ left: interval.left, width: interval.width, backgroundColor: row.color ?? "var(--jl-gantt-line-fallback)" }}
                   title={messages.scheduleBarDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end))}
                   aria-label={messages.scheduleBarDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end))}
                   onClick={() => setSelected(row.key)} />}
@@ -291,13 +329,8 @@ function TargetDialog({ target, initialDate, canEdit, onClose, onCreate, onUpdat
     <label htmlFor="milestone-date">{messages.milestoneDate}</label>
     <input id="milestone-date" inputMode="numeric" placeholder="DD/MM/AAAA" aria-required="true" value={date}
       disabled={!canEdit || busy} onChange={(event) => setDate(event.target.value)} />
-    <label htmlFor="milestone-color">{messages.milestoneColor}</label>
-    <select id="milestone-color" value={color} disabled={!canEdit || busy} onChange={(event) => setColor(event.target.value)}>
-      {["#AA4557", "#336699", "#4A7C59", "#8A6D1D", "#704C8C", "#287B82"].map((option) =>
-        <option value={option} key={option}>{option}</option>)}
-      {!["#AA4557", "#336699", "#4A7C59", "#8A6D1D", "#704C8C", "#287B82"].includes(color) &&
-        <option value={color}>{color}</option>}
-    </select>
+    <ColorField id="milestone-color" label={messages.milestoneColor} value={color}
+      disabled={!canEdit || busy} onChange={setColor} />
     {dateChanged && canEdit && <>
       <label htmlFor="milestone-reason">{messages.milestoneReason}</label>
       <textarea id="milestone-reason" maxLength={2000} aria-required="true" value={reason}

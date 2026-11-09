@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ScheduleEditor } from "../src/ScheduleEditor";
 import { formatCivilDate, parseBrazilianDate } from "../src/civil-date";
@@ -36,6 +36,19 @@ function mount(role: "admin" | "editor" | "viewer" = "admin") {
 beforeEach(() => { vi.clearAllMocks(); setup(); });
 
 describe("schedule editor", () => {
+  it("uses a compact product breadcrumb and keeps schedule actions in the workspace toolbar", async () => {
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    expect(screen.getByRole("heading", { name: "Synthetic product", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Voltar aos produtos" })).toHaveTextContent("Produtos");
+    const toolbar = container.querySelector<HTMLElement>(".workspace-controls")!;
+    expect(within(toolbar).getByRole("button", { name: "Adicionar disciplina" }) as HTMLElement).toBeInTheDocument();
+    expect(within(toolbar).getByRole("button", { name: "Atualizar dados" }) as HTMLElement).toBeInTheDocument();
+    expect(within(toolbar).getByRole("group", { name: "Escala" }).querySelectorAll("button")).toHaveLength(3);
+    expect(container.querySelector(".schedule-editor > .schedule-toolbar")).not.toBeInTheDocument();
+  });
+
   it("shares visible row order, selection, and expansion between the table and Gantt", async () => {
     const { container } = render(<ScheduleEditor workspace={workspace} product={product}
       onBack={vi.fn()} onAccessLost={vi.fn()} />);
@@ -59,9 +72,9 @@ describe("schedule editor", () => {
     expect(container.querySelectorAll(".timeline-target-line")).toHaveLength(1);
     const chart = container.querySelector<HTMLElement>(".workspace-chart-content")!;
     const weekWidth = parseInt(chart.style.width);
-    fireEvent.change(screen.getByLabelText("Escala"), { target: { value: "day" } });
+    fireEvent.click(screen.getByRole("button", { name: "Dia" }));
     expect(parseInt(chart.style.width)).toBeGreaterThan(weekWidth);
-    fireEvent.change(screen.getByLabelText("Escala"), { target: { value: "month" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mês" }));
     expect(parseInt(chart.style.width)).toBeLessThan(weekWidth);
     const separator = screen.getByRole("separator");
     expect(separator).toHaveAttribute("aria-valuenow", "50");
@@ -77,6 +90,8 @@ describe("schedule editor", () => {
     body.scrollTop = 120;
     fireEvent.click(screen.getByRole("button", { name: "Editar atividade" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByRole("heading", { name: "Editar atividade" })).toBeInTheDocument();
+    expect(container.querySelector(".schedule-drawer__footer")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Nome da atividade")).toHaveFocus());
     expect(body.scrollTop).toBe(120);
     fireEvent.keyDown(window, { key: "Escape" });
@@ -136,8 +151,8 @@ describe("schedule editor", () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Adicionar etapa" }));
     fireEvent.change(screen.getByLabelText("Código compartilhado da etapa"), { target: { value: definitions[0].id } });
-    expect(screen.getByText("Cor compartilhada: #336699")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Cor")).not.toBeInTheDocument();
+    expect(screen.getByText("Alterar e salvar esta cor afeta todas as etapas que usam a definição EC.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#336699");
     fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Nova etapa" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
@@ -157,6 +172,39 @@ describe("schedule editor", () => {
       expect.stringContaining(`/stages/${stage.id}`),
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"version":1') })
     ));
+    confirmation.mockRestore();
+  });
+
+  it("saves a shared color with optimistic concurrency and refreshes current Gantt rows", async () => {
+    const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let sharedColor = "#336699";
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/stage-definitions"))
+        return Promise.resolve(json({ stageDefinitions: [{ ...definitions[0], color: sharedColor }] }));
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id,
+        disciplines: [{ ...discipline, stages: [{ ...stage, color: sharedColor, activities: [activity] }] }] } }));
+      if (path.includes("/stage-definitions/") && options?.method === "PATCH") {
+        const input = JSON.parse(String(options.body)) as { expectedColor: string; color: string };
+        expect(input.expectedColor).toBe(sharedColor);
+        sharedColor = input.color;
+        return Promise.resolve(json({ stageDefinition: { ...definitions[0], color: sharedColor } }));
+      }
+      return Promise.resolve(path.endsWith("/targets") ? json({ targets: [] }) : json({ changes: [] }));
+    });
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#AA5577" } });
+    expect(screen.getByText("Alterar e salvar esta cor afeta todas as etapas que usam a definição EC.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar cor compartilhada" }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/stage-definitions/${definitions[0].id}`,
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ color: "#AA5577", expectedColor: "#336699" }) })
+    ));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cor compartilhada atualizada");
+    expect(container.querySelector(".workspace-table-row.row-stage .color-chip")).toHaveStyle({ backgroundColor: "#AA5577" });
+    expect(container.querySelector(".timeline-bar.bar-activity")).toHaveStyle({ backgroundColor: "#AA5577" });
+    expect(confirmation).toHaveBeenCalledWith(expect.stringContaining("todas as etapas"));
     confirmation.mockRestore();
   });
 
@@ -214,7 +262,7 @@ describe("schedule editor", () => {
     await screen.findByText("Synthetic activity");
     const body = container.querySelector<HTMLElement>(".workspace-body")!;
     body.scrollTop = 120;
-    fireEvent.change(screen.getByLabelText("Escala"), { target: { value: "month" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mês" }));
     const initialLeft = container.querySelector<HTMLElement>(".timeline-bar.bar-activity")!.style.left;
     fireEvent.click(screen.getByRole("button", { name: "Editar atividade" }));
     fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "03/11/2026" } });
@@ -230,7 +278,7 @@ describe("schedule editor", () => {
     expect(container.querySelector<HTMLElement>(".timeline-bar.bar-activity")!.style.left).not.toBe(initialLeft);
     expect(screen.getByText("Synthetic approved correction")).toBeInTheDocument();
     expect(body.scrollTop).toBe(120);
-    expect(screen.getByLabelText("Escala")).toHaveValue("month");
+    expect(screen.getByRole("button", { name: "Mês" })).toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector(".workspace-table-row.row-activity")).toHaveClass("selected");
   });
 

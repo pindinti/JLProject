@@ -1,0 +1,179 @@
+/* JLProject Design System v1.0 — tokens and optional component classes
+   Light is default. For dark, set data-theme="dark" on a parent element.
+   To compact dense views, set data-density="compact" on a parent element.
+   All .jl-* component classes are opt-in; existing components need not be rewritten. */
+:root {
+  /* Brand: derived from approved logo */
+  --jl-brand-graphite: #333733;
+  --jl-brand-sage: #8D9A89;
+  --jl-brand-cream: #F3EFE9;
+  --jl-brand-dark: #252B28;
+
+  /* Semantic color roles — light */
+  --jl-bg: #F3EFE9;
+  --jl-surface: #FFFFFF;
+  --jl-surface-alt: #F8F7F4;
+  --jl-text: #333733;
+  --jl-text-muted: #5C6B61;
+  --jl-text-inverse: #FFFFFF;
+  --jl-border: #DADFD7;
+  --jl-border-strong: #7D887E;
+  --jl-primary: #52694D;
+  --jl-primary-hover: #40583C;
+  --jl-primary-contrast: #FFFFFF;
+  --jl-primary-soft: #E4EBE1;
+  --jl-focus: #355F52;
+  --jl-disabled: #ABB3AB;
+
+  --jl-success: #355F52;
+  --jl-success-bg: #E6F3ED;
+  --jl-info: #355C7D;
+  --jl-info-bg: #E8EFF7;
+  --jl-warning: #8A5A25;
+  --jl-warning-bg: #FFF1DC;
+  --jl-danger: #8C3B35;
+  --jl-danger-bg: #FBE5E3;
+  --jl-neutral-status: #475569;
+  --jl-neutral-status-bg: #F1F4F6;
+
+  /* Gantt STRUCTURE only. Bar and milestone colors are user-configurable;
+     never overwrite persisted colors from the existing application. */
+  --jl-gantt-grid: #E1E5DF;
+  --jl-gantt-weekend: #F4F5F1;
+  --jl-gantt-today: #355F52;
+  /* Fallback colors ONLY for lines without a user-selected color. */
+  --jl-gantt-line-fallback: #93A798;
+  --jl-gantt-milestone-fallback: #8A5A25;
+  --jl-gantt-selected-date: #355F52;
+
+  /* Typography: Inter recommended; works offline with system fallback */
+  --jl-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+  --jl-font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+  --jl-font-size-xs: 0.75rem;   /* 12 px */
+  --jl-font-size-sm: 0.8125rem; /* 13 px */
+  --jl-font-size-md: 0.875rem;  /* 14 px */
+  --jl-font-size-lg: 1rem;      /* 16 px */
+  --jl-font-size-xl: 1.125rem;  /* 18 px */
+  --jl-font-size-h2: 1.375rem;  /* 22 px */
+  --jl-font-size-h1: 1.75rem;   /* 28 px */
+  --jl-leading-tight: 1.3;
+  --jl-leading-normal: 1.5;
+  --jl-leading-relaxed: 1.6;
+
+  /* 4px spacing scale */
+  --jl-space-1: 4px;
+  --jl-space-2: 8px;
+  --jl-space-3: 12px;
+  --jl-space-4: 16px;
+  --jl-space-5: 20px;
+  --jl-space-6: 24px;
+  --jl-space-8: 32px;
+  --jl-space-10: 40px;
+  --jl-space-12: 48px;
+  --jl-space-16: 64px;
+
+  --jl-radius-xs: 4px;
+  --jl-radius-sm: 6px;
+  --jl-radius-md: 8px;
+  --jl-radius-lg: 12px;
+  --jl-radius-pill: 999px;
+  --jl-shadow-sm: 0 1px 3px rgba(37,43,40,0.07);
+  --jl-shadow-md: 0 6px 24px rgba(37,43,40,0.09);
+  --jl-control-height: 36px;
+  --jl-table-row-height: 42px;
+  --jl-gantt-row-height: 40px;
+  --jl-sidebar-width: 232px;
+  --jl-header-height: 56px;
+  --jl-duration-fast: 120ms;
+  --jl-duration-base: 180ms;
+  --jl-duration-slow: 240ms;
+}
+[data-theme="dark"] {
+  --jl-bg: #252B28;
+  --jl-surface: #333733;
+  --jl-surface-alt: #3C443E;
+  --jl-text: #F3EFE9;
+  --jl-text-muted: #CBD5CA;
+  --jl-text-inverse: #252B28;
+  --jl-border: #59635A;
+  --jl-border-strong: #A6B1A5;
+  --jl-primary: #C7D5C1;
+  --jl-primary-hover: #D8E5D2;
+  --jl-primary-contrast: #252B28;
+  --jl-primary-soft: #415344;
+  --jl-focus: #C7D5C1;
+  --jl-disabled: #768479;
+  --jl-success: #B0DEC9;
+  --jl-success-bg: #2B4B40;
+  --jl-info: #BFD9EE;
+  --jl-info-bg: #30495D;
+  --jl-warning: #F5D3A6;
+  --jl-warning-bg: #61472A;
+  --jl-danger: #F5C0BB;
+  --jl-danger-bg: #603733;
+  --jl-neutral-status: #D6DEDF;
+  --jl-neutral-status-bg: #465253;
+  --jl-gantt-grid: #536057;
+  --jl-gantt-weekend: #303A33;
+  --jl-gantt-today: #C7D5C1;
+  --jl-gantt-line-fallback: #8D9A89;
+  --jl-gantt-milestone-fallback: #F5D3A6;
+  --jl-gantt-selected-date: #C7D5C1;
+  --jl-shadow-sm: 0 1px 3px rgba(0,0,0,0.14);
+  --jl-shadow-md: 0 6px 24px rgba(0,0,0,0.2);
+}
+[data-density="compact"] {
+  --jl-control-height: 32px;
+  --jl-table-row-height: 30px;
+  --jl-gantt-row-height: 30px;
+}
+
+/* Optional reference components. Keep this namespace to avoid CSS regressions. */
+.jl-app, .jl-app * {box-sizing: border-box;}
+.jl-app {font-family: var(--jl-font-sans); font-size: var(--jl-font-size-md); line-height: var(--jl-leading-normal); background: var(--jl-bg); color: var(--jl-text);}
+.jl-app button, .jl-app input, .jl-app select {font: inherit;}
+.jl-app button {cursor: pointer;}
+.jl-app button:disabled {cursor: not-allowed; opacity: .55;}
+.jl-app :focus-visible {outline: 2px solid var(--jl-focus); outline-offset: 2px;}
+.jl-card {background: var(--jl-surface); border: 1px solid var(--jl-border); border-radius: var(--jl-radius-lg); box-shadow: var(--jl-shadow-sm);}
+.jl-button {display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--jl-control-height); padding: 0 14px; border-radius: var(--jl-radius-md); border: 1px solid transparent; font-weight: 600; font-size: var(--jl-font-size-sm); line-height: 1; transition: background var(--jl-duration-fast) ease, border-color var(--jl-duration-fast) ease; white-space: nowrap;}
+.jl-button--primary {background: var(--jl-primary); color: var(--jl-primary-contrast);}
+.jl-button--primary:hover:not(:disabled) {background: var(--jl-primary-hover);}
+.jl-button--secondary {background: var(--jl-surface); color: var(--jl-text); border-color: var(--jl-border-strong);}
+.jl-button--secondary:hover:not(:disabled) {background: var(--jl-surface-alt);}
+.jl-button--ghost {background: transparent; color: var(--jl-text);}
+.jl-button--ghost:hover:not(:disabled) {background: var(--jl-primary-soft);}
+.jl-button--danger {background: var(--jl-danger); color: #FFFFFF;}
+[data-theme="dark"] .jl-button--danger {color: #252B28;}
+.jl-input {height: var(--jl-control-height); width: 100%; min-width: 0; padding: 0 12px; border: 1px solid var(--jl-border-strong); background: var(--jl-surface); color: var(--jl-text); border-radius: var(--jl-radius-md);}
+.jl-input::placeholder {color: var(--jl-text-muted); opacity: 1;}
+.jl-input[aria-invalid="true"] {border-color: var(--jl-danger);}
+.jl-label {display: block; margin-bottom: 6px; font-size: var(--jl-font-size-sm); font-weight: 600;}
+.jl-hint {font-size: var(--jl-font-size-xs); color: var(--jl-text-muted);}
+.jl-badge {display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: var(--jl-font-size-xs); font-weight: 600; border-radius: var(--jl-radius-sm); white-space: nowrap;}
+.jl-badge--neutral {color: var(--jl-neutral-status); background: var(--jl-neutral-status-bg);}
+.jl-badge--info {color: var(--jl-info); background: var(--jl-info-bg);}
+.jl-badge--success {color: var(--jl-success); background: var(--jl-success-bg);}
+.jl-badge--warning {color: var(--jl-warning); background: var(--jl-warning-bg);}
+.jl-badge--danger {color: var(--jl-danger); background: var(--jl-danger-bg);}
+.jl-table {border-collapse: separate; border-spacing: 0; width: 100%; font-size: var(--jl-font-size-md);}
+.jl-table th {font-size: var(--jl-font-size-xs); color: var(--jl-text-muted); font-weight: 600; background: var(--jl-surface-alt); text-align: left; border-bottom: 1px solid var(--jl-border);}
+.jl-table td, .jl-table th {height: var(--jl-table-row-height); padding: 8px 12px; border-bottom: 1px solid var(--jl-border); vertical-align: middle;}
+.jl-table tbody tr:hover {background: var(--jl-primary-soft);}
+.jl-date, .jl-number {font-variant-numeric: tabular-nums;}
+.jl-progress {height: 6px; border-radius: var(--jl-radius-pill); background: var(--jl-border); overflow: hidden;}
+.jl-progress > span {display:block; height:100%; background:var(--jl-primary); border-radius:inherit;}
+@media (prefers-reduced-motion: reduce) {
+  .jl-app *, .jl-app *::before, .jl-app *::after {transition-duration: 0.01ms !important; animation-duration: 0.01ms !important;}
+}
+
+/* Example ONLY for a future Gantt component. The existing app must pass
+   the saved per-line / per-milestone color into these local custom properties
+   rather than receiving a global color from the design system.
+   CSS custom properties are scoped to each bar or line, not :root. */
+.jl-gantt-user-colored-bar {
+  background: var(--jl-gantt-line-color, var(--jl-gantt-line-fallback));
+}
+.jl-gantt-user-colored-milestone {
+  border-color: var(--jl-gantt-milestone-color, var(--jl-gantt-milestone-fallback));
+}

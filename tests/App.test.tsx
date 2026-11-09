@@ -47,13 +47,16 @@ describe("administration UI", () => {
     auth.getSession.mockResolvedValue({ data: { session: { token: "valid-token" } }, error: null });
     auth.checkWorkspaceAccess.mockResolvedValue("authorized");
     auth.listMyWorkspaces.mockResolvedValue([workspace]);
-    auth.authenticatedFetch.mockResolvedValue(new Response(JSON.stringify({ memberships: [member] }), { status: 200 }));
+    auth.authenticatedFetch.mockImplementation((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/memberships") ? { memberships: [member] } : { products: [] }
+    ), { status: 200 })));
   });
 
   it("loads the admin page and confirms a sensitive status change", async () => {
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Administração" }));
+    expect(await screen.findByRole("heading", { name: "Produtos" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Configurações" }));
     expect(await screen.findByRole("heading", { name: "Usuários" })).toBeInTheDocument();
     expect(screen.getByText("Test User")).toBeInTheDocument();
     auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ status: "updated" }), { status: 200 }))
@@ -69,7 +72,7 @@ describe("administration UI", () => {
 
   it("adds a user with editor as the default role and shows setup guidance", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Administração" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Configurações" }));
     await screen.findByText("Test User");
     fireEvent.change(screen.getByLabelText("E-mail do novo usuário"), { target: { value: "new@example.com" } });
     auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ status: "created" }), { status: 201 }))
@@ -91,14 +94,37 @@ describe("administration UI", () => {
     expect(auth.authenticatedFetch).not.toHaveBeenCalled();
   });
 
+  it("shows settings to non-admins without exposing user administration", async () => {
+    auth.listMyWorkspaces.mockResolvedValue([{ ...workspace, role: "viewer" }]);
+    window.history.replaceState(null, "", "/configuracoes");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Configurações" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Meu perfil" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Notificações" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Usuários" })).not.toBeInTheDocument();
+    expect(auth.authenticatedFetch).not.toHaveBeenCalledWith(expect.stringContaining("memberships"));
+  });
+
+  it("replaces production user provisioning form with operator guidance", async () => {
+    vi.stubEnv("DEV", false);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Configurações" }));
+    expect(await screen.findByText(/inclusão de usuários não está disponível nesta interface de produção/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("E-mail do novo usuário")).not.toBeInTheDocument();
+    vi.unstubAllEnvs();
+  });
+
   it("confirms a role change and leaves canceled changes untouched", async () => {
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Administração" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Configurações" }));
     await screen.findByText("Test User");
     fireEvent.change(screen.getByRole("combobox", { name: "Perfil: Test User" }), { target: { value: "editor" } });
     expect(confirmation).toHaveBeenCalledWith("Alterar o perfil de Test User para Editor?");
-    expect(auth.authenticatedFetch).toHaveBeenCalledTimes(1);
+    expect(auth.authenticatedFetch).not.toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/memberships/${member.id}`,
+      expect.objectContaining({ method: "PATCH" })
+    );
     confirmation.mockRestore();
   });
 
@@ -115,7 +141,7 @@ describe("administration UI", () => {
   it("shows last-admin protection and does not expose server details", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Administração" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Configurações" }));
     await screen.findByText("Test User");
     auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: "private detail" }), { status: 409 }));
     fireEvent.click(screen.getByRole("button", { name: "Desativar" }));
@@ -139,9 +165,9 @@ describe("products UI", () => {
 
   it("loads products and creates one through the same-origin API", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
-    expect(await screen.findByText("Synthetic product")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Novo produto" }));
+    expect(await screen.findByRole("link", { name: /Synthetic product/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Voltar" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cadastrar produto" }));
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Novo teste" } });
     auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ product: { ...product, name: "Novo teste" } }), { status: 201 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ products: [{ ...product, name: "Novo teste" }] }), { status: 200 }));
@@ -159,9 +185,7 @@ describe("products UI", () => {
           : path.endsWith("/targets") ? { targets: [] } : { products: [product] }
     ), { status: 200 })));
     const first = render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Synthetic product/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Abrir cronograma" }));
+    fireEvent.click(await screen.findByRole("link", { name: /Synthetic product/ }));
     expect(await screen.findByText("Nenhuma disciplina cadastrada.")).toBeInTheDocument();
     expect(window.location.pathname).toBe(`/produtos/${product.id}/cronograma`);
     first.unmount();
@@ -172,10 +196,8 @@ describe("products UI", () => {
   it("lets viewers read details without edit controls", async () => {
     auth.listMyWorkspaces.mockResolvedValue([{ ...workspace, role: "viewer" }]);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Synthetic product/ }));
-    expect(screen.getByRole("heading", { name: "Detalhes do produto" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Novo produto" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /Synthetic product/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cadastrar produto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Salvar" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Arquivar produto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Importar planilha" })).not.toBeInTheDocument();
@@ -183,7 +205,6 @@ describe("products UI", () => {
 
   it("opens the preview-only import entry for editors", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
     fireEvent.click(await screen.findByRole("button", { name: "Importar planilha" }));
     expect(await screen.findByRole("heading", { name: "Importar planilha" })).toBeInTheDocument();
     expect(screen.getByText("As predecessoras da planilha serão ignoradas.")).toBeInTheDocument();
@@ -192,7 +213,6 @@ describe("products UI", () => {
 
   it("keeps the import picker mounted when the window regains focus and restores its route", async () => {
     const first = render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
     fireEvent.click(await screen.findByRole("button", { name: "Importar planilha" }));
     const input = await screen.findByLabelText("Selecionar arquivo XLSX");
     fireEvent.focus(window);
@@ -221,7 +241,8 @@ describe("products UI", () => {
     render(<App />);
     expect(await screen.findByText("Carregando produtos…")).toBeInTheDocument();
     resolveList(new Response(JSON.stringify({ products: [product] }), { status: 200 }));
-    fireEvent.click(await screen.findByRole("button", { name: /Synthetic product/ }));
+    fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
+    fireEvent.click(screen.getByRole("button", { name: "Editar produto" }));
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Produto atualizado" } });
     auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ product: { ...product, name: "Produto atualizado", version: 2 } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ products: [{ ...product, name: "Produto atualizado", version: 2 }] }), { status: 200 }));
@@ -236,8 +257,8 @@ describe("products UI", () => {
   it("confirms archive and reports a duplicate without leaking response details", async () => {
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Produtos" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Synthetic product/ }));
+    fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
+    fireEvent.click(screen.getByRole("button", { name: "Editar produto" }));
     auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ code: "duplicate", error: "private detail" }), { status: 409 }));
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Já existe um produto com esse nome");
@@ -249,16 +270,86 @@ describe("products UI", () => {
     expect(await screen.findByText("Produto arquivado.")).toBeInTheDocument();
     confirmation.mockRestore();
   });
+
+  it("shows real hierarchy counts on cards and marks product history unavailable", async () => {
+    auth.authenticatedFetch.mockImplementation((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/hierarchy") ? { hierarchy: { disciplines: [
+        { stages: [{ activities: [{}, {}] }, { activities: [] }] }, { stages: [{ activities: [{}] }] }
+      ] } } : { products: [product] }
+    ), { status: 200 })));
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByText(/^[0-9]+$/, { selector: ".product-card__counts dd" })
+      .map((element) => element.textContent)).toEqual(["3", "2", "3"]));
+    expect(screen.getByRole("button", { name: `Histórico do produto: ${product.name}` })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: `Histórico do produto: ${product.name}` })).toHaveAttribute(
+      "title", "Histórico de alterações do produto ainda não disponível."
+    );
+  });
+
+  it("opens the existing edit form from the contextual product menu", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
+    fireEvent.click(screen.getByRole("button", { name: "Editar produto" }));
+    expect(await screen.findByLabelText("Nome")).toHaveValue("Synthetic product");
+    expect(screen.getByRole("button", { name: "Arquivar produto" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abrir cronograma" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Arquivar produto" }).closest("form")).toBeNull();
+    expect(screen.getByRole("button", { name: "Salvar" }).closest(".product-form__actions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar" }).closest(".product-form__actions")).toBeInTheDocument();
+  });
+
+  it("discards unsaved product edits and returns to cards without an API write", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
+    fireEvent.click(screen.getByRole("button", { name: "Editar produto" }));
+    fireEvent.change(await screen.findByLabelText("Nome"), { target: { value: "Unsaved product name" } });
+    fireEvent.change(screen.getByLabelText("Descrição"), { target: { value: "Unsaved description" } });
+    const callCountBeforeCancel = auth.authenticatedFetch.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(await screen.findByRole("link", { name: /Synthetic product/ })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Nome")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abrir cronograma" })).not.toBeInTheDocument();
+    expect(auth.authenticatedFetch).toHaveBeenCalledTimes(callCountBeforeCancel);
+  });
 });
 
-afterEach(() => window.history.replaceState(null, "", "/"));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  window.history.replaceState(null, "", "/");
+});
 
 describe("authentication UI", () => {
+  it("renders the fixed global header with inactive future actions and working logout", async () => {
+    auth.getSession.mockResolvedValue({
+      data: { session: { token: "valid-token" }, user: { name: "Paulo Eduardo", email: "paulo@example.com" } },
+      error: null
+    });
+    auth.checkWorkspaceAccess.mockResolvedValue("authorized");
+    auth.listMyWorkspaces.mockResolvedValue([]);
+
+    render(<App />);
+
+    expect(await screen.findByRole("img", { name: "JLProject" })).toBeInTheDocument();
+    expect(screen.getByText("Sistema de Cronogramas de Produto")).toBeInTheDocument();
+    expect(screen.getByText(/Paulo! Que seu dia seja lindo ❤️/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Configurações" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Devloop" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair" }));
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("heading", { name: "Entrar" })).toBeInTheDocument();
+  });
+
   it("shows Portuguese loading and login states", async () => {
     render(<App />);
     expect(screen.getByRole("status")).toHaveTextContent("Verificando sessão");
     expect(screen.getByRole("heading", { name: "Gerenciamento de Projetos" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Entrar" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "JLProject" })).toHaveAttribute("src", "/brand/jlproject-logo.svg");
+    expect(screen.getByText("Sistema de Cronogramas de Produto")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
   });
 
   it("shows a generic error for failed credentials", async () => {

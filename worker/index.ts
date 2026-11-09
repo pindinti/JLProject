@@ -23,7 +23,9 @@ const workspacesPath = "/api/workspaces";
 const membersPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships$/i;
 const memberPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships\/([0-9a-f-]{36})$/i;
 const stageCatalogPath = /^\/api\/workspaces\/([^/]+)\/stage-definitions$/;
+const stageDefinitionColorPath = /^\/api\/workspaces\/([^/]+)\/stage-definitions\/([^/]+)$/i;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const hexColorPattern = /^#[0-9a-f]{6}$/i;
 
 type IdentityVerifier = (request: Request, environment: WorkerEnvironment) => Promise<Identity | null>;
 type MembershipRepositoryFactory = (environment: WorkerEnvironment) => MembershipRepository;
@@ -73,6 +75,20 @@ async function parseNewMember(request: Request): Promise<{ email: string; role: 
   return { email, role };
 }
 
+async function parseStageDefinitionColor(request: Request): Promise<{ color: string; expectedColor: string } | null> {
+  if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) return null;
+  const text = await request.text();
+  if (text.length > 512) return null;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return null; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  if (Object.keys(body).length !== 2 || Object.keys(body).some((key) => key !== "color" && key !== "expectedColor") ||
+      typeof body["color"] !== "string" || !hexColorPattern.test(body["color"]) ||
+      typeof body["expectedColor"] !== "string" || !hexColorPattern.test(body["expectedColor"])) return null;
+  return { color: body["color"].toUpperCase(), expectedColor: body["expectedColor"].toUpperCase() };
+}
+
 export async function handleRequest(
   request: Request,
   environment: WorkerEnvironment = {},
@@ -104,10 +120,12 @@ export async function handleRequest(
   const scheduleRoute = isScheduleRoute(url.pathname);
   const importRoute = isImportRoute(url.pathname);
   const stageCatalogMatch = url.pathname.match(stageCatalogPath);
+  const stageDefinitionColorMatch = url.pathname.match(stageDefinitionColorPath);
   const protectedRoute = request.method === "GET" &&
     (url.pathname === sessionPath || url.pathname === workspacesPath || workspaceMatch || membersMatch) ||
     request.method === "POST" && !!membersMatch ||
-    request.method === "PATCH" && !!memberMatch || productRoute || scheduleRoute || importRoute || !!stageCatalogMatch;
+    request.method === "PATCH" && (!!memberMatch || !!stageDefinitionColorMatch) ||
+    productRoute || scheduleRoute || importRoute || !!stageCatalogMatch || !!stageDefinitionColorMatch;
   if (protectedRoute) {
     const origin = request.headers.get("Origin");
     if (origin && origin !== url.origin) {
@@ -150,6 +168,22 @@ export async function handleRequest(
 
       if (importRoute) {
         return await handleImportRequest(request, identity, repository, environment, importRepositoryFactory);
+      }
+
+      if (stageDefinitionColorMatch) {
+        const [, workspaceId, definitionId] = stageDefinitionColorMatch;
+        if (!uuidPattern.test(workspaceId) || !uuidPattern.test(definitionId))
+          return privateResponse({ error: "Identificador inválido." }, 400);
+        if (request.method !== "PATCH") return privateResponse({ error: "Método não permitido." }, 405);
+        const membership = await authorizeWorkspace(identity, workspaceId, "edit", repository);
+        if (!membership) return privateResponse({ error: "Acesso não autorizado." }, 403);
+        const input = await parseStageDefinitionColor(request);
+        if (!input) return privateResponse({ error: "Cor inválida." }, 400);
+        const result = await scheduleRepositoryFactory(environment).updateStageDefinitionColor(
+          membership.workspaceId, definitionId.toLowerCase(), input.expectedColor, input.color);
+        if (result.status === "not_found") return privateResponse({ error: "Definição de etapa não encontrada." }, 404);
+        if (result.status === "stale") return privateResponse({ error: "A cor foi alterada. Atualize os dados e tente novamente." }, 409);
+        return privateResponse({ stageDefinition: result.value }, 200);
       }
 
       if (stageCatalogMatch) {

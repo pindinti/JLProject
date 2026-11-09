@@ -16,6 +16,7 @@ function mount(canEdit = true) {
   return render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
     targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
     canEdit={canEdit} onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()}
+    onAddDiscipline={vi.fn()} onRefresh={vi.fn()}
     onCreateTarget={vi.fn(async (value) => ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }))}
     onUpdateTarget={vi.fn(async (target, value) => ({ ...target, ...value, version: target.version + 1 }))}
     onDeleteTarget={vi.fn(async () => undefined)} />);
@@ -24,6 +25,15 @@ function mount(canEdit = true) {
 describe("schedule workspace refinements", () => {
   it("keeps one visible horizontal scrollbar outside the long vertical row scroller", () => {
     const { container } = mount();
+    expect(container.querySelector(".schedule-workspace")).toHaveAttribute("data-density", "compact");
+    expect([...container.querySelectorAll<HTMLElement>(".workspace-table-row")].map((row) => row.dataset.rowKey?.split(":")[0]))
+      .toEqual(["product", "discipline", "stage", "activity"]);
+    expect([...container.querySelectorAll<HTMLElement>(".workspace-table-row")].map((row) => row.dataset.rowKey))
+      .toEqual([...container.querySelectorAll<HTMLElement>(".workspace-chart-row")].map((row) => row.dataset.rowKey));
+    expect(container.querySelector(".timeline-target-label")).toHaveTextContent("Synthetic target");
+    expect(container.querySelector<HTMLElement>(".timeline-target-label")!.title).toContain("Synthetic target");
+    expect(container.querySelector(".timeline-target-line")).toHaveStyle({ borderColor: "#AA4557" });
+    expect(container.querySelector(".timeline-bar.bar-activity")).toHaveStyle({ backgroundColor: "#336699" });
     const body = container.querySelector<HTMLElement>(".workspace-body")!;
     const footer = container.querySelector<HTMLElement>(".workspace-scrollbar-row")!;
     const scrollbar = container.querySelector<HTMLElement>(".workspace-horizontal-scroll")!;
@@ -72,7 +82,8 @@ describe("schedule workspace refinements", () => {
     fireEvent.click(container.querySelector(".timeline-bar.bar-activity")!);
     expect(screen.getByRole("status")).toHaveTextContent("08/11/2026");
     expect(container.querySelector(".workspace-table-row.row-activity")).toHaveClass("selected");
-    fireEvent.change(screen.getByLabelText("Escala"), { target: { value: "month" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mês" }));
+    expect(screen.getByRole("button", { name: "Mês" })).toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector<HTMLElement>(".timeline-selected-column")!.dataset.date).toBe("2026-11-08");
     expect(container.querySelector<HTMLElement>(".timeline-selected-column")!.style.width).toBe("4px");
     fireEvent.keyDown(header, { key: "ArrowRight" });
@@ -83,12 +94,44 @@ describe("schedule workspace refinements", () => {
     expect(container.querySelector(".timeline-target-line")).toBeInTheDocument();
   });
 
+  it("keeps row selection on single click and opens the contextual editor on double click", () => {
+    const onEdit = vi.fn();
+    const onAdd = vi.fn();
+    const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
+      targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
+      onToggle={vi.fn()} onEdit={onEdit} onAdd={onAdd} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()}
+      onCreateTarget={vi.fn()} onUpdateTarget={vi.fn()} onDeleteTarget={vi.fn()} />);
+    const name = screen.getByRole("button", { name: "Synthetic activity" });
+
+    fireEvent.click(name);
+    expect(container.querySelector('.workspace-table-row[data-row-key="activity:activity"]')).toHaveClass("selected");
+    expect(onEdit).not.toHaveBeenCalled();
+
+    fireEvent.doubleClick(name);
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ kind: "activity", id: "activity" }));
+    fireEvent.doubleClick(container.querySelector('.workspace-table-row[data-row-key="activity:activity"] .workspace-date-cell')!);
+    expect(onEdit).toHaveBeenCalledTimes(2);
+
+    expect(screen.getByRole("button", { name: "Editar atividade" }).querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "Adicionar etapa" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adicionar atividade" })).toBeInTheDocument();
+    const productRow = container.querySelector<HTMLElement>('[data-row-key="product:product"]')!;
+    const activityRow = container.querySelector<HTMLElement>('[data-row-key="activity:activity"]')!;
+    expect(within(productRow).queryByRole("button", { name: /Editar|Adicionar/ })).not.toBeInTheDocument();
+    expect(within(activityRow).queryByRole("button", { name: /Adicionar/ })).not.toBeInTheDocument();
+    const disciplineNameCell = container.querySelector('[data-row-key="discipline:discipline"] .workspace-name-cell')!;
+    const childOrder = [...disciplineNameCell.children].map((child) => (child as HTMLElement).className);
+    expect(childOrder.indexOf("workspace-expand")).toBeLessThan(childOrder.indexOf("workspace-inline-actions"));
+    expect(childOrder.indexOf("workspace-inline-actions")).toBeLessThan(childOrder.indexOf("workspace-row-name"));
+    expect(container.querySelectorAll(".workspace-row-actions")).toHaveLength(0);
+  });
+
   it("opens a create dialog from the toolbar with the selected date and creates a synthetic milestone", async () => {
     const onCreate = vi.fn(async (value: { name: string; description: string | null; targetDate: string; color: string }) =>
       ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }));
     const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
       targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
-      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onCreateTarget={onCreate}
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onCreateTarget={onCreate}
       onUpdateTarget={vi.fn(async (target, value) => ({ ...target, ...value, version: 2 }))}
       onDeleteTarget={vi.fn(async () => undefined)} />);
     const header = container.querySelector<HTMLElement>(".workspace-timeline-header")!;
@@ -122,7 +165,7 @@ describe("schedule workspace refinements", () => {
     const onDelete = vi.fn(async () => undefined);
     const first = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree} targets={targets}
       openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
-      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onCreateTarget={vi.fn()}
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onCreateTarget={vi.fn()}
       onUpdateTarget={onUpdate} onDeleteTarget={onDelete} />);
     fireEvent.click(first.container.querySelector(".timeline-target-label")!);
     fireEvent.change(screen.getByLabelText("Data"), { target: { value: "08/11/2026" } });
@@ -140,7 +183,7 @@ describe("schedule workspace refinements", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const second = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree} targets={targets}
       openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
-      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onCreateTarget={vi.fn()}
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onCreateTarget={vi.fn()}
       onUpdateTarget={onUpdate} onDeleteTarget={onDelete} />);
     fireEvent.click(second.container.querySelector(".timeline-target-label")!);
     fireEvent.click(within(second.container).getByRole("button", { name: "Excluir meta" }));

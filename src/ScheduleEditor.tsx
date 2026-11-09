@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
+import { ColorField } from "./ColorField";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { ScheduleWorkspace } from "./ScheduleWorkspace";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
@@ -193,6 +194,10 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft || !canEdit || busy) return;
+    if (draft.kind === "stage" && draft.definitionId !== newDefinition && selectedStageDefinition &&
+        draft.color.toUpperCase() !== selectedStageDefinition.color.toUpperCase()) {
+      setFeedback(messages.saveSharedColorFirst); return;
+    }
     if (draft.kind === "activity" && draft.id && dateDraft &&
         (dateDraft.plannedStart !== (draft.plannedStart === messages.noDate ? "" : draft.plannedStart) ||
          dateDraft.plannedEnd !== (draft.plannedEnd === messages.noDate ? "" : draft.plannedEnd))) {
@@ -326,6 +331,39 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       code: selected?.code ?? "", color: selected?.color ?? "#336699" } : null);
   }
 
+  async function saveSharedStageColor() {
+    if (!draft || draft.kind !== "stage" || draft.definitionId === newDefinition || !canEdit || busy) return;
+    const definition = definitions.find((item) => item.id === draft.definitionId);
+    if (!definition) { setFeedback(messages.sharedStageDefinitionMissing); return; }
+    if (draft.color.toUpperCase() === definition.color.toUpperCase()) return;
+    if (!window.confirm(messages.confirmSharedStageColor(definition.code))) return;
+    setBusy(true);
+    setFeedback("");
+    try {
+      const response = await authenticatedFetch(`/api/workspaces/${workspace.id}/stage-definitions/${definition.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ color: draft.color, expectedColor: definition.color })
+      });
+      if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
+      if (response.status === 404) { setFeedback(messages.sharedStageDefinitionMissing); return; }
+      if (response.status === 409) { setFeedback(messages.sharedStageColorConflict); return; }
+      if (response.status === 400) { setFeedback(messages.hexadecimalColorHint); return; }
+      if (!response.ok) { setFeedback(messages.sharedStageColorSaveError); return; }
+      const payload = await response.json() as { stageDefinition: StageDefinition };
+      setDefinitions((current) => current.map((item) => item.id === payload.stageDefinition.id
+        ? payload.stageDefinition : item));
+      setDraft((current) => current?.kind === "stage" ? { ...current, color: payload.stageDefinition.color } : current);
+      await load(false);
+      setFeedback(messages.sharedStageColorSaved);
+    } catch { setFeedback(messages.sharedStageColorSaveError); }
+    finally { setBusy(false); }
+  }
+
+  const selectedStageDefinition = draft?.kind === "stage"
+    ? definitions.find((item) => item.id === draft.definitionId) : undefined;
+  const sharedStageColorChanged = !!selectedStageDefinition && draft?.kind === "stage" &&
+    draft.color.toUpperCase() !== selectedStageDefinition.color.toUpperCase();
+
   function editRow(row: VisibleRow) {
     const discipline = hierarchy?.disciplines.find((item) => item.id === row.disciplineId);
     if (!discipline) return;
@@ -360,24 +398,25 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
 
   return (
     <section className="schedule-editor" aria-labelledby="schedule-title">
-      <h2 id="schedule-title">{messages.productSchedule}: {product.name}</h2>
-      <button type="button" className="back-button" onClick={onBack}>{messages.backToProducts}</button>
+      <header className="schedule-titlebar">
+        <button type="button" className="schedule-breadcrumb" aria-label={messages.backToProducts} onClick={onBack}>
+          <span aria-hidden="true">‹</span> {messages.products}
+        </button>
+        <h2 id="schedule-title">{product.name}</h2>
+      </header>
       {state === "loading" && <p role="status">{messages.scheduleLoading}</p>}
       {state === "notFound" && <p role="alert">{messages.scheduleNotFound}</p>}
       {state === "error" && <div role="alert"><p>{messages.scheduleLoadError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && hierarchy && (
         <>
-          <div className="schedule-toolbar">
-            {canEdit && <button type="button" onClick={() => startDiscipline()}>{messages.addDiscipline}</button>}
-            <button type="button" onClick={() => { closeDraft(); void load(false); }}>{messages.refreshHierarchy}</button>
-          </div>
           {feedback && !draft && <div role="alert" className="feedback"><p>{feedback}</p></div>}
           {hierarchy.disciplines.length === 0 && <p>{messages.noDisciplines}</p>}
           <ScheduleWorkspace key={product.id} product={product} tree={hierarchy} targets={targets}
             openDisciplines={openDisciplines ?? new Set()} openStages={openStages ?? new Set()}
             canEdit={canEdit} onToggle={(row) => {
               if (row.kind === "discipline" || row.kind === "stage") toggle(row.id, row.kind);
-            }} onEdit={editRow} onAdd={addChild} onHistory={openHistory}
+            }} onEdit={editRow} onAdd={addChild} onAddDiscipline={() => startDiscipline()}
+            onRefresh={() => { closeDraft(); void load(false); }} onHistory={openHistory}
             onCreateTarget={createTarget} onUpdateTarget={updateTarget} onDeleteTarget={deleteTarget} />
         </>
       )}
@@ -385,7 +424,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
         if (event.target === event.currentTarget && !busy) closeDraft();
       }}><div ref={drawerRef} className="schedule-drawer" role="dialog" aria-modal="true"
         aria-labelledby="schedule-drawer-title">{draft && canEdit && <form className="hierarchy-form" onSubmit={(event) => void save(event)}>
-        <h3 id="schedule-drawer-title">{draft.id ? messages.editItem : messages.newItem}</h3>
+        <h3 id="schedule-drawer-title">{draft.id ? (draft.kind === "discipline" ? messages.editDiscipline : draft.kind === "stage" ? messages.editStage : messages.editActivity) : messages.newItem}</h3>
         {draft.kind === "discipline" && <>
           <label htmlFor="hierarchy-name">{messages.disciplineName}</label>
           <input id="hierarchy-name" required maxLength={200} value={draft.name}
@@ -393,9 +432,8 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
           <label htmlFor="hierarchy-code">{messages.disciplineCode}</label>
           <input id="hierarchy-code" required maxLength={24} value={draft.shortCode}
             onChange={(event) => setDraft({ ...draft, shortCode: event.target.value })} />
-          <label htmlFor="hierarchy-color">{messages.color}</label>
-          <input id="hierarchy-color" type="color" value={draft.color}
-            onChange={(event) => setDraft({ ...draft, color: event.target.value })} />
+          <ColorField id="hierarchy-color" label={messages.color} value={draft.color}
+            onChange={(color) => setDraft({ ...draft, color })} />
           <label htmlFor="hierarchy-description">{messages.productDescription}</label>
           <textarea id="hierarchy-description" maxLength={2000} value={draft.description}
             onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
@@ -411,11 +449,19 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
             <label htmlFor="stage-code">{messages.stageCode}</label>
             <input id="stage-code" required maxLength={24} value={draft.code}
               onChange={(event) => setDraft({ ...draft, code: event.target.value })} />
-            <label htmlFor="stage-color">{messages.color}</label>
-            <input id="stage-color" type="color" value={draft.color}
-              onChange={(event) => setDraft({ ...draft, color: event.target.value })} />
+            <ColorField id="stage-color" label={messages.color} value={draft.color}
+              onChange={(color) => setDraft({ ...draft, color })} />
           </>}
-          {draft.definitionId !== newDefinition && <p>{messages.sharedStageColor(draft.color)}</p>}
+          {draft.definitionId !== newDefinition && <>
+            <ColorField id="shared-stage-color" label={messages.color} value={draft.color}
+              onChange={(color) => setDraft({ ...draft, color })} />
+            <p>{messages.sharedStageColor(draft.code)}</p>
+            {sharedStageColorChanged && <div className="schedule-toolbar">
+              <button type="button" onClick={() => void saveSharedStageColor()} disabled={busy}>
+                {messages.saveSharedStageColor}
+              </button>
+            </div>}
+          </>}
           <label htmlFor="stage-name">{messages.stageName}</label>
           <input id="stage-name" required maxLength={200} value={draft.displayName}
             onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} />
@@ -443,10 +489,10 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
         <label htmlFor="hierarchy-order">{messages.displayOrder}</label>
         <input id="hierarchy-order" type="number" min={0} max={1000000} required value={draft.displayOrder}
           onChange={(event) => setDraft({ ...draft, displayOrder: event.target.value })} />
-        <div className="schedule-toolbar">
+        <footer className="schedule-drawer__footer">
           <button type="submit" disabled={busy}>{draft.kind === "activity" && draft.id ? messages.saveActivityDetails : messages.save}</button>
           <button type="button" className="back-button" onClick={closeDraft} disabled={busy}>{messages.cancel}</button>
-        </div>
+        </footer>
       </form>}
       {draft?.kind === "activity" && draft.id && dateDraft && canEdit && <form className="schedule-date-form"
         onSubmit={(event) => void saveDates(event)}>
@@ -462,7 +508,15 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
         <label htmlFor="date-reason">{messages.dateChangeReason}</label>
         <textarea id="date-reason" maxLength={2000} value={dateDraft.reason}
           onChange={(event) => setDateDraft({ ...dateDraft, reason: event.target.value })} />
-        <button type="submit" disabled={busy}>{messages.saveActivityDates}</button>
+        <footer className="schedule-drawer__footer">
+          <button type="submit" disabled={busy}>{messages.saveActivityDates}</button>
+          <button type="button" className="back-button" onClick={() => {
+            setDateDraft((previous) => previous ? { ...previous,
+              plannedStart: previous.originalStart === messages.noDate ? "" : previous.originalStart,
+              plannedEnd: previous.originalEnd === messages.noDate ? "" : previous.originalEnd, reason: "" } : null);
+            setFeedback("");
+          }} disabled={busy}>{messages.cancel}</button>
+        </footer>
       </form>}
       {feedback && <div role="alert" className="feedback"><p>{feedback}</p>
         {feedback === messages.scheduleConflict && <button type="button" onClick={() => { closeDraft(); void load(false); }}>{messages.refreshHierarchy}</button>}

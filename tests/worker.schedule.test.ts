@@ -27,6 +27,9 @@ const a = { id: activity, stageId: stage, name: "Tarefa sintética", activityTyp
 function repository(): ScheduleRepository {
   return {
     listStageDefinitions: vi.fn(async () => [{ id: "a9999999-9999-4999-8999-999999999999", code: "EC", color: "#445566" }]),
+    updateStageDefinitionColor: vi.fn(async (_workspaceId, definitionId, _expectedColor, color) => ({
+      status: "ok" as const, value: { id: definitionId, code: "EC", color }
+    })),
     productExists: vi.fn(async () => true), disciplineExists: vi.fn(async () => true),
     stageExists: vi.fn(async () => true), activityExists: vi.fn(async () => true),
     listDisciplines: vi.fn(async () => [d]), createDiscipline: vi.fn(async () => ({ status: "ok" as const, value: d })),
@@ -148,6 +151,52 @@ describe("schedule hierarchy API", () => {
     expect(repo.listStageDefinitions).toHaveBeenCalledWith(ws);
     expect((await call(request(path, "POST", {}), "admin", repo)).status).toBe(405);
     expect((await call(request(path.replace(ws, otherWs)), "admin", repo)).status).toBe(403);
+  });
+
+  it("updates only a workspace-scoped shared stage color for active editors and admins", async () => {
+    const repo = repository();
+    const definitionId = "a9999999-9999-4999-8999-999999999999";
+    const path = `https://app.test/api/workspaces/${ws}/stage-definitions/${definitionId}`;
+    const input = { expectedColor: "#445566", color: "#AA5577" };
+
+    for (const role of ["admin", "editor"] as const) {
+      const response = await call(request(path, "PATCH", input), role, repo);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ stageDefinition: { id: definitionId, code: "EC", color: "#AA5577" } });
+    }
+    expect(repo.updateStageDefinitionColor).toHaveBeenCalledWith(ws, definitionId, "#445566", "#AA5577");
+    expect(repo.updateStage).not.toHaveBeenCalled();
+    expect(repo.changeActivityDates).not.toHaveBeenCalled();
+    expect((await call(request(path, "PATCH", input), "viewer", repo)).status).toBe(403);
+    expect((await call(request(path, "PATCH", input), null, repo)).status).toBe(403);
+    expect((await call(request(path, "PATCH", input), "editor", repo, false)).status).toBe(403);
+    expect((await call(request(path.replace(ws, otherWs), "PATCH", input), "admin", repo)).status).toBe(403);
+    expect((await call(request(path.replace(definitionId, "bad"), "PATCH", input), "admin", repo)).status).toBe(400);
+    expect((await call(request(path, "PATCH", { ...input, color: "blue" }), "admin", repo)).status).toBe(400);
+    expect((await call(request(path, "PATCH", { ...input, unexpected: true }), "admin", repo)).status).toBe(400);
+    expect((await call(request(path, "POST", input), "admin", repo)).status).toBe(405);
+
+    const anonymous = await handleRequest(request(path, "PATCH", input), environment, async () => null,
+      () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+  });
+
+  it("returns safe stale, missing, and persistence errors for shared color edits", async () => {
+    const definitionId = "a9999999-9999-4999-8999-999999999999";
+    const path = `https://app.test/api/workspaces/${ws}/stage-definitions/${definitionId}`;
+    const input = { expectedColor: "#445566", color: "#AA5577" };
+    for (const [result, status] of [[{ status: "stale" }, 409], [{ status: "not_found" }, 404]] as const) {
+      const response = await call(request(path, "PATCH", input), "editor", {
+        ...repository(), updateStageDefinitionColor: async () => result
+      });
+      expect(response.status).toBe(status);
+      expect(await response.text()).not.toContain("SQL");
+    }
+    const failed = await call(request(path, "PATCH", input), "admin", {
+      ...repository(), updateStageDefinitionColor: async () => { throw new Error("private SQL detail"); }
+    });
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private SQL detail");
   });
 
   it("creates each level only for an editor or admin and uses verified identity", async () => {

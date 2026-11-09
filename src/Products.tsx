@@ -14,12 +14,23 @@ interface Product {
   version: number;
 }
 
-export function Products({ workspace, onBack, onAccessLost }: {
+interface ProductCounts {
+  activities: number;
+  disciplines: number;
+  stages: number;
+}
+
+interface ProductHierarchy {
+  disciplines: { stages: { activities: unknown[] }[] }[];
+}
+
+export function Products({ workspace, onAccessLost }: {
   workspace: WorkspaceSummary;
-  onBack: () => void;
   onAccessLost: () => void;
 }) {
   const [products, setProducts] = useState<Product[]>([]);
+  const [productCounts, setProductCounts] = useState<Record<string, ProductCounts | null>>({});
+  const [countsLoading, setCountsLoading] = useState(false);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -27,6 +38,7 @@ export function Products({ workspace, onBack, onAccessLost }: {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [openMenuProductId, setOpenMenuProductId] = useState<string | null>(null);
   const [scheduleProductId, setScheduleProductId] = useState<string | null>(() =>
     window.location.pathname.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null
   );
@@ -42,8 +54,32 @@ export function Products({ workspace, onBack, onAccessLost }: {
       if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
       if (!response.ok) throw new Error("Product lookup failed.");
       const data = await response.json() as { products: Product[] };
+      if (!Array.isArray(data.products)) throw new Error("Product response is invalid.");
       setProducts(data.products);
+      setProductCounts({});
       setState("ready");
+      setCountsLoading(data.products.length > 0);
+      const countResults = await Promise.all(data.products.map(async (product) => {
+        try {
+          const hierarchyResponse = await authenticatedFetch(`${endpoint}/${product.id}/hierarchy`);
+          if (hierarchyResponse.status === 401 || hierarchyResponse.status === 403) {
+            onAccessLost();
+            return [product.id, null] as const;
+          }
+          if (!hierarchyResponse.ok) return [product.id, null] as const;
+          const payload = await hierarchyResponse.json() as { hierarchy: ProductHierarchy };
+          const disciplines = payload.hierarchy.disciplines;
+          return [product.id, {
+            disciplines: disciplines.length,
+            stages: disciplines.reduce((total, discipline) => total + discipline.stages.length, 0),
+            activities: disciplines.reduce((total, discipline) => total + discipline.stages.reduce(
+              (stageTotal, stage) => stageTotal + stage.activities.length, 0
+            ), 0)
+          }] as const;
+        } catch { return [product.id, null] as const; }
+      }));
+      setProductCounts(Object.fromEntries(countResults));
+      setCountsLoading(false);
     } catch { setState("error"); }
   }, [endpoint, onAccessLost]);
 
@@ -57,9 +93,23 @@ export function Products({ workspace, onBack, onAccessLost }: {
     setFeedback("");
   }
 
+  function openSchedule(product: Product) {
+    window.history.pushState(null, "", `/produtos/${product.id}/cronograma`);
+    setScheduleProductId(product.id);
+    setSelectedId(null);
+    setOpenMenuProductId(null);
+  }
+
   function newProduct() {
     setSelectedId(null);
     setCreating(true);
+    setName("");
+    setDescription("");
+    setFeedback("");
+  }
+
+  function cancelEdit() {
+    setSelectedId(null);
     setName("");
     setDescription("");
     setFeedback("");
@@ -94,14 +144,14 @@ export function Products({ workspace, onBack, onAccessLost }: {
     finally { setBusy(false); }
   }
 
-  async function archive() {
-    if (!canEdit || !selected?.active || busy || !window.confirm(messages.confirmProductArchive(selected.name))) return;
+  async function archive(product: Product | null = selected) {
+    if (!canEdit || !product?.active || busy || !window.confirm(messages.confirmProductArchive(product.name))) return;
     setBusy(true);
     setFeedback("");
     try {
-      const response = await authenticatedFetch(`${endpoint}/${selected.id}/archive`, {
+      const response = await authenticatedFetch(`${endpoint}/${product.id}/archive`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: selected.version })
+        body: JSON.stringify({ version: product.version })
       });
       if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
       if (!response.ok) {
@@ -110,7 +160,8 @@ export function Products({ workspace, onBack, onAccessLost }: {
         return;
       }
       await load();
-      setSelectedId(null);
+      if (selectedId === product.id) setSelectedId(null);
+      setOpenMenuProductId(null);
       setFeedback(messages.productArchived);
     } catch { setFeedback(messages.productArchiveError); }
     finally { setBusy(false); }
@@ -145,24 +196,67 @@ export function Products({ workspace, onBack, onAccessLost }: {
 
   return (
     <section className="products" aria-labelledby="products-title">
-      <h2 id="products-title">{messages.products}</h2>
-      <p>{workspace.name}</p>
-      {canEdit && <button type="button" disabled={busy} onClick={newProduct}>{messages.newProduct}</button>}
-      {canEdit && <button type="button" disabled={busy} onClick={() => {
-        window.history.pushState(null, "", "/produtos/importar");
-        setShowImport(true);
-      }}>{messages.importTitle}</button>}
+      <div className="products-heading">
+        <div>
+          <h2 id="products-title">{messages.products}</h2>
+        </div>
+        {canEdit && <div className="products-primary-actions">
+          <button type="button" disabled={busy} onClick={newProduct}>{messages.registerProduct}</button>
+          <button type="button" className="back-button" disabled={busy} onClick={() => {
+            window.history.pushState(null, "", "/produtos/importar");
+            setShowImport(true);
+          }}>{messages.importTitle}</button>
+        </div>}
+      </div>
       {state === "loading" && <p role="status">{messages.productsLoading}</p>}
       {state === "error" && <div role="alert"><p>{messages.productsError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && products.length === 0 && <p>{messages.productsEmpty}</p>}
       {state === "ready" && products.length > 0 && (
         <ul className="product-list">
           {products.map((product) => (
-            <li key={product.id}>
-              <button type="button" className="product-link" onClick={() => selectProduct(product)}>
-                <span>{product.name}</span>
-                <span>{product.active ? messages.active : messages.archived}</span>
-              </button>
+            <li className="product-card" key={product.id}>
+              <a className="product-card__body" href={`/produtos/${product.id}/cronograma`}
+                onClick={(event) => { event.preventDefault(); openSchedule(product); }}>
+                <div className="product-card__topline">
+                  <span className="product-card__open">
+                  {product.name}
+                  </span>
+                  <span className={`product-card__status${product.active ? "" : " product-card__status--archived"}`}>
+                    {product.active ? messages.active : messages.archived}
+                  </span>
+                </div>
+                <dl className="product-card__counts" aria-label={messages.scheduleCounts}>
+                  {countsLoading && productCounts[product.id] === undefined ? <div className="product-card__count-message">{messages.scheduleCountsLoading}</div>
+                    : productCounts[product.id] ? <>
+                      <div><dt>{messages.activities}</dt><dd>{productCounts[product.id]!.activities.toLocaleString("pt-BR")}</dd></div>
+                      <div><dt>{messages.disciplines}</dt><dd>{productCounts[product.id]!.disciplines.toLocaleString("pt-BR")}</dd></div>
+                      <div><dt>{messages.stages}</dt><dd>{productCounts[product.id]!.stages.toLocaleString("pt-BR")}</dd></div>
+                    </> : <div className="product-card__count-message">{messages.scheduleCountsUnavailable}</div>}
+                </dl>
+              </a>
+              <div className="product-card__actions">
+                <button type="button" className="product-card__icon" aria-disabled="true"
+                  aria-describedby={`product-history-help-${product.id}`} title={messages.productHistoryUnavailable}
+                  aria-label={`${messages.productHistory}: ${product.name}`}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16M4 10h16M4 14.5h10M4 19h10" /></svg>
+                </button>
+                <span className="visually-hidden" id={`product-history-help-${product.id}`}>{messages.productHistoryUnavailable}</span>
+                {canEdit && product.active && <div className="product-card__menu">
+                  <button type="button" className="product-card__menu-trigger"
+                    aria-label={`${messages.productActions}: ${product.name}`} title={messages.productActions}
+                    aria-controls={`product-menu-${product.id}`} aria-expanded={openMenuProductId === product.id}
+                    onClick={() => setOpenMenuProductId(openMenuProductId === product.id ? null : product.id)}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg>
+                  </button>
+                  {openMenuProductId === product.id && <div className="product-card__menu-items" id={`product-menu-${product.id}`}>
+                    <button type="button" onClick={() => {
+                      selectProduct(product);
+                      setOpenMenuProductId(null);
+                    }}>{messages.editProduct}</button>
+                    <button type="button" onClick={() => void archive(product)}>{messages.archiveProduct}</button>
+                  </div>}
+                </div>}
+              </div>
             </li>
           ))}
         </ul>
@@ -187,20 +281,20 @@ export function Products({ workspace, onBack, onAccessLost }: {
               <input id="product-name" required maxLength={200} value={name} onChange={(event) => setName(event.target.value)} />
               <label htmlFor="product-description">{messages.productDescription}</label>
               <textarea id="product-description" maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} />
-              <button type="submit" disabled={busy}>{messages.save}</button>
+              <div className="product-form__actions">
+                <button type="submit" disabled={busy}>{messages.save}</button>
+                <button type="button" className="back-button" disabled={busy} onClick={cancelEdit}>{messages.cancel}</button>
+              </div>
             </form>
           ) : (
             <dl><dt>{messages.productName}</dt><dd>{selected.name}</dd><dt>{messages.productDescription}</dt><dd>{selected.description || messages.noDescription}</dd></dl>
           )}
-          {canEdit && selected.active && <button type="button" disabled={busy} onClick={() => void archive()}>{messages.archiveProduct}</button>}
-          <button type="button" onClick={() => {
-            window.history.pushState(null, "", `/produtos/${selected.id}/cronograma`);
-            setScheduleProductId(selected.id);
-          }}>{messages.openSchedule}</button>
+          {canEdit && selected.active && <div className="product-detail-actions">
+            <button type="button" disabled={busy} onClick={() => void archive(selected)}>{messages.archiveProduct}</button>
+          </div>}
         </section>
       )}
       {feedback && <p role="alert" className="feedback">{feedback}</p>}
-      <button type="button" className="back-button" onClick={onBack}>{messages.back}</button>
     </section>
   );
 }

@@ -8,10 +8,11 @@ import {
   verifyEmailCode
 } from "./auth";
 import { messages } from "./locales/pt-BR";
-import { Administration } from "./Administration";
 import { Products } from "./Products";
+import { Settings } from "./Settings";
+import { getFirstName, getGreeting } from "./design/header";
 
-type View = "loading" | "login" | "recovery" | "reset" | "verify" | "authenticated" | "pending" | "restorationError" | "administration" | "adminDenied" | "products";
+type View = "loading" | "login" | "recovery" | "reset" | "verify" | "pending" | "restorationError" | "adminDenied" | "products" | "settings";
 
 export function App() {
   const [view, setView] = useState<View>(() => window.location.pathname === "/reset-password" ? "reset" : "loading");
@@ -22,12 +23,20 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [adminWorkspace, setAdminWorkspace] = useState<WorkspaceSummary | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [firstName, setFirstName] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [resetToken, setResetToken] = useState<string | null>(() =>
     window.location.pathname === "/reset-password"
       ? new URLSearchParams(window.location.search).get("token")
       : null
   );
   const sessionRequest = useRef(0);
+  const showGlobalHeader = ["pending", "adminDenied", "products", "settings"].includes(view);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setCurrentTime(new Date()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const refreshSession = useCallback(async (showLoading = true) => {
     const requestNumber = ++sessionRequest.current;
@@ -51,10 +60,12 @@ export function App() {
       if (!result.data?.session) {
         setAdminWorkspace(null);
         setCurrentWorkspace(null);
+        setFirstName(null);
         window.history.replaceState(null, "", "/");
         setView("login");
         return;
       }
+      setFirstName(getFirstName(result.data.user?.name, result.data.user?.email));
       if (!token) {
         setMessage(messages.networkError);
         setView("restorationError");
@@ -73,10 +84,17 @@ export function App() {
         const admin = workspaces.find((workspace) => workspace.role === "admin") ?? null;
         setAdminWorkspace(admin);
         setCurrentWorkspace(workspaces[0] ?? null);
-        setView(window.location.pathname === "/administracao"
-          ? admin ? "administration" : "adminDenied"
-          : window.location.pathname.startsWith("/produtos") && workspaces.length > 0
-            ? "products" : "authenticated");
+        const pathname = window.location.pathname;
+        if (pathname === "/administracao") {
+          if (admin) {
+            window.history.replaceState(null, "", "/configuracoes");
+            setView("settings");
+          } else setView("adminDenied");
+        } else if (pathname.startsWith("/configuracoes")) setView("settings");
+        else if (workspaces.length > 0) {
+          if (!pathname.startsWith("/produtos")) window.history.replaceState(null, "", "/produtos");
+          setView("products");
+        } else setView("pending");
       } else if (access === "expired") {
         setMessage(messages.sessionError);
         setView("restorationError");
@@ -141,6 +159,7 @@ export function App() {
       } else {
         setAdminWorkspace(null);
         setCurrentWorkspace(null);
+        setFirstName(null);
         window.history.replaceState(null, "", "/");
         setView("login");
       }
@@ -228,11 +247,76 @@ export function App() {
   }
 
   return (
-    <main className="application-shell" aria-labelledby="application-title">
-      <section className="application-card">
-        <p className="application-brand">{messages.applicationName}</p>
-        <h1 id="application-title">{messages.applicationSubtitle}</h1>
-        <p className="application-status">{messages.applicationStatus}</p>
+    <div className="jl-app" data-theme="light">
+      {showGlobalHeader && (
+        <header className="global-header">
+          <div className="global-header__brand">
+            <img src="/brand/jlproject-logo.svg" alt={messages.applicationName} />
+            <span>{messages.headerSubtitle}</span>
+          </div>
+          <p className="global-header__greeting">
+            {getGreeting(firstName ?? messages.greetingFallbackName, currentTime)}
+          </p>
+          <nav className="global-header__actions" aria-label={messages.headerActions}>
+            <button
+              className="global-header__action"
+              type="button"
+              aria-label={messages.settings}
+              aria-current={view === "settings" ? "page" : undefined}
+              onClick={() => {
+                window.history.pushState(null, "", "/configuracoes");
+                setView("settings");
+              }}
+            >
+              {messages.settings}
+            </button>
+            <button
+              className="global-header__action global-header__action--unavailable"
+              type="button"
+              disabled
+              title={messages.featureNotAvailable}
+              aria-label={messages.devloop}
+              aria-describedby="header-feature-not-available"
+            >
+              {messages.devloop}
+            </button>
+            <button
+              className="global-header__action global-header__logout"
+              type="button"
+              disabled={busy}
+              onClick={() => void signOut()}
+            >
+              {busy ? messages.signingOut : messages.signOutLabel}
+            </button>
+            <span id="header-feature-not-available" className="visually-hidden">
+              {messages.featureNotAvailable}
+            </span>
+          </nav>
+        </header>
+      )}
+      <main
+        className={`application-shell${showGlobalHeader ? " application-shell--authenticated" : ""}${view === "login" ? " application-shell--login" : ""}`}
+        aria-labelledby="application-title"
+      >
+      <section className={`application-card${view === "login" ? " application-card--login" : ""}`}>
+        {showGlobalHeader ? (
+          <h1 id="application-title" className="visually-hidden">{messages.applicationName}</h1>
+        ) : view === "login" ? (
+          <>
+            <div className="login-branding">
+              <img src="/brand/jlproject-logo.svg" alt={messages.applicationName} />
+              <p>{messages.headerSubtitle}</p>
+            </div>
+            <h1 id="application-title">{messages.applicationSubtitle}</h1>
+            <p className="application-status">{messages.applicationStatus}</p>
+          </>
+        ) : (
+          <>
+            <p className="application-brand">{messages.applicationName}</p>
+            <h1 id="application-title">{messages.applicationSubtitle}</h1>
+            <p className="application-status">{messages.applicationStatus}</p>
+          </>
+        )}
 
         {view === "loading" && <p role="status">{messages.loading}</p>}
 
@@ -302,52 +386,41 @@ export function App() {
           </>
         )}
 
-        {view === "authenticated" && (
-          <>
-            <h2 role="status">{messages.authenticatedTitle}</h2>
-            {currentWorkspace && <button type="button" onClick={() => {
-              window.history.pushState(null, "", "/produtos");
-              setView("products");
-            }}>{messages.products}</button>}
-            {adminWorkspace && <button type="button" onClick={() => {
-              window.history.pushState(null, "", "/administracao");
-              setView("administration");
-            }}>{messages.administration}</button>}
-            <button type="button" disabled={busy} onClick={() => void signOut()}>{busy ? messages.signingOut : messages.signOut}</button>
-          </>
-        )}
-        {view === "administration" && adminWorkspace && (
-          <Administration workspace={adminWorkspace} onAccessLost={refreshSession} onBack={() => {
-            window.history.pushState(null, "", "/");
-            setView("authenticated");
-          }} />
-        )}
         {view === "products" && currentWorkspace && (
-          <Products workspace={currentWorkspace} onAccessLost={refreshSession} onBack={() => {
-            window.history.pushState(null, "", "/");
-            setView("authenticated");
+          <Products workspace={currentWorkspace} onAccessLost={refreshSession} />
+        )}
+        {view === "settings" && (
+          <Settings adminWorkspace={adminWorkspace} onAccessLost={refreshSession} onBack={() => {
+            if (!currentWorkspace) {
+              window.history.replaceState(null, "", "/");
+              setView("pending");
+              return;
+            }
+            window.history.pushState(null, "", "/produtos");
+            setView("products");
           }} />
         )}
         {view === "adminDenied" && (
           <>
             <h2>{messages.accessDenied}</h2>
             <button type="button" onClick={() => {
-              window.history.pushState(null, "", "/");
-              setView("authenticated");
+              if (currentWorkspace) {
+                window.history.pushState(null, "", "/produtos");
+                setView("products");
+              } else setView("pending");
             }}>{messages.back}</button>
-            <button type="button" disabled={busy} onClick={() => void signOut()}>{messages.signOut}</button>
           </>
         )}
         {view === "pending" && (
           <>
             <h2>{messages.accessPendingTitle}</h2>
             <p>{messages.accessPendingBody}</p>
-            <button type="button" disabled={busy} onClick={() => void signOut()}>{busy ? messages.signingOut : messages.signOut}</button>
           </>
         )}
 
         {message && <p className="feedback" role="alert">{message}</p>}
       </section>
-    </main>
+      </main>
+    </div>
   );
 }

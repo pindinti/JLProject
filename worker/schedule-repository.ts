@@ -21,6 +21,8 @@ export interface ScheduleHierarchy {
   disciplines: (Discipline & { stages: (Stage & { activities: Activity[] })[] })[];
 }
 export interface StageDefinition { id: string; code: string; color: string }
+export type StageDefinitionColorMutation = { status: "ok"; value: StageDefinition } |
+  { status: "not_found" } | { status: "stale" };
 export interface BusinessTarget { id: string; name: string; description: string | null; color: string;
   targetDate: string; operationalDate: string | null; displayOrder: number; version: number }
 export interface TargetInput { name: string; description: string | null; targetDate: string; color: string }
@@ -34,6 +36,8 @@ export type Mutation<T> = { status: "ok"; value: T } |
 
 export interface ScheduleRepository {
   listStageDefinitions(workspaceId: string): Promise<StageDefinition[]>;
+  updateStageDefinitionColor(workspaceId: string, definitionId: string, expectedColor: string,
+    color: string): Promise<StageDefinitionColorMutation>;
   productExists(workspaceId: string, productId: string, activeOnly: boolean): Promise<boolean>;
   disciplineExists(workspaceId: string, productId: string, disciplineId: string, activeOnly: boolean): Promise<boolean>;
   stageExists(workspaceId: string, productId: string, disciplineId: string, stageId: string, activeOnly: boolean): Promise<boolean>;
@@ -232,6 +236,19 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       const rows = await sql`SELECT id::text AS id, code, color FROM public.stage_definitions
         WHERE workspace_id = ${ws}::uuid ORDER BY lower(code), id`;
       return rows.map((row) => ({ id: text(row["id"]), code: text(row["code"]), color: text(row["color"]) }));
+    },
+    async updateStageDefinitionColor(ws, definitionId, expectedColor, color) {
+      const rows = await sql`UPDATE public.stage_definitions
+        SET color = ${color}
+        WHERE workspace_id = ${ws}::uuid AND id = ${definitionId}::uuid
+          AND upper(color) = upper(${expectedColor})
+        RETURNING id::text AS id, code, color`;
+      if (rows[0]) return { status: "ok", value: {
+        id: text(rows[0]["id"]), code: text(rows[0]["code"]), color: text(rows[0]["color"])
+      } };
+      const existing = await sql`SELECT 1 AS found FROM public.stage_definitions
+        WHERE workspace_id = ${ws}::uuid AND id = ${definitionId}::uuid LIMIT 1`;
+      return { status: existing[0] ? "stale" : "not_found" };
     },
     productExists, disciplineExists, stageExists, activityExists,
     listDisciplines,
