@@ -401,8 +401,8 @@ export function App() {
         {view === "products" && currentWorkspace && (
           <Products workspace={currentWorkspace} onAccessLost={refreshSession} />
         )}
-        {view === "settings" && (
-          <Settings adminWorkspace={adminWorkspace} onAccessLost={refreshSession} onBack={() => {
+        {view === "settings" && currentWorkspace && (
+          <Settings workspace={currentWorkspace} adminWorkspace={adminWorkspace} onAccessLost={refreshSession} onBack={() => {
             if (!currentWorkspace) {
               window.history.replaceState(null, "", "/");
               setView("pending");

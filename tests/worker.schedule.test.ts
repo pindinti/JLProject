@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { handleRequest } from "../worker/index";
 import { assembleHierarchy, type ScheduleRepository } from "../worker/schedule-repository";
 import type { MembershipRepository, WorkspaceRole } from "../worker/authorization";
+import type { CalendarRepository } from "../worker/calendar-repository";
+import type { CalendarException } from "../domain/working-calendar";
 
 const actor = "f5ad4d8b-019c-4c1f-9aa0-ff56739e40ca";
 const ws = "e97c159e-3f7b-4e27-8b1e-38036bf47a3f";
@@ -22,7 +24,8 @@ const d = { id: discipline, productId: product, name: "Arquitetura", shortCode: 
 const s = { id: stage, disciplineId: discipline, code: "EC", color: "#445566",
   displayName: "Estudo conceitual", displayOrder: 0, version: 1, derivedStart: null, derivedEnd: null };
 const a = { id: activity, stageId: stage, name: "Tarefa sintética", activityType: null,
-  plannedStart: "2026-11-01", plannedEnd: "2026-11-05", displayOrder: 0, notes: null, version: 1 };
+  plannedStart: "2026-11-01", plannedEnd: "2026-11-05", displayOrder: 0, notes: null, version: 1,
+  planningMode: "manual" as const, workingDayDuration: null, planningCalendarVersion: null };
 
 function repository(): ScheduleRepository {
   return {
@@ -40,6 +43,16 @@ function repository(): ScheduleRepository {
     updateActivity: vi.fn(async () => ({ status: "ok" as const, value: { ...a, version: 2 } })),
     changeActivityDates: vi.fn(async () => ({ status: "updated" as const,
       activity: { ...a, plannedStart: "2026-11-02", version: 2 } })),
+    createWorkingActivity: vi.fn(async (_ws, _product, _discipline, _stage, _actor, input) => ({
+      status: "ok" as const, value: { ...a, plannedStart: input.plannedStart, plannedEnd: input.plannedEnd,
+        planningMode: "working_days" as const, workingDayDuration: input.workingDays,
+        planningCalendarVersion: input.calendarVersion }
+    })),
+    changeActivityWorkingPlan: vi.fn(async (_ws, _product, _discipline, _stage, _activity, _actor,
+      start, end, workingDays, calendarVersion) => ({ status: "updated" as const, activity: {
+        ...a, plannedStart: start, plannedEnd: end, planningMode: "working_days" as const,
+        workingDayDuration: workingDays, planningCalendarVersion: calendarVersion, version: 2
+      } })),
     listActivityDateHistory: vi.fn(async () => []),
     getHierarchy: vi.fn(async () => ({ productId: product, disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] })),
     listTargets: vi.fn(async () => [{ id: "f7777777-7777-4777-8777-777777777777", name: "Meta sintética",
@@ -50,6 +63,14 @@ function repository(): ScheduleRepository {
       value: { id, ...input, operationalDate: null, displayOrder: 0, version: 2 } })),
     deleteTarget: vi.fn(async () => ({ status: "ok" as const,
       value: { id: "f7777777-7777-4777-8777-777777777777" } as never }))
+  };
+}
+function calculationCalendar(version = 2, exceptions: CalendarException[] = []): CalendarRepository {
+  return {
+    read: vi.fn(async () => ({ version, exceptions: [] })),
+    readForCalculation: vi.fn(async () => ({ version, exceptions })),
+    history: vi.fn(async () => ({ entries: [], nextBeforeVersion: null })),
+    change: vi.fn(async () => ({ status: "unchanged" as const, version }))
   };
 }
 function membership(role: WorkspaceRole | null, active = true): MembershipRepository {
@@ -64,9 +85,10 @@ function request(path: string, method = "GET", data?: unknown): Request {
     headers: { "Content-Type": "application/json" }, body: JSON.stringify(data)
   }) });
 }
-async function call(input: Request, role: WorkspaceRole | null, repo = repository(), active = true) {
+async function call(input: Request, role: WorkspaceRole | null, repo = repository(), active = true,
+  calendarRepo: CalendarRepository = calculationCalendar()) {
   return handleRequest(input, environment, async () => ({ subject: actor }),
-    () => membership(role, active), undefined, undefined, () => repo);
+    () => membership(role, active), undefined, undefined, () => repo, undefined, undefined, () => calendarRepo);
 }
 
 describe("schedule hierarchy API", () => {
@@ -270,6 +292,68 @@ describe("schedule hierarchy API", () => {
       ...repo, changeActivityDates: async () => ({ status: "unchanged", activity: a }) });
     expect(unchanged.status).toBe(200);
     await expect(unchanged.json()).resolves.toMatchObject({ changed: false });
+  });
+
+  it("creates working-day activities from the authoritative calendar and persists the calendar version", async () => {
+    const repo = repository();
+    const closure: CalendarException = { id: "b7777777-7777-4777-8777-777777777777",
+      kind: "company_shutdown", name: null, municipality: null, description: "Synthetic closure",
+      startDate: "2026-11-06", endDate: "2026-11-06", version: 1 };
+    const calendarRepo = calculationCalendar(3, [closure]);
+    const input = { name: "Synthetic working activity", displayOrder: 1,
+      planningMode: "working_days", plannedStart: "2026-11-05", workingDays: 2, calendarVersion: 3 };
+    const created = await call(request(activities, "POST", input), "editor", repo, true, calendarRepo);
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({ activity: {
+      plannedStart: "2026-11-05", plannedEnd: "2026-11-09", planningMode: "working_days",
+      workingDayDuration: 2, planningCalendarVersion: 3
+    } });
+    expect(calendarRepo.readForCalculation).toHaveBeenCalledWith(ws);
+    expect(repo.createWorkingActivity).toHaveBeenCalledWith(ws, product, discipline, stage, actor,
+      expect.objectContaining({ plannedEnd: "2026-11-09", workingDays: 2, calendarVersion: 3 }));
+    expect(repo.createActivity).not.toHaveBeenCalled();
+    const racedCalendar = await call(request(activities, "POST", input), "editor", {
+      ...repo, createWorkingActivity: async () => ({ status: "stale_calendar" })
+    }, true, calendarRepo);
+    expect(racedCalendar.status).toBe(409);
+    await expect(racedCalendar.json()).resolves.toMatchObject({ code: "stale_calendar" });
+    const invalid = await call(request(activities, "POST", input), "editor", {
+      ...repo, createWorkingActivity: async () => ({ status: "invalid" })
+    }, true, calendarRepo);
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ error: expect.stringMatching(/dias úteis inválidos/) });
+  });
+
+  it("recalculates edited plans server-side, requires a current calendar, and preserves role boundaries", async () => {
+    const repo = repository();
+    const path = `${activities}/${activity}/working-plan`;
+    const closure: CalendarException = { id: "b7777777-7777-4777-8777-777777777777",
+      kind: "company_shutdown", name: null, municipality: null, description: "Synthetic closure",
+      startDate: "2026-11-06", endDate: "2026-11-06", version: 1 };
+    const input = { startDate: "2026-11-05", workingDays: 3, calendarVersion: 3,
+      reason: "Synthetic working plan", version: 1 };
+    const calendarRepo = calculationCalendar(3, [closure]);
+    const updated = await call(request(path, "PATCH", input), "editor", repo, true, calendarRepo);
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({ activity: {
+      plannedStart: "2026-11-05", plannedEnd: "2026-11-10", workingDayDuration: 3,
+      planningCalendarVersion: 3
+    }, calculation: { endDate: "2026-11-10" } });
+    expect(repo.changeActivityWorkingPlan).toHaveBeenCalledWith(ws, product, discipline, stage,
+      activity, actor, "2026-11-05", "2026-11-10", 3, 3, "Synthetic working plan", 1, expect.any(String));
+    expect((await call(request(path, "PATCH", input), "viewer", repo, true, calendarRepo)).status).toBe(403);
+    expect((await call(request(path, "PATCH", input), "editor", repo, false, calendarRepo)).status).toBe(403);
+    expect((await call(request(path.replace(ws, otherWs), "PATCH", input), "editor", repo, true, calendarRepo)).status).toBe(403);
+    const staleCalendar = calculationCalendar(4, [closure]);
+    const stale = await call(request(path, "PATCH", input), "editor", repo, true, staleCalendar);
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({ code: "calendar_conflict" });
+    for (const invalid of [
+      { ...input, workingDays: 0 }, { ...input, startDate: "2026-02-30" },
+      { ...input, reason: "short" }, { ...input, plannedEnd: "2026-11-09" },
+      { ...input, startDate: "2100-12-31", workingDays: 2 }
+    ]) expect((await call(request(path, "PATCH", invalid), "editor", repo, true, calendarRepo)).status).toBe(400);
+    expect(repo.changeActivityWorkingPlan).toHaveBeenCalledTimes(1);
   });
 
   it("validates date and reason inputs without calling the date operation", async () => {

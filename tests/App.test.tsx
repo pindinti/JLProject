@@ -23,6 +23,7 @@ vi.mock("../src/auth", () => ({
   sendEmailVerificationCode: auth.sendEmailVerificationCode,
   verifyEmailCode: auth.verifyEmailCode
 }));
+vi.mock("../src/WorkingCalendar", () => ({ WorkingCalendar: () => null }));
 
 beforeEach(() => {
   vi.clearAllMocks();

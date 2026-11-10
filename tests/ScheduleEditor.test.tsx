@@ -10,7 +10,8 @@ const workspace = { id: "e97c159e-3f7b-4e27-8b1e-38036bf47a3f", name: "JLProject
 const product = { id: "e3aa998a-a2c3-4376-9105-90af0d1dbfe3", name: "Synthetic product", active: true };
 const activity = { id: "cd960302-0b68-4621-95ed-7d4f57f8eedc", stageId: "7130dfdf-452d-4bfc-8ad0-9cbf4db53747",
   name: "Synthetic activity", activityType: null, plannedStart: "2026-11-01", plannedEnd: "2026-11-08",
-  displayOrder: 0, notes: null, version: 1 };
+  displayOrder: 0, notes: null, version: 1, planningMode: "manual" as const,
+  workingDayDuration: null, planningCalendarVersion: null };
 const stage = { id: activity.stageId, disciplineId: "bba53e18-f13f-4b2d-a02e-65a0d95627e6", code: "EC",
   color: "#336699", displayName: "Synthetic stage", displayOrder: 0, derivedStart: "2026-11-01",
   derivedEnd: "2026-11-08", version: 1, activities: [activity] };
@@ -224,11 +225,80 @@ describe("schedule editor", () => {
     ));
   });
 
+  it("previews and creates an inclusive working-day activity with calendar metadata", async () => {
+    const original = api.fetch.getMockImplementation();
+    const preview = { startDate: "2026-11-06", endDate: "2026-11-10", workingDays: 2,
+      calendarVersion: 7, optionalDaysVerified: true, unverifiedOptionalYears: [],
+      skippedDates: [{ date: "2026-11-07", reasons: [{ kind: "weekend", code: "saturday" }] }] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.includes("working-day-preview")
+      ? Promise.resolve(json({ preview })) : original!(path, options));
+    mount("editor");
+    fireEvent.click(await screen.findByRole("button", { name: "Adicionar atividade" }));
+    fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Synthetic working activity" } });
+    fireEvent.change(screen.getByLabelText("Modo de planejamento"), { target: { value: "working_days" } });
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "06/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Duração em dias úteis"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Calcular término" }));
+    expect(await screen.findByText("10/11/2026")).toBeInTheDocument();
+    expect(screen.getByText(/1 dia\(s\) não útil\(eis\) considerado\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/07\/11\/2026/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/stages/${stage.id}/activities`),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({
+        name: "Synthetic working activity", activityType: null, displayOrder: 0, notes: null,
+        planningMode: "working_days", plannedStart: "2026-11-06", workingDays: 2, calendarVersion: 7
+      }) })
+    ));
+  });
+
+  it("edits an existing activity in working-day mode with a mandatory reason and server version", async () => {
+    const existing = { ...activity, plannedStart: "2026-11-05", plannedEnd: "2026-11-10", version: 2,
+      planningMode: "working_days" as const, workingDayDuration: 3, planningCalendarVersion: 7 };
+    let current = existing;
+    const previewFor = (startDate: string, workingDays: number) => ({ startDate,
+      endDate: workingDays === 4 ? "2026-11-11" : "2026-11-10", workingDays,
+      calendarVersion: 8, optionalDaysVerified: false, unverifiedOptionalYears: [2027], skippedDates: [] });
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.includes("working-day-preview")) {
+        const url = new URL(path, "https://app.test");
+        return Promise.resolve(json({ preview: previewFor(url.searchParams.get("startDate")!,
+          Number(url.searchParams.get("workingDays"))) }));
+      }
+      if (path.endsWith("/working-plan") && options?.method === "PATCH") {
+        current = { ...current, plannedEnd: "2026-11-11", workingDayDuration: 4,
+          planningCalendarVersion: 8, version: 3 };
+        return Promise.resolve(json({ activity: current, changed: true }));
+      }
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id,
+        disciplines: [{ ...discipline, stages: [{ ...stage, derivedStart: current.plannedStart,
+          derivedEnd: current.plannedEnd, activities: [current] }] }] } }));
+      if (path.endsWith("/date-history")) return Promise.resolve(json({ changes: [] }));
+      return Promise.resolve(path.endsWith("/targets") ? json({ targets: [] }) : json({ stageDefinitions: definitions }));
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
+    expect(await screen.findByText(/pontos facultativos não está verificada para 2027/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Duração em dias úteis"), { target: { value: "4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Calcular término" }));
+    expect(await screen.findByText("11/11/2026")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/justificativa com pelo menos 10 caracteres/);
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"),
+      { target: { value: "Synthetic working-day adjustment" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/activities/${activity.id}/working-plan`),
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ startDate: "2026-11-05",
+        workingDays: 4, calendarVersion: 8, reason: "Synthetic working-day adjustment", version: 2 }) })
+    ));
+  });
+
   it("keeps metadata and date changes separate and confirms metadata edits", async () => {
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
-    expect(screen.getByText(/A alteração das datas exige uma justificativa/)).toBeInTheDocument();
+    expect(screen.getByText(/Alterações de datas ou modo de planejamento exigem justificativa/)).toBeInTheDocument();
     expect(screen.getByLabelText("Início planejado")).toHaveValue("01/11/2026");
     fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Atualizada" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar dados" }));

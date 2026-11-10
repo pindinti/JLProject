@@ -9,13 +9,22 @@ export interface ActivityInput {
   name: string; activityType: string | null; plannedStart: string | null;
   plannedEnd: string | null; displayOrder: number; notes: string | null;
 }
+export interface WorkingActivityInput extends ActivityInput {
+  workingDays: number;
+  calendarVersion: number;
+}
 export type ActivityMetadataInput = Omit<ActivityInput, "plannedStart" | "plannedEnd">;
 export interface Discipline extends DisciplineInput { id: string; productId: string; version: number }
 export interface Stage extends StageInput {
   id: string; disciplineId: string; version: number;
   derivedStart: string | null; derivedEnd: string | null;
 }
-export interface Activity extends ActivityInput { id: string; stageId: string; version: number }
+export interface Activity extends ActivityInput {
+  id: string; stageId: string; version: number;
+  planningMode: "manual" | "working_days";
+  workingDayDuration: number | null;
+  planningCalendarVersion: number | null;
+}
 export interface ScheduleHierarchy {
   productId: string;
   disciplines: (Discipline & { stages: (Stage & { activities: Activity[] })[] })[];
@@ -31,8 +40,10 @@ export interface DateChange { operationId: string; changedAt: string;
   newStart: string; newEnd: string; reason: string }
 export type DateChangeResult = { status: "updated" | "unchanged"; activity: Activity } |
   { status: "not_found" | "stale" | "invalid" | "forbidden" };
+export type WorkingPlanResult = { status: "updated" | "unchanged"; activity: Activity } |
+  { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
 export type Mutation<T> = { status: "ok"; value: T } |
-  { status: "not_found" | "duplicate" | "stale" | "conflict" | "invalid" | "forbidden" };
+  { status: "not_found" | "duplicate" | "stale" | "stale_calendar" | "conflict" | "invalid" | "forbidden" };
 
 export interface ScheduleRepository {
   listStageDefinitions(workspaceId: string): Promise<StageDefinition[]>;
@@ -51,10 +62,16 @@ export interface ScheduleRepository {
   updateStage(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: StageInput, version: number): Promise<Mutation<Stage>>;
   listActivities(workspaceId: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]>;
   createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
+  createWorkingActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+    actorId: string, input: WorkingActivityInput): Promise<Mutation<Activity>>;
   updateActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, activityId: string, actorId: string, input: ActivityMetadataInput, version: number): Promise<Mutation<Activity>>;
   changeActivityDates(workspaceId: string, productId: string, disciplineId: string, stageId: string,
     activityId: string, actorId: string, start: string, end: string, reason: string | null,
     version: number, operationId: string): Promise<DateChangeResult>;
+  changeActivityWorkingPlan(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+    activityId: string, actorId: string, start: string, end: string, workingDays: number,
+    calendarVersion: number, reason: string | null, version: number,
+    operationId: string): Promise<WorkingPlanResult>;
   listActivityDateHistory(workspaceId: string, productId: string, disciplineId: string,
     stageId: string, activityId: string): Promise<DateChange[]>;
   getHierarchy(workspaceId: string, productId: string): Promise<ScheduleHierarchy | null>;
@@ -85,7 +102,11 @@ function activity(row: Record<string, unknown>): Activity {
   return { id: text(row["id"]), stageId: text(row["stageId"]), name: text(row["name"]),
     activityType: nullable(row["activityType"]), plannedStart: nullable(row["plannedStart"]),
     plannedEnd: nullable(row["plannedEnd"]), displayOrder: Number(row["displayOrder"]),
-    notes: nullable(row["notes"]), version: Number(row["version"]) };
+    notes: nullable(row["notes"]), version: Number(row["version"]),
+    planningMode: row["planningMode"] === "working_days" ? "working_days" : "manual",
+    workingDayDuration: row["workingDayDuration"] == null ? null : Number(row["workingDayDuration"]),
+    planningCalendarVersion: row["planningCalendarVersion"] == null
+      ? null : Number(row["planningCalendarVersion"]) };
 }
 function duplicate(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
@@ -126,7 +147,11 @@ export function assembleHierarchy(productId: string, rows: Record<string, unknow
       name: text(row["activityName"]), activityType: nullable(row["activityType"]),
       plannedStart: nullable(row["plannedStart"]), plannedEnd: nullable(row["plannedEnd"]),
       displayOrder: Number(row["activityOrder"]), notes: nullable(row["activityNotes"]),
-      version: Number(row["activityVersion"]) };
+      version: Number(row["activityVersion"]),
+      planningMode: row["planningMode"] === "working_days" ? "working_days" : "manual",
+      workingDayDuration: row["workingDayDuration"] == null ? null : Number(row["workingDayDuration"]),
+      planningCalendarVersion: row["planningCalendarVersion"] == null
+        ? null : Number(row["planningCalendarVersion"]) };
     currentStage.activities.push(item);
     if (item.plannedStart && (!currentStage.derivedStart || item.plannedStart < currentStage.derivedStart))
       currentStage.derivedStart = item.plannedStart;
@@ -213,7 +238,9 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
   async function listActivities(ws: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]> {
     const rows = await sql`SELECT id::text AS id, stage_id::text AS "stageId", name,
       activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
-      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes, version
+      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes, version,
+      planning_mode AS "planningMode", working_day_duration AS "workingDayDuration",
+      planning_calendar_version AS "planningCalendarVersion"
       FROM public.stage_activities
       WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
         AND discipline_id = ${disciplineId}::uuid AND stage_id = ${stageId}::uuid
@@ -223,7 +250,9 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
   async function findActivity(ws: string, productId: string, disciplineId: string, stageId: string, activityId: string) {
     const rows = await sql`SELECT id::text AS id, stage_id::text AS "stageId", name,
       activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
-      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes, version
+      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes, version,
+      planning_mode AS "planningMode", working_day_duration AS "workingDayDuration",
+      planning_calendar_version AS "planningCalendarVersion"
       FROM public.stage_activities
       WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
         AND discipline_id = ${disciplineId}::uuid AND stage_id = ${stageId}::uuid
@@ -331,6 +360,20 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       const value = await findActivity(ws, productId, disciplineId, stageId, text(rows[0]["id"]));
       return value ? { status: "ok", value } : { status: "not_found" };
     },
+    async createWorkingActivity(ws, productId, disciplineId, stageId, actorId, input) {
+      const rows = await sql`SELECT public.create_activity_with_working_plan(
+        ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
+        ${actorId}::uuid, ${input.name}, ${input.activityType}, ${input.plannedStart}::date,
+        ${input.plannedEnd}::date, ${input.displayOrder}, ${input.notes},
+        ${input.workingDays}, ${input.calendarVersion}::bigint) AS result`;
+      const result = rows[0]?.["result"] as { status?: string; id?: string } | undefined;
+      if (!result || !["created", "not_found", "forbidden", "stale_calendar", "invalid"].includes(result.status ?? ""))
+        throw new Error("Unexpected working-day activity creation result.");
+      if (result.status !== "created" || !result.id)
+        return { status: result.status as "not_found" | "forbidden" | "stale_calendar" | "invalid" };
+      const value = await findActivity(ws, productId, disciplineId, stageId, result.id);
+      return value ? { status: "ok", value } : { status: "not_found" };
+    },
     async updateActivity(ws, productId, disciplineId, stageId, activityId, actorId, input, version) {
       const rows = await sql`WITH locked_product AS MATERIALIZED (
         SELECT id FROM public.products
@@ -371,6 +414,28 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       const value = await findActivity(ws, productId, disciplineId, stageId, activityId);
       return value ? { status: result.status, activity: value } : { status: "not_found" };
     },
+    async changeActivityWorkingPlan(ws, productId, disciplineId, stageId, activityId, actorId,
+      start, end, workingDays, calendarVersion, reason, version, operationId) {
+      const rows = await sql`WITH locked_product AS MATERIALIZED (
+        SELECT id FROM public.products
+        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+        FOR UPDATE
+      )
+      SELECT public.change_activity_planning(
+        ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
+        ${activityId}::uuid, ${actorId}::uuid, ${operationId}::uuid, 'working_days',
+        ${start}::date, ${end}::date, ${workingDays}, ${calendarVersion}::bigint,
+        ${reason}, ${version}::bigint) AS result
+      FROM locked_product`;
+      if (!rows[0]) return { status: "not_found" };
+      const result = rows[0]?.["result"] as { status?: string } | undefined;
+      if (!result || !["updated", "unchanged", "not_found", "stale", "stale_calendar", "invalid", "forbidden"].includes(result.status ?? ""))
+        throw new Error("Unexpected working-day activity result.");
+      if (result.status !== "updated" && result.status !== "unchanged")
+        return { status: result.status as "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
+      const value = await findActivity(ws, productId, disciplineId, stageId, activityId);
+      return value ? { status: result.status, activity: value } : { status: "not_found" };
+    },
     async listActivityDateHistory(ws, productId, disciplineId, stageId, activityId) {
       const rows = await sql`SELECT operation_id::text AS "operationId",
         to_char(changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "changedAt",
@@ -399,7 +464,9 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         a.id::text AS "activityId", a.name AS "activityName", a.activity_type AS "activityType",
         to_char(a.planned_start, 'YYYY-MM-DD') AS "plannedStart",
         to_char(a.planned_end, 'YYYY-MM-DD') AS "plannedEnd",
-        a.display_order AS "activityOrder", a.notes AS "activityNotes", a.version AS "activityVersion"
+        a.display_order AS "activityOrder", a.notes AS "activityNotes", a.version AS "activityVersion",
+        a.planning_mode AS "planningMode", a.working_day_duration AS "workingDayDuration",
+        a.planning_calendar_version AS "planningCalendarVersion"
         FROM public.products AS p
         LEFT JOIN public.product_disciplines AS d ON d.product_id = p.id AND d.workspace_id = p.workspace_id
         LEFT JOIN public.discipline_stages AS s ON s.discipline_id = d.id AND s.workspace_id = p.workspace_id

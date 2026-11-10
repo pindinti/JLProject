@@ -1,8 +1,10 @@
 import { Administration } from "./Administration";
+import { WorkingCalendar } from "./WorkingCalendar";
 import type { WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
 
-export function Settings({ adminWorkspace, onAccessLost, onBack }: {
+export function Settings({ workspace, adminWorkspace, onAccessLost, onBack }: {
+  workspace: WorkspaceSummary;
   adminWorkspace: WorkspaceSummary | null;
   onAccessLost: () => void;
   onBack: () => void;
@@ -26,6 +28,7 @@ export function Settings({ adminWorkspace, onAccessLost, onBack }: {
           <p>{messages.settingsPlanned}</p>
         </section>
       </div>
+      <WorkingCalendar workspace={workspace} onAccessLost={onAccessLost} />
       {adminWorkspace && <Administration workspace={adminWorkspace} onAccessLost={onAccessLost} />}
     </section>
   );

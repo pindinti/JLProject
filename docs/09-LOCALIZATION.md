@@ -24,6 +24,7 @@ Development is conducted in English for consistent engineering terminology and c
 - Store audit event timestamps as UTC instants; present them in the configured Brazilian business timezone (initial default: `America/Sao_Paulo`) and with `pt-BR` formatting. The business timezone is a configuration assumption, not a source of schedule-date shifts.
 - Use Brazilian number conventions (e.g. `1.234` as a count, decimal comma where relevant), and calendar/workweek rules defined by each product rather than browser locale guessing.
 - Preserve target dates even when they fall on weekends or public holidays.
+- The working calendar presents civil dates as `DD/MM/YYYY`; API and PostgreSQL exception dates use ISO `YYYY-MM-DD`. Audit instants use UTC storage and `America/Sao_Paulo` display. A federal optional-day catalog is explicitly marked unverified for years without a reviewed annual ordinance.
 
 ## Suggested UI terminology
 

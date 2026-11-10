@@ -375,11 +375,40 @@ form button {
 .administration > h3 { margin-top: var(--jl-space-4); }
 .administration > h4 { margin-bottom: var(--jl-space-3); }
 
+.working-calendar { display: grid; gap: var(--jl-space-4); margin-bottom: var(--jl-space-8); }
+.working-calendar__heading { display: flex; align-items: center; justify-content: space-between; gap: var(--jl-space-4); }
+.working-calendar__heading h3 { margin: 0 0 var(--jl-space-1); font-size: var(--jl-font-size-lg); }
+.working-calendar__heading p, .working-calendar__note { margin: 0; color: var(--jl-text-muted); }
+.working-calendar__year, .calendar-list__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--jl-space-2); }
+.working-calendar__year { flex-wrap: nowrap; }
+.working-calendar__year button, .calendar-list__actions button { width: auto; min-width: 2.25rem; }
+.working-calendar__year strong { min-width: 3.5rem; text-align: center; }
+.working-calendar__rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--jl-space-4); }
+.working-calendar__rules section, .working-calendar__form { padding: var(--jl-space-4); border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); background: var(--jl-surface-alt); }
+.working-calendar h4 { margin: 0 0 var(--jl-space-3); font-size: var(--jl-font-size-md); }
+.calendar-rule-list, .calendar-list, .calendar-history { list-style: none; margin: 0; padding: 0; }
+.calendar-rule-list { display: grid; gap: var(--jl-space-2); }
+.calendar-rule-list li { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: var(--jl-space-2); }
+.calendar-rule-list span, .calendar-list__row span, .calendar-history span { color: var(--jl-text-muted); }
+.calendar-rule-list strong { font-weight: 500; }
+.working-calendar__section { display: grid; justify-items: start; gap: var(--jl-space-3); padding-top: var(--jl-space-4); border-top: 1px solid var(--jl-border); }
+.working-calendar__section h4 { margin: 0; }
+.calendar-list { width: 100%; }
+.calendar-list__row { display: flex; align-items: center; justify-content: space-between; gap: var(--jl-space-4); padding: var(--jl-space-3) 0; border-bottom: 1px solid var(--jl-border); }
+.calendar-list__row > div:first-child { display: grid; gap: var(--jl-space-1); }
+.calendar-list__actions button:last-child:not(:first-child) { background: var(--jl-surface); color: var(--jl-primary); border-color: var(--jl-border-strong); }
+.working-calendar__form { max-width: 38rem; }
+.working-calendar__form .calendar-list__actions button { margin-top: var(--jl-space-2); }
+.calendar-history { display: grid; width: 100%; gap: var(--jl-space-3); }
+.calendar-history li { display: grid; gap: var(--jl-space-1); padding: var(--jl-space-3); border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); }
+
 @media (max-width: 40rem) {
   .application-card:has(.settings-view) { margin-top: 0; padding: var(--jl-space-4); }
   .application-shell:has(.products) { padding-inline: var(--jl-space-4); }
   .settings-view__heading { flex-direction: column; }
   .settings-view__planned { grid-template-columns: minmax(0, 1fr); }
+  .working-calendar__heading, .calendar-list__row { align-items: flex-start; flex-direction: column; }
+  .working-calendar__rules { grid-template-columns: minmax(0, 1fr); }
 }
 
 .application-card:has(.schedule-editor) {
@@ -614,6 +643,11 @@ form button {
 .schedule-history h4 { margin: 0; }
 .schedule-date-form p { margin: 0.2rem 0; }
 .schedule-date-form textarea { min-height: 5rem; }
+.working-day-preview { margin: 0.35rem 0 0.75rem; padding: 0.65rem 0.75rem; border-radius: 0.5rem;
+  background: var(--surface-subtle, #f5f7f4); font-size: 0.875rem; }
+.working-day-preview p { margin: 0.2rem 0; }
+.working-day-preview ul { max-height: 10rem; overflow: auto; margin: 0.4rem 0 0; padding-left: 1.25rem; }
+.working-day-preview__warning { color: var(--color-warning-text, #694c00); }
 .schedule-history ol { padding-left: 1.25rem; }
 .schedule-history li { margin-bottom: 1rem; overflow-wrap: anywhere; }
 .schedule-history li p { margin: 0.35rem 0; }

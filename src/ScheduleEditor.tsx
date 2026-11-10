@@ -5,12 +5,15 @@ import { ColorField } from "./ColorField";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { ScheduleWorkspace } from "./ScheduleWorkspace";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
+import type { SkippedDateReason, SkippedWorkingDate } from "../domain/working-day-calculation";
 
 export interface ScheduleProduct { id: string; name: string; active: boolean }
 interface Activity {
   id: string; stageId: string; name: string; activityType: string | null;
   plannedStart: string | null; plannedEnd: string | null;
   displayOrder: number; notes: string | null; version: number;
+  planningMode: "manual" | "working_days"; workingDayDuration: number | null;
+  planningCalendarVersion: number | null;
 }
 interface Stage {
   id: string; disciplineId: string; code: string; color: string; displayName: string;
@@ -23,8 +26,21 @@ interface Discipline {
 }
 interface Hierarchy { productId: string; disciplines: Discipline[] }
 interface StageDefinition { id: string; code: string; color: string }
-interface DateDraft { originalStart: string; originalEnd: string; plannedStart: string;
-  plannedEnd: string; reason: string; version: number }
+interface WorkingPreview {
+  startDate: string; endDate: string; workingDays: number; skippedDates: SkippedWorkingDate[];
+  optionalDaysVerified: boolean; unverifiedOptionalYears: number[]; calendarVersion: number;
+}
+function previewMatches(preview: WorkingPreview | null, start: string, duration: string): preview is WorkingPreview {
+  const parsedStart = parseBrazilianDate(start);
+  return !!preview && !!parsedStart && preview.startDate === parsedStart &&
+    /^\d+$/.test(duration) && preview.workingDays === Number(duration);
+}
+interface DateDraft {
+  originalStart: string; originalEnd: string; plannedStart: string; plannedEnd: string; reason: string;
+  version: number; planningMode: "manual" | "working_days"; workingDays: string;
+  originalPlanningMode: "manual" | "working_days"; originalWorkingDays: number | null;
+  originalCalendarVersion: number | null;
+}
 interface HistorySubject { id: string; disciplineId: string; stageId: string; name: string }
 interface DateChange { operationId: string; changedAt: string; previousStart: string | null;
   previousEnd: string | null; newStart: string; newEnd: string; reason: string }
@@ -36,13 +52,41 @@ interface Draft {
   name: string; shortCode: string; code: string; color: string; displayName: string;
   displayOrder: string; description: string; activityType: string;
   plannedStart: string; plannedEnd: string; notes: string; definitionId: string;
+  planningMode: "manual" | "working_days"; workingDays: string;
 }
 const newDefinition = "new";
 
 function initialDraft(kind: DraftKind): Draft {
   return { kind, name: "", shortCode: "", code: "", color: "#336699", displayName: "",
     displayOrder: "0", description: "", activityType: "", plannedStart: "", plannedEnd: "",
-    notes: "", definitionId: newDefinition };
+    notes: "", definitionId: newDefinition, planningMode: "manual", workingDays: "" };
+}
+
+function workingReason(reason: SkippedDateReason): string {
+  const label = reason.kind === "weekend" ? messages.workingDayWeekend(reason.code)
+    : messages.workingDayReasonLabels[reason.kind];
+  const detail = reason.kind === "municipal_holiday" ? reason.name ?? reason.municipality
+    : reason.kind === "collective_vacation" || reason.kind === "company_shutdown"
+      ? reason.description : null;
+  return detail ? `${label}: ${detail}` : label;
+}
+
+function WorkingPreviewDetails({ preview, loading }: { preview: WorkingPreview | null; loading: boolean }) {
+  if (loading) return <p role="status">{messages.workingDayLoading}</p>;
+  if (!preview) return null;
+  return <section className="working-day-preview" aria-live="polite">
+    <p><strong>{messages.workingDayProposedEnd}:</strong> {formatCivilDate(preview.endDate)}</p>
+    {!preview.optionalDaysVerified && <p role="status" className="working-day-preview__warning">
+      {messages.workingDayCoverageWarning(preview.unverifiedOptionalYears.join(", "))}
+    </p>}
+    <p>{messages.workingDaySkippedCount(preview.skippedDates.length)}</p>
+    {preview.skippedDates.length === 0 ? <p>{messages.workingDayNoSkipped}</p> :
+      <ul aria-label={messages.workingDaySkipped}>
+        {preview.skippedDates.map((item) => <li key={item.date}>
+          {formatCivilDate(item.date)} — {item.reasons.map(workingReason).join(", ")}
+        </li>)}
+      </ul>}
+  </section>;
 }
 
 export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
@@ -57,6 +101,9 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   const [openStages, setOpenStages] = useState<Set<string> | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [dateDraft, setDateDraft] = useState<DateDraft | null>(null);
+  const [workingPreview, setWorkingPreview] = useState<WorkingPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const workingPreviewRequest = useRef(0);
   const [historySubject, setHistorySubject] = useState<HistorySubject | null>(null);
   const [history, setHistory] = useState<DateChange[]>([]);
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("loading");
@@ -111,6 +158,53 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     } catch { setState("error"); }
   }, [base, canEdit, onAccessLost, workspace.id]);
 
+  async function calculateWorkingPreview(startText: string, durationText: string) {
+    const requestId = ++workingPreviewRequest.current;
+    setWorkingPreview(null);
+    setPreviewLoading(false);
+    const startDate = parseBrazilianDate(startText);
+    const workingDays = Number(durationText);
+    if (!startDate || !/^\d+$/.test(durationText) || !Number.isSafeInteger(workingDays) ||
+        workingDays < 1 || workingDays > 27393) {
+      setFeedback(messages.workingDayInvalid);
+      return;
+    }
+    setPreviewLoading(true);
+    setFeedback("");
+    try {
+      const query = new URLSearchParams({ startDate, workingDays: String(workingDays) });
+      const result = await authenticatedFetch(`/api/workspaces/${workspace.id}/calendar/working-day-preview?${query}`);
+      if (requestId !== workingPreviewRequest.current) return;
+      if (result.status === 401 || result.status === 403) { onAccessLost(); return; }
+      if (result.status === 409) { setFeedback(messages.workingDayCalendarChanged); return; }
+      if (!result.ok) { setFeedback(messages.workingDayPreviewError); return; }
+      const data = await result.json() as { preview?: WorkingPreview };
+      const preview = data.preview;
+      if (!preview || preview.startDate !== startDate || preview.workingDays !== workingDays ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(preview.endDate) || !Array.isArray(preview.skippedDates) ||
+          !Number.isSafeInteger(preview.calendarVersion) || !Array.isArray(preview.unverifiedOptionalYears) ||
+          typeof preview.optionalDaysVerified !== "boolean") throw new Error("Invalid working-day preview.");
+      setWorkingPreview(preview);
+    } catch { if (requestId === workingPreviewRequest.current) setFeedback(messages.workingDayPreviewError); }
+    finally { if (requestId === workingPreviewRequest.current) setPreviewLoading(false); }
+  }
+
+  const clearWorkingPreview = useCallback(() => {
+    workingPreviewRequest.current++;
+    setWorkingPreview(null);
+    setPreviewLoading(false);
+  }, []);
+
+  const closeDraft = useCallback(() => {
+    historyRequest.current++;
+    setDraft(null);
+    setDateDraft(null);
+    clearWorkingPreview();
+    setHistorySubject(null);
+    setFeedback("");
+    queueMicrotask(() => previousFocus.current?.focus());
+  }, [clearWorkingPreview]);
+
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
   useEffect(() => { if (historySubject) queueMicrotask(() => void loadHistory(historySubject)); }, [historySubject, loadHistory]);
 
@@ -131,16 +225,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [draft, historySubject, busy]);
-
-  function closeDraft() {
-    historyRequest.current++;
-    setDraft(null);
-    setDateDraft(null);
-    setHistorySubject(null);
-    setFeedback("");
-    queueMicrotask(() => previousFocus.current?.focus());
-  }
+  }, [draft, historySubject, busy, closeDraft]);
 
   function rememberFocus() { previousFocus.current = document.activeElement as HTMLElement | null; }
 
@@ -156,6 +241,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   function startDiscipline(item?: Discipline) {
     rememberFocus();
     setDateDraft(null);
+    clearWorkingPreview();
     setHistorySubject(null);
     setFeedback("");
     setDraft(item ? { ...initialDraft("discipline"), id: item.id, version: item.version,
@@ -166,6 +252,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   function startStage(disciplineId: string, item?: Stage) {
     rememberFocus();
     setDateDraft(null);
+    clearWorkingPreview();
     setHistorySubject(null);
     const match = item && definitions.find((definition) => definition.code.toLowerCase() === item.code.toLowerCase());
     setFeedback("");
@@ -180,10 +267,16 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     historyRequest.current++;
     setHistory([]);
     setHistoryState("loading");
+    clearWorkingPreview();
     setHistorySubject(item ? { id: item.id, disciplineId, stageId, name: item.name } : null);
     setDateDraft(item ? { originalStart: formatCivilDate(item.plannedStart),
       originalEnd: formatCivilDate(item.plannedEnd), plannedStart: item.plannedStart ? formatCivilDate(item.plannedStart) : "",
-      plannedEnd: item.plannedEnd ? formatCivilDate(item.plannedEnd) : "", reason: "", version: item.version } : null);
+      plannedEnd: item.plannedEnd ? formatCivilDate(item.plannedEnd) : "", reason: "", version: item.version,
+      planningMode: item.planningMode, workingDays: item.workingDayDuration?.toString() ?? "",
+      originalPlanningMode: item.planningMode, originalWorkingDays: item.workingDayDuration,
+      originalCalendarVersion: item.planningCalendarVersion } : null);
+    if (item?.planningMode === "working_days" && item.plannedStart && item.workingDayDuration)
+      void calculateWorkingPreview(formatCivilDate(item.plannedStart), String(item.workingDayDuration));
     setDraft(item ? { ...initialDraft("activity"), id: item.id, version: item.version,
       disciplineId, stageId, name: item.name, activityType: item.activityType ?? "",
       plannedStart: formatCivilDate(item.plannedStart), plannedEnd: formatCivilDate(item.plannedEnd),
@@ -209,10 +302,17 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     }
     const plannedStart = draft.plannedStart ? parseBrazilianDate(draft.plannedStart) : null;
     const plannedEnd = draft.plannedEnd ? parseBrazilianDate(draft.plannedEnd) : null;
-    if (draft.kind === "activity" && !draft.id &&
-      ((!!draft.plannedStart !== !!draft.plannedEnd) ||
-       (!!draft.plannedStart && (!plannedStart || !plannedEnd || plannedStart > plannedEnd)))) {
-      setFeedback(messages.scheduleInvalidDates); return;
+    if (draft.kind === "activity" && !draft.id) {
+      if (draft.planningMode === "manual" &&
+          ((!!draft.plannedStart !== !!draft.plannedEnd) ||
+           (!!draft.plannedStart && (!plannedStart || !plannedEnd || plannedStart > plannedEnd)))) {
+        setFeedback(messages.scheduleInvalidDates); return;
+      }
+      if (draft.planningMode === "working_days" &&
+          (!plannedStart || !/^\d+$/.test(draft.workingDays) ||
+           !previewMatches(workingPreview, draft.plannedStart, draft.workingDays))) {
+        setFeedback(messages.workingDayPreviewRequired); return;
+      }
     }
     if (draft.id && !window.confirm(messages.confirmHierarchyEdit)) return;
     let path = `${base}/disciplines`;
@@ -229,7 +329,10 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       path += `/${draft.disciplineId}/stages/${draft.stageId}/activities`;
       data = { name: draft.name, activityType: draft.activityType || null,
         displayOrder, notes: draft.notes || null };
-      if (!draft.id) data = { ...data, plannedStart, plannedEnd };
+      if (!draft.id && draft.planningMode === "working_days" && previewMatches(workingPreview, draft.plannedStart, draft.workingDays)) {
+        data = { ...data, planningMode: "working_days", plannedStart,
+          workingDays: Number(draft.workingDays), calendarVersion: workingPreview.calendarVersion };
+      } else if (!draft.id) data = { ...data, planningMode: "manual", plannedStart, plannedEnd };
       if (draft.id) path += `/${draft.id}`;
     }
     if (draft.id) data.version = draft.version;
@@ -255,26 +358,48 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     event.preventDefault();
     if (!draft?.id || !dateDraft || !historySubject || !canEdit || busy) return;
     const start = parseBrazilianDate(dateDraft.plannedStart);
-    const end = parseBrazilianDate(dateDraft.plannedEnd);
-    if (!start || !end || start > end) { setFeedback(messages.dateChangeInvalid); return; }
-    if (dateDraft.plannedStart === (dateDraft.originalStart === messages.noDate ? "" : dateDraft.originalStart) &&
-        dateDraft.plannedEnd === (dateDraft.originalEnd === messages.noDate ? "" : dateDraft.originalEnd)) {
+    const workingMode = dateDraft.planningMode === "working_days";
+    const end = workingMode && previewMatches(workingPreview, dateDraft.plannedStart, dateDraft.workingDays)
+      ? workingPreview.endDate : parseBrazilianDate(dateDraft.plannedEnd);
+    const duration = Number(dateDraft.workingDays);
+    if (!start || !end || start > end || (workingMode && (!/^\d+$/.test(dateDraft.workingDays) ||
+        !Number.isSafeInteger(duration) || duration < 1 || duration > 27393 ||
+        !previewMatches(workingPreview, dateDraft.plannedStart, dateDraft.workingDays)))) {
+      setFeedback(workingMode ? messages.workingDayPreviewRequired : messages.dateChangeInvalid);
+      return;
+    }
+    const originalStart = parseBrazilianDate(dateDraft.originalStart);
+    const originalEnd = parseBrazilianDate(dateDraft.originalEnd);
+    const dateChanged = start !== originalStart || end !== originalEnd;
+    const planChanged = dateDraft.planningMode !== dateDraft.originalPlanningMode ||
+      (workingMode && (duration !== dateDraft.originalWorkingDays ||
+        workingPreview?.calendarVersion !== dateDraft.originalCalendarVersion));
+    if (!dateChanged && !planChanged) {
       setFeedback(messages.dateChangeUnchanged); return;
     }
     const reason = dateDraft.reason.trim();
-    if (reason.length < 10 || reason.length > 2000 ||
-        Array.from(reason).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
-      setFeedback(messages.dateChangeReasonRequired); return;
+    if ((dateChanged || planChanged) && (reason.length < 10 || reason.length > 2000 ||
+        Array.from(reason).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) {
+      setFeedback(messages.activityPlanReasonRequired); return;
     }
     setBusy(true);
     setFeedback("");
     try {
-      const result = await authenticatedFetch(`${base}/disciplines/${historySubject.disciplineId}/stages/${historySubject.stageId}/activities/${historySubject.id}/dates`, {
+      const endpoint = `${base}/disciplines/${historySubject.disciplineId}/stages/${historySubject.stageId}/activities/${historySubject.id}`;
+      const result = await authenticatedFetch(`${endpoint}/${workingMode ? "working-plan" : "dates"}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plannedStart: start, plannedEnd: end, reason, version: dateDraft.version })
+        body: JSON.stringify(workingMode
+          ? { startDate: start, workingDays: duration, calendarVersion: workingPreview?.calendarVersion,
+            reason, version: dateDraft.version }
+          : { plannedStart: start, plannedEnd: end, reason: reason || null, version: dateDraft.version })
       });
       if (result.status === 401 || result.status === 403) { onAccessLost(); return; }
-      if (result.status === 409) { setFeedback(messages.scheduleConflict); return; }
+      if (result.status === 409) {
+        const payload = await result.json().catch(() => null) as { code?: string } | null;
+        setFeedback(payload?.code === "calendar_conflict" || payload?.code === "stale_calendar"
+          ? messages.workingDayCalendarChanged : messages.scheduleConflict);
+        return;
+      }
       if (result.status === 404) { setFeedback(messages.scheduleNotFound); return; }
       if (result.status === 400) { setFeedback(messages.dateChangeInvalid); return; }
       if (!result.ok) { setFeedback(messages.scheduleSaveError); return; }
@@ -284,8 +409,12 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
         plannedEnd: formatCivilDate(updated.plannedEnd), version: updated.version } : null);
       setDateDraft({ originalStart: formatCivilDate(updated.plannedStart), originalEnd: formatCivilDate(updated.plannedEnd),
         plannedStart: updated.plannedStart ? formatCivilDate(updated.plannedStart) : "",
-        plannedEnd: updated.plannedEnd ? formatCivilDate(updated.plannedEnd) : "", reason: "", version: updated.version });
-      setFeedback(payload.changed ? messages.dateChangeSaved : messages.dateChangeUnchanged);
+        plannedEnd: updated.plannedEnd ? formatCivilDate(updated.plannedEnd) : "", reason: "", version: updated.version,
+        planningMode: updated.planningMode, workingDays: updated.workingDayDuration?.toString() ?? "",
+        originalPlanningMode: updated.planningMode, originalWorkingDays: updated.workingDayDuration,
+        originalCalendarVersion: updated.planningCalendarVersion });
+      clearWorkingPreview();
+      setFeedback(dateChanged ? messages.dateChangeSaved : messages.activityPlanSaved);
       await Promise.all([load(false), loadHistory(historySubject)]);
     } catch { setFeedback(messages.scheduleSaveError); }
     finally { setBusy(false); }
@@ -475,12 +604,31 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
             onChange={(event) => setDraft({ ...draft, activityType: event.target.value })} />
           {draft.id ? <p>{messages.existingDates}: {messages.dateRange(draft.plannedStart, draft.plannedEnd)}</p>
             : <>
+              <label htmlFor="activity-planning-mode">{messages.activityPlanningMode}</label>
+              <select id="activity-planning-mode" value={draft.planningMode} onChange={(event) => {
+                clearWorkingPreview();
+                setDraft({ ...draft, planningMode: event.target.value as Draft["planningMode"] });
+              }}>
+                <option value="manual">{messages.manualPlanning}</option>
+                <option value="working_days">{messages.workingDaysPlanning}</option>
+              </select>
               <label htmlFor="activity-start">{messages.plannedStart}</label>
               <input id="activity-start" inputMode="numeric" placeholder="DD/MM/AAAA" value={draft.plannedStart}
-                onChange={(event) => setDraft({ ...draft, plannedStart: event.target.value })} />
-              <label htmlFor="activity-end">{messages.plannedEnd}</label>
-              <input id="activity-end" inputMode="numeric" placeholder="DD/MM/AAAA" value={draft.plannedEnd}
-                onChange={(event) => setDraft({ ...draft, plannedEnd: event.target.value })} />
+                onChange={(event) => { clearWorkingPreview(); setDraft({ ...draft, plannedStart: event.target.value }); }} />
+              {draft.planningMode === "manual" ? <>
+                <label htmlFor="activity-end">{messages.plannedEnd}</label>
+                <input id="activity-end" inputMode="numeric" placeholder="DD/MM/AAAA" value={draft.plannedEnd}
+                  onChange={(event) => setDraft({ ...draft, plannedEnd: event.target.value })} />
+              </> : <>
+                <label htmlFor="activity-working-days">{messages.workingDayDuration}</label>
+                <input id="activity-working-days" type="number" min={1} max={27393} step={1}
+                  value={draft.workingDays} onChange={(event) => {
+                    clearWorkingPreview(); setDraft({ ...draft, workingDays: event.target.value });
+                  }} />
+                <button type="button" onClick={() => void calculateWorkingPreview(draft.plannedStart, draft.workingDays)}
+                  disabled={previewLoading || busy}>{messages.calculateWorkingEnd}</button>
+                <WorkingPreviewDetails preview={workingPreview} loading={previewLoading} />
+              </>}
             </>}
           <label htmlFor="activity-notes">{messages.activityNotes}</label>
           <textarea id="activity-notes" maxLength={4000} value={draft.notes}
@@ -499,12 +647,31 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
         <h4>{messages.proposedDates}</h4>
         <p>{messages.originalDates}: {messages.dateRange(dateDraft.originalStart, dateDraft.originalEnd)}</p>
         <p>{messages.dateChangesLater}</p>
+        <label htmlFor="date-planning-mode">{messages.activityPlanningMode}</label>
+        <select id="date-planning-mode" value={dateDraft.planningMode} onChange={(event) => {
+          clearWorkingPreview();
+          setDateDraft({ ...dateDraft, planningMode: event.target.value as DateDraft["planningMode"] });
+        }}>
+          <option value="manual">{messages.manualPlanning}</option>
+          <option value="working_days">{messages.workingDaysPlanning}</option>
+        </select>
         <label htmlFor="date-start">{messages.plannedStart}</label>
         <input id="date-start" inputMode="numeric" placeholder="DD/MM/AAAA" value={dateDraft.plannedStart}
-          onChange={(event) => setDateDraft({ ...dateDraft, plannedStart: event.target.value })} />
-        <label htmlFor="date-end">{messages.plannedEnd}</label>
-        <input id="date-end" inputMode="numeric" placeholder="DD/MM/AAAA" value={dateDraft.plannedEnd}
-          onChange={(event) => setDateDraft({ ...dateDraft, plannedEnd: event.target.value })} />
+          onChange={(event) => { clearWorkingPreview(); setDateDraft({ ...dateDraft, plannedStart: event.target.value }); }} />
+        {dateDraft.planningMode === "manual" ? <>
+          <label htmlFor="date-end">{messages.plannedEnd}</label>
+          <input id="date-end" inputMode="numeric" placeholder="DD/MM/AAAA" value={dateDraft.plannedEnd}
+            onChange={(event) => setDateDraft({ ...dateDraft, plannedEnd: event.target.value })} />
+        </> : <>
+          <label htmlFor="date-working-days">{messages.workingDayDuration}</label>
+          <input id="date-working-days" type="number" min={1} max={27393} step={1}
+            value={dateDraft.workingDays} onChange={(event) => {
+              clearWorkingPreview(); setDateDraft({ ...dateDraft, workingDays: event.target.value });
+            }} />
+          <button type="button" onClick={() => void calculateWorkingPreview(dateDraft.plannedStart, dateDraft.workingDays)}
+            disabled={previewLoading || busy}>{messages.calculateWorkingEnd}</button>
+          <WorkingPreviewDetails preview={workingPreview} loading={previewLoading} />
+        </>}
         <label htmlFor="date-reason">{messages.dateChangeReason}</label>
         <textarea id="date-reason" maxLength={2000} value={dateDraft.reason}
           onChange={(event) => setDateDraft({ ...dateDraft, reason: event.target.value })} />

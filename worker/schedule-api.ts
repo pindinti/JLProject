@@ -1,13 +1,15 @@
 import { authorizeWorkspace, type MembershipRepository } from "./authorization";
+import { calculateWorkingDayEndDate } from "../domain/working-day-calculation";
+import { createCalendarRepository, type CalendarRepository } from "./calendar-repository";
 import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
-import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput,
+import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
   type DisciplineInput, type Mutation, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
   disciplineId?: string; stageId?: string; activityId?: string; targetId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
@@ -35,6 +37,8 @@ function parseRoute(pathname: string): Route | null {
     return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activity_dates" };
   if (parts.length === 6 && parts[5] === "date-history")
     return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activity_history" };
+  if (parts.length === 6 && parts[5] === "working-plan")
+    return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activity_working_plan" };
   return null;
 }
 
@@ -117,9 +121,10 @@ function dateChangeInput(value: Record<string, unknown>):
     version: value["version"] as number };
 }
 function activityInput(value: Record<string, unknown>, editing: boolean):
-  { input: ActivityInput | ActivityMetadataInput; version?: number } | null {
+  { input: ActivityInput | ActivityMetadataInput; version?: number;
+    workingPlan?: { start: string; duration: number; calendarVersion: number } } | null {
   const keys = ["name", "activityType", "displayOrder", "notes",
-    ...(editing ? ["version"] : ["plannedStart", "plannedEnd"])];
+    ...(editing ? ["version"] : ["plannedStart", "plannedEnd", "planningMode", "workingDays", "calendarVersion"])];
   if (!only(value, keys)) return null;
   const name = label(value["name"], 300);
   const activityType = optional(value["activityType"], 80);
@@ -128,11 +133,38 @@ function activityInput(value: Record<string, unknown>, editing: boolean):
       (editing && !version(value["version"]))) return null;
   const metadata = { name, activityType, displayOrder: value["displayOrder"] as number, notes };
   if (editing) return { input: metadata, version: value["version"] as number };
+  const planningMode = value["planningMode"] ?? "manual";
+  if (planningMode === "working_days") {
+    const start = value["plannedStart"];
+    const duration = value["workingDays"];
+    const calendarVersion = value["calendarVersion"];
+    if (!civilDate(start) || value["plannedEnd"] !== undefined ||
+        !Number.isSafeInteger(duration) || Number(duration) < 1 || Number(duration) > 27393 ||
+        !Number.isSafeInteger(calendarVersion) || Number(calendarVersion) < 0) return null;
+    return { input: { ...metadata, plannedStart: start, plannedEnd: null },
+      workingPlan: { start, duration: Number(duration), calendarVersion: Number(calendarVersion) } };
+  }
+  if ((planningMode !== "manual") || value["workingDays"] !== undefined || value["calendarVersion"] !== undefined)
+    return null;
   const start = value["plannedStart"] ?? null;
   const end = value["plannedEnd"] ?? null;
   if ((start === null) !== (end === null) ||
       (start !== null && (!civilDate(start) || !civilDate(end) || start > end))) return null;
   return { input: { ...metadata, plannedStart: start as string | null, plannedEnd: end as string | null } };
+}
+
+function workingPlanInput(value: Record<string, unknown>): {
+  start: string; duration: number; calendarVersion: number; reason: string; version: number
+} | null {
+  if (!only(value, ["startDate", "workingDays", "calendarVersion", "reason", "version"]) ||
+      !civilDate(value["startDate"]) || !Number.isSafeInteger(value["workingDays"]) ||
+      Number(value["workingDays"]) < 1 || Number(value["workingDays"]) > 27393 ||
+      !Number.isSafeInteger(value["calendarVersion"]) || Number(value["calendarVersion"]) < 0 ||
+      !version(value["version"])) return null;
+  const reason = label(value["reason"], 2000);
+  if (!reason || reason.length < 10) return null;
+  return { start: value["startDate"], duration: Number(value["workingDays"]),
+    calendarVersion: Number(value["calendarVersion"]), reason, version: Number(value["version"]) };
 }
 
 function targetInput(value: Record<string, unknown>, editing: boolean):
@@ -158,6 +190,7 @@ function mutation<T>(result: Mutation<T>, noun: string, created = false): Respon
   if (result.status === "duplicate") return response({ error: "Já existe um item com esse nome ou código." }, 409);
   if (result.status === "invalid") return response({ error: "Informe uma justificativa válida para alterar a data." }, 400);
   if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+  if (result.status === "stale_calendar") return response({ error: "O calendário mudou. Recalcule a previsão e tente novamente.", code: "stale_calendar" }, 409);
   if (result.status === "conflict") return response({ error: "O código da etapa já possui outra cor neste espaço de trabalho." }, 409);
   return response({ error: "O item foi alterado. Atualize os dados e tente novamente." }, 409);
 }
@@ -172,7 +205,8 @@ function targetMutation(result: Mutation<unknown>, created = false): Response {
 
 export async function handleScheduleRequest(request: Request, identity: Identity,
   memberships: MembershipRepository, environment: WorkerEnvironment,
-  factory: ScheduleRepositoryFactory = createScheduleRepository): Promise<Response> {
+  factory: ScheduleRepositoryFactory = createScheduleRepository,
+  calendarFactory: (environment: WorkerEnvironment) => CalendarRepository = createCalendarRepository): Promise<Response> {
   const route = parseRoute(new URL(request.url).pathname);
   if (!route) return response({ error: "Não encontrado." }, 404);
   const ids = [route.workspaceId, route.productId, route.disciplineId, route.stageId, route.activityId, route.targetId]
@@ -192,7 +226,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     return response({ error: "Não encontrado." }, 404);
   if (stageId && !(await repository.stageExists(ws, productId, disciplineId!, stageId, write)))
     return response({ error: "Não encontrado." }, 404);
-  if ((route.kind === "activity_dates" || route.kind === "activity_history") && activityId &&
+  if ((route.kind === "activity_dates" || route.kind === "activity_history" ||
+      route.kind === "activity_working_plan") && activityId &&
       !(await repository.activityExists(ws, productId, disciplineId!, stageId!, activityId, write)))
     return response({ error: "Não encontrado." }, 404);
 
@@ -243,6 +278,30 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     if ("activity" in result) return response({ activity: result.activity, changed: result.status === "updated" }, 200);
     return response({ error: "Serviço indisponível." }, 503);
   }
+  if (route.kind === "activity_working_plan" && request.method === "PATCH" && activityId) {
+    const value = await body(request);
+    const parsed = value && workingPlanInput(value);
+    if (!parsed) return response({ error: "Informe data, duraÃ§Ã£o e justificativa vÃ¡lidas." }, 400);
+    try {
+      const calendar = await calendarFactory(environment).readForCalculation(ws);
+      if (parsed.calendarVersion !== calendar.version)
+        return response({ error: "O calendÃ¡rio mudou. Recalcule a previsÃ£o e tente novamente.", code: "calendar_conflict" }, 409);
+      let calculation;
+      try { calculation = calculateWorkingDayEndDate(parsed.start, parsed.duration, calendar.exceptions); }
+      catch { return response({ error: "A data e a duração excedem o período de calendário disponível." }, 400); }
+      const result = await repository.changeActivityWorkingPlan(ws, productId, disciplineId!, stageId!, activityId,
+        identity.subject, parsed.start, calculation.endDate, parsed.duration, calendar.version,
+        parsed.reason, parsed.version, crypto.randomUUID());
+      if (result.status === "forbidden") return response({ error: "Acesso nÃ£o autorizado." }, 403);
+      if (result.status === "not_found") return response({ error: "NÃ£o encontrado." }, 404);
+      if (result.status === "stale" || result.status === "stale_calendar")
+        return response({ error: "A atividade ou o calendÃ¡rio mudou. Recalcule e tente novamente.", code: result.status }, 409);
+      if (result.status === "invalid") return response({ error: "Informe dados e justificativa vÃ¡lidos." }, 400);
+      if (result.status !== "updated" && result.status !== "unchanged")
+        return response({ error: "NÃ£o foi possÃ­vel salvar o planejamento. Tente novamente." }, 503);
+      return response({ activity: result.activity, changed: result.status === "updated", calculation }, 200);
+    } catch { return response({ error: "NÃ£o foi possÃ­vel salvar o planejamento. Tente novamente." }, 503); }
+  }
   if (route.kind === "disciplines") {
     if (request.method === "GET" && !disciplineId) return response({ disciplines: await repository.listDisciplines(ws, productId) }, 200);
     if (request.method === "POST" && !disciplineId) {
@@ -274,6 +333,27 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     if (request.method === "POST" && !activityId) {
       const value = await body(request); const parsed = value && activityInput(value, false);
       if (!parsed) return response({ error: "Dados inválidos." }, 400);
+      if (parsed.workingPlan) {
+        try {
+          const calendar = await calendarFactory(environment).readForCalculation(ws);
+          if (parsed.workingPlan.calendarVersion !== calendar.version)
+            return response({ error: "O calendário mudou. Recalcule a previsão e tente novamente.", code: "calendar_conflict" }, 409);
+          let calculation;
+          try { calculation = calculateWorkingDayEndDate(parsed.workingPlan.start,
+            parsed.workingPlan.duration, calendar.exceptions); }
+          catch { return response({ error: "A data e a duração excedem o período de calendário disponível." }, 400); }
+          const workingInput: WorkingActivityInput = {
+            ...(parsed.input as ActivityInput), plannedStart: parsed.workingPlan.start,
+            plannedEnd: calculation.endDate, workingDays: parsed.workingPlan.duration,
+            calendarVersion: calendar.version
+          };
+          const created = await repository.createWorkingActivity(ws, productId, disciplineId, stageId,
+            identity.subject, workingInput);
+          if (created.status === "invalid")
+            return response({ error: "Dados do planejamento em dias úteis inválidos." }, 400);
+          return mutation(created, "activity", true);
+        } catch { return response({ error: "Não foi possível calcular ou salvar a atividade. Tente novamente." }, 503); }
+      }
       return mutation(await repository.createActivity(ws, productId, disciplineId, stageId, identity.subject,
         parsed.input as ActivityInput), "activity", true);
     }

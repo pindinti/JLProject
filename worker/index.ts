@@ -14,6 +14,8 @@ import { handleScheduleRequest, isScheduleRoute, type ScheduleRepositoryFactory 
 import { createScheduleRepository } from "./schedule-repository";
 import { handleImportRequest, isImportRoute, type ImportRepositoryFactory } from "./import-api";
 import { createImportRepository } from "./import-repository";
+import { handleCalendarRequest, isCalendarRoute, type CalendarRepositoryFactory } from "./calendar-api";
+import { createCalendarRepository } from "./calendar-repository";
 
 const healthPath = "/api/health";
 const databaseConnectivityPath = "/api/internal/database-connectivity";
@@ -98,7 +100,8 @@ export async function handleRequest(
   productRepositoryFactory: ProductRepositoryFactory = createProductRepository,
   scheduleRepositoryFactory: ScheduleRepositoryFactory = createScheduleRepository,
   importRepositoryFactory: ImportRepositoryFactory = createImportRepository,
-  authUserProvisioner: AuthUserProvisioner = provisionDevelopmentAuthUser
+  authUserProvisioner: AuthUserProvisioner = provisionDevelopmentAuthUser,
+  calendarRepositoryFactory: CalendarRepositoryFactory = createCalendarRepository
 ): Promise<Response> {
   const url = new URL(request.url);
 
@@ -119,13 +122,14 @@ export async function handleRequest(
   const productRoute = isProductRoute(url.pathname);
   const scheduleRoute = isScheduleRoute(url.pathname);
   const importRoute = isImportRoute(url.pathname);
+  const calendarRoute = isCalendarRoute(url.pathname);
   const stageCatalogMatch = url.pathname.match(stageCatalogPath);
   const stageDefinitionColorMatch = url.pathname.match(stageDefinitionColorPath);
   const protectedRoute = request.method === "GET" &&
     (url.pathname === sessionPath || url.pathname === workspacesPath || workspaceMatch || membersMatch) ||
     request.method === "POST" && !!membersMatch ||
     request.method === "PATCH" && (!!memberMatch || !!stageDefinitionColorMatch) ||
-    productRoute || scheduleRoute || importRoute || !!stageCatalogMatch || !!stageDefinitionColorMatch;
+    productRoute || scheduleRoute || importRoute || calendarRoute || !!stageCatalogMatch || !!stageDefinitionColorMatch;
   if (protectedRoute) {
     const origin = request.headers.get("Origin");
     if (origin && origin !== url.origin) {
@@ -170,6 +174,10 @@ export async function handleRequest(
         return await handleImportRequest(request, identity, repository, environment, importRepositoryFactory);
       }
 
+      if (calendarRoute) {
+        return await handleCalendarRequest(request, identity, repository, environment, calendarRepositoryFactory);
+      }
+
       if (stageDefinitionColorMatch) {
         const [, workspaceId, definitionId] = stageDefinitionColorMatch;
         if (!uuidPattern.test(workspaceId) || !uuidPattern.test(definitionId))
@@ -196,7 +204,8 @@ export async function handleRequest(
       }
 
       if (scheduleRoute) {
-        return await handleScheduleRequest(request, identity, repository, environment, scheduleRepositoryFactory);
+        return await handleScheduleRequest(request, identity, repository, environment,
+          scheduleRepositoryFactory, calendarRepositoryFactory);
       }
 
       if (membersMatch || memberMatch) {
