@@ -40,6 +40,13 @@ describe("calendar reschedule history dialog", () => {
     expect(within(dialog).getByText("Responsável: Synthetic Admin")).toBeInTheDocument();
     expect(within(dialog).getByText("Synthetic original justification")).toBeInTheDocument();
     expect(within(dialog).getByText("Disponível para reversão")).toBeInTheDocument();
+    const card = within(dialog).getByText("Synthetic original justification").closest(".reschedule-history__operation");
+    const content = card?.querySelector(".reschedule-history__content");
+    expect(content).toContainElement(within(dialog).getByText("Responsável: Synthetic Admin"));
+    expect(content).toContainElement(within(dialog).getByText("Synthetic original justification"));
+    expect(content).toContainElement(within(dialog).getByText("Ver atividades"));
+    expect(card).toContainElement(within(dialog).getByLabelText("Selecionar para reversão"));
+    expect(content).not.toContainElement(within(dialog).getByLabelText("Selecionar para reversão"));
     expect(within(dialog).getByText("1 atividade afetada")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByText("Ver atividades"));
     expect(within(dialog).getByText("Synthetic discipline › Synthetic stage › Synthetic activity")).toBeInTheDocument();
@@ -80,6 +87,12 @@ describe("calendar reschedule history dialog", () => {
     expect(within(dialog).getByText("Já revertida")).toBeInTheDocument();
     expect(within(dialog).getByText("Conflito: atividade alterada depois da operação")).toBeInTheDocument();
     expect(within(dialog).getAllByLabelText("Selecionar para reversão")).toHaveLength(1);
+    for (const status of ["already_reversed", "conflict"]) {
+      const card = dialog.querySelector(`.reschedule-history__operation[data-status="${status}"]`);
+      expect(card?.querySelector(".reschedule-history__content .reschedule-history__reason")).toHaveTextContent(
+        "Synthetic original justification");
+      expect(card?.querySelector(".reschedule-history__selector")).not.toBeInTheDocument();
+    }
     expect(within(dialog).getByText("Revertida em 10/11/2026, 13:00 por Synthetic Editor.")).toBeInTheDocument();
   });
 

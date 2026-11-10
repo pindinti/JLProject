@@ -459,20 +459,20 @@ form button {
 .reschedule-history__provisional { margin: 0 0 0.65rem; padding: 0.55rem 0.7rem; border-radius: var(--jl-radius-sm); background: var(--jl-info-bg); color: var(--jl-info); font-size: var(--jl-font-size-sm); }
 .reschedule-history__feedback { margin: 0 0 0.65rem; color: var(--jl-danger); font-weight: 600; }
 .reschedule-history__list { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
-.reschedule-history__operation { min-width: 0; padding: 0.65rem; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); background: var(--jl-surface); }
+.reschedule-history__operation { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); column-gap: 0.6rem; min-width: 0; padding: 0.65rem; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); background: var(--jl-surface); }
+.reschedule-history__content { grid-column: 2; min-width: 0; }
 .reschedule-history__operation-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem 0.7rem; min-width: 0; }
 .reschedule-history__operation-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.2rem 0.7rem; min-width: 0; color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
 .reschedule-history__operation-meta time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .reschedule-history__operation-meta span { min-width: 0; overflow-wrap: anywhere; }
-.reschedule-history__operation-action { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.2rem 0.8rem; min-width: 0; margin-top: 0.35rem; }
-.reschedule-history__operation-action p { flex: 1 1 16rem; min-width: 0; margin: 0; overflow-wrap: anywhere; }
-.reschedule-history__selector { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; cursor: pointer; font-weight: 600; }
-.reschedule-history__selector input { flex: 0 0 auto; width: 1rem; height: 1rem; margin: 0; accent-color: var(--jl-primary); }
+.reschedule-history__reason { margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+.reschedule-history__selector { grid-column: 1; grid-row: 1; display: flex; align-items: center; justify-content: center; align-self: start; min-width: 0; min-height: 1.8rem; cursor: pointer; }
+.reschedule-history__selector input { width: 1rem; height: 1rem; min-height: 1rem; margin: 0; accent-color: var(--jl-primary); }
 .reschedule-history__status { display: inline-flex; max-width: 100%; padding: 0.2rem 0.45rem; border-radius: var(--jl-radius-sm); background: var(--jl-neutral-status-bg); color: var(--jl-neutral-status); font-size: var(--jl-font-size-xs); font-weight: 600; overflow-wrap: anywhere; }
 .reschedule-history__status--eligible { background: var(--jl-success-bg); color: var(--jl-success); }
 .reschedule-history__status--already_reversed { background: var(--jl-info-bg); color: var(--jl-info); }
 .reschedule-history__status--conflict { background: var(--jl-warning-bg); color: var(--jl-warning); }
-.reschedule-history__operation details { margin-top: 0.35rem; }
+.reschedule-history__content details { margin-top: 0.35rem; }
 .reschedule-history__operation summary { width: fit-content; max-width: 100%; cursor: pointer; color: var(--jl-primary); font-weight: 600; }
 .reschedule-history__activities { display: grid; gap: 0.35rem; margin: 0.4rem 0 0; padding: 0; list-style: none; }
 .reschedule-history__activities li { min-width: 0; padding: 0.4rem 0; border-top: 1px solid var(--jl-border); overflow-wrap: anywhere; }

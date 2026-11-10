@@ -223,26 +223,25 @@ export function CalendarRescheduleHistoryDialog({ base, hierarchy, canEdit, onCl
     {historyState === "ready" && operations.length > 0 && <ol className="reschedule-history__list">
       {operations.map((operation) => <li key={operation.operationId} className="reschedule-history__operation"
         data-status={operation.status}>
-        <div className="reschedule-history__operation-header">
-          <div className="reschedule-history__operation-meta">
-            <time dateTime={operation.changedAt}>{auditDateTime.format(new Date(operation.changedAt))}</time>
-            <span>{messages.calendarRescheduleOperationBy(operation.actorName ?? messages.calendarRescheduleActorUnavailable)}</span>
-            <span>{messages.calendarRescheduleActivityCount(operation.activities.length)}</span>
+        {canEdit && operation.status === "eligible" && <label className="reschedule-history__selector">
+          <input type="radio" name="calendar-reschedule-operation" value={operation.operationId}
+            checked={selectedId === operation.operationId} disabled={busy}
+            onChange={() => setSelectedId(operation.operationId)} />
+          <span className="visually-hidden">{messages.calendarRescheduleSelect}</span>
+        </label>}
+        <div className="reschedule-history__content">
+          <div className="reschedule-history__operation-header">
+            <div className="reschedule-history__operation-meta">
+              <time dateTime={operation.changedAt}>{auditDateTime.format(new Date(operation.changedAt))}</time>
+              <span>{messages.calendarRescheduleOperationBy(operation.actorName ?? messages.calendarRescheduleActorUnavailable)}</span>
+              <span>{messages.calendarRescheduleActivityCount(operation.activities.length)}</span>
+            </div>
+            <span className={`reschedule-history__status reschedule-history__status--${operation.status}`}>
+              {statusText(operation.status)}
+            </span>
           </div>
-          <span className={`reschedule-history__status reschedule-history__status--${operation.status}`}>
-            {statusText(operation.status)}
-          </span>
-        </div>
-        <div className="reschedule-history__operation-action">
-          {canEdit && operation.status === "eligible" && <label className="reschedule-history__selector">
-            <input type="radio" name="calendar-reschedule-operation" value={operation.operationId}
-              checked={selectedId === operation.operationId} disabled={busy}
-              onChange={() => setSelectedId(operation.operationId)} />
-            <span>{messages.calendarRescheduleSelect}</span>
-          </label>}
-          <p><strong>{messages.calendarRescheduleReason}:</strong> {operation.reason}</p>
-        </div>
-        <details open={selectedId === operation.operationId}>
+          <p className="reschedule-history__reason"><strong>{messages.calendarRescheduleReason}:</strong> {operation.reason}</p>
+          <details open={selectedId === operation.operationId}>
           <summary>{messages.calendarRescheduleShowActivities}</summary>
           <ul className="reschedule-history__activities">
             {operation.activities.map((activity) => <li key={activity.activityId}>
@@ -261,13 +260,14 @@ export function CalendarRescheduleHistoryDialog({ base, hierarchy, canEdit, onCl
               </p>}
             </li>)}
           </ul>
-        </details>
-        {operation.reversal && <div className="reschedule-history__reversal">
+          </details>
+          {operation.reversal && <div className="reschedule-history__reversal">
           <p>{messages.calendarRescheduleReversalRecorded(
             auditDateTime.format(new Date(operation.reversal.changedAt)),
             operation.reversal.actorName ?? messages.calendarRescheduleActorUnavailable)}</p>
           <p>{messages.calendarRescheduleReversalReasonValue(operation.reversal.reason)}</p>
-        </div>}
+          </div>}
+        </div>
       </li>)}
     </ol>}
     {confirmOpen && <div className="change-history-confirm-backdrop">
