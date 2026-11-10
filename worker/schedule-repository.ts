@@ -50,6 +50,22 @@ export interface CalendarRescheduleProposal {
 }
 export type CalendarRescheduleResult = { status: "updated"; count: number; operationId: string } |
   { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
+export type CalendarRescheduleReversalResult =
+  { status: "reversed"; count: number; operationId: string; originalOperationId: string } |
+  { status: "stale"; activityId: string } |
+  { status: "not_found" | "already_reversed" | "invalid" | "forbidden" };
+export interface CalendarRescheduleHistoryActivity {
+  activityId: string; name: string | null; previousStart: string; previousEnd: string;
+  newStart: string; newEnd: string; currentStart: string | null; currentEnd: string | null;
+}
+export interface CalendarRescheduleHistoryOperation {
+  operationId: string; changedAt: string; actorName: string | null; reason: string;
+  status: "eligible" | "already_reversed" | "conflict";
+  reversal: { changedAt: string; actorName: string | null; reason: string } | null;
+  activities: CalendarRescheduleHistoryActivity[];
+}
+export type CalendarRescheduleHistoryResult = { status: "ok"; operations: CalendarRescheduleHistoryOperation[] } |
+  { status: "not_found" | "forbidden" | "invalid" };
 export type Mutation<T> = { status: "ok"; value: T } |
   { status: "not_found" | "duplicate" | "stale" | "stale_calendar" | "conflict" | "invalid" | "forbidden" };
 
@@ -73,6 +89,10 @@ export interface ScheduleRepository {
   applyCalendarReschedule(workspaceId: string, productId: string, actorId: string,
     operationId: string, calendarVersion: number, reason: string,
     proposals: CalendarRescheduleProposal[]): Promise<CalendarRescheduleResult>;
+  reverseCalendarReschedule(workspaceId: string, productId: string, actorId: string,
+    originalOperationId: string, operationId: string, reason: string): Promise<CalendarRescheduleReversalResult>;
+  listCalendarRescheduleHistory(workspaceId: string, productId: string, actorId: string):
+    Promise<CalendarRescheduleHistoryResult>;
   createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
   createWorkingActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string,
     actorId: string, input: WorkingActivityInput): Promise<Mutation<Activity>>;
@@ -381,6 +401,86 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       if (result && ["not_found", "stale", "stale_calendar", "invalid", "forbidden"].includes(result.status ?? ""))
         return { status: result.status as "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
       throw new Error("Unexpected calendar reschedule result.");
+    },
+    async reverseCalendarReschedule(ws, productId, actorId, originalOperationId, operationId, reason) {
+      const rows = await sql`SELECT public.reverse_calendar_reschedule(
+        ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid,
+        ${originalOperationId}::uuid, ${operationId}::uuid, ${reason}) AS result`;
+      const result = rows[0]?.["result"] as { status?: string; count?: number; activityId?: string } | undefined;
+      if (result?.status === "reversed" && Number.isSafeInteger(result.count) && Number(result.count) > 0)
+        return { status: "reversed", count: Number(result.count), operationId, originalOperationId };
+      if (result?.status === "stale" && typeof result.activityId === "string")
+        return { status: "stale", activityId: result.activityId };
+      if (result && ["not_found", "already_reversed", "invalid", "forbidden"].includes(result.status ?? ""))
+        return { status: result.status as "not_found" | "already_reversed" | "invalid" | "forbidden" };
+      throw new Error("Unexpected calendar reversal result.");
+    },
+    async listCalendarRescheduleHistory(ws, productId, actorId) {
+      const rows = await sql`SELECT public.list_calendar_reschedule_history(
+        ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid) AS result`;
+      const result = rows[0]?.["result"] as {
+        status?: string; operations?: Array<Record<string, unknown>>
+      } | undefined;
+      if (result?.status !== "ok") {
+        if (result && ["not_found", "forbidden", "invalid"].includes(result.status ?? ""))
+          return { status: result.status as "not_found" | "forbidden" | "invalid" };
+        throw new Error("Unexpected calendar reschedule history result.");
+      }
+      if (!Array.isArray(result.operations)) throw new Error("Invalid calendar reschedule history result.");
+      const actorIds = new Set<string>();
+      for (const item of result.operations) {
+        if (typeof item["actorId"] === "string") actorIds.add(item["actorId"]);
+        const reversal = item["reversal"];
+        if (reversal && typeof reversal === "object" && typeof (reversal as Record<string, unknown>)["actorId"] === "string")
+          actorIds.add((reversal as Record<string, unknown>)["actorId"] as string);
+      }
+      const actorNames = new Map<string, string>();
+      if (actorIds.size > 0) {
+        const names = await sql`SELECT member.auth_user_id::text AS id,
+            NULLIF(auth_user.name, '') AS name
+          FROM public.workspace_memberships AS member
+          JOIN neon_auth."user" AS auth_user ON auth_user.id = member.auth_user_id
+          WHERE member.workspace_id = ${ws}::uuid`;
+        for (const row of names) {
+          if (row["name"] !== null && row["name"] !== undefined)
+            actorNames.set(text(row["id"]), text(row["name"]));
+        }
+      }
+      const operations = result.operations.map((item): CalendarRescheduleHistoryOperation => {
+        if (typeof item["operationId"] !== "string" || typeof item["changedAt"] !== "string" ||
+            typeof item["actorId"] !== "string" || typeof item["reason"] !== "string" ||
+            !["eligible", "already_reversed", "conflict"].includes(String(item["status"])) ||
+            !Array.isArray(item["activities"])) throw new Error("Invalid calendar reschedule history operation.");
+        const rawReversal = item["reversal"];
+        let reversal: CalendarRescheduleHistoryOperation["reversal"] = null;
+        if (rawReversal !== null) {
+          if (!rawReversal || typeof rawReversal !== "object") throw new Error("Invalid reversal history record.");
+          const value = rawReversal as Record<string, unknown>;
+          if (typeof value["changedAt"] !== "string" || typeof value["actorId"] !== "string" ||
+              typeof value["reason"] !== "string") throw new Error("Invalid reversal history record.");
+          reversal = { changedAt: value["changedAt"], actorName: actorNames.get(value["actorId"]) ?? null,
+            reason: value["reason"] };
+        }
+        const activities = item["activities"].map((raw): CalendarRescheduleHistoryActivity => {
+          if (!raw || typeof raw !== "object") throw new Error("Invalid activity history record.");
+          const value = raw as Record<string, unknown>;
+          if (["activityId", "previousStart", "previousEnd", "newStart", "newEnd"]
+            .some((key) => typeof value[key] !== "string") ||
+            (value["name"] !== null && typeof value["name"] !== "string") ||
+            (value["currentStart"] !== null && typeof value["currentStart"] !== "string") ||
+            (value["currentEnd"] !== null && typeof value["currentEnd"] !== "string"))
+            throw new Error("Invalid activity history record.");
+          return { activityId: value["activityId"] as string, name: value["name"] as string | null,
+            previousStart: value["previousStart"] as string, previousEnd: value["previousEnd"] as string,
+            newStart: value["newStart"] as string, newEnd: value["newEnd"] as string,
+            currentStart: value["currentStart"] as string | null, currentEnd: value["currentEnd"] as string | null };
+        });
+        return { operationId: item["operationId"] as string, changedAt: item["changedAt"] as string,
+          actorName: actorNames.get(item["actorId"] as string) ?? null,
+          reason: item["reason"] as string, status: item["status"] as CalendarRescheduleHistoryOperation["status"],
+          reversal, activities };
+      });
+      return { status: "ok", operations };
     },
     async createActivity(ws, productId, disciplineId, stageId, actorId, input) {
       const rows = await sql`WITH locked_product AS MATERIALIZED (

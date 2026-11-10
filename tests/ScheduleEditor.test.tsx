@@ -70,7 +70,7 @@ describe("schedule editor", () => {
     const panel = screen.getByRole("dialog", { name: "Prévia de impactos do calendário" });
     expect(within(panel).getByText("0 de 2 selecionadas")).toBeInTheDocument();
     expect(within(panel).getAllByText(/pontos facultativos não está verificada/)).toHaveLength(3);
-    expect(within(panel).getByText("A reversão ainda não está disponível nesta interface.")).toBeInTheDocument();
+    expect(within(panel).getByText("Para consultar ou reverter uma reprogramação, abra o histórico de reprogramações.")).toBeInTheDocument();
     expect(within(panel).getByText("Version-only activity").closest("li")?.querySelector("input")).toBeNull();
     const apply = within(panel).getByRole("button", { name: "Reprogramar selecionadas" });
     expect(apply).toBeDisabled();

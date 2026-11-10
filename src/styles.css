@@ -449,6 +449,53 @@ form button {
 .calendar-impact-status { margin: 0; padding: 0.25rem 0.55rem; border-bottom: 1px solid var(--jl-border); background: var(--jl-primary-soft); color: var(--jl-text); font-size: var(--jl-font-size-sm); }
 .calendar-impact-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem 0.65rem; }
 .calendar-impact-notice button { min-height: 1.8rem; padding: 0.15rem 0.35rem; border: 0; background: transparent; color: var(--jl-primary); font-weight: 600; text-decoration: underline; }
+.change-history-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(37 43 40 / 48%); }
+.change-history-dialog { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(58rem, calc(100vw - 2rem)); max-height: min(90dvh, 54rem); min-width: 0; overflow: hidden; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-lg); background: var(--jl-surface); color: var(--jl-text); box-shadow: var(--jl-shadow-md); }
+.change-history-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-width: 0; padding: 0.8rem 1rem; border-bottom: 1px solid var(--jl-border); }
+.change-history-dialog__header h2 { min-width: 0; margin: 0; font-size: var(--jl-font-size-lg); overflow-wrap: anywhere; }
+.change-history-dialog__close { flex: 0 0 2.25rem; width: 2.25rem; min-height: 2.25rem; padding: 0; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-sm); background: var(--jl-surface); color: var(--jl-text); font-size: 1.25rem; }
+.change-history-dialog__body { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.8rem 1rem; }
+.change-history-dialog__footer { position: sticky; z-index: 1; bottom: 0; min-width: 0; padding: 0.7rem 1rem; border-top: 1px solid var(--jl-border); background: var(--jl-surface); }
+.reschedule-history__provisional { margin: 0 0 0.65rem; padding: 0.55rem 0.7rem; border-radius: var(--jl-radius-sm); background: var(--jl-info-bg); color: var(--jl-info); font-size: var(--jl-font-size-sm); }
+.reschedule-history__feedback { margin: 0 0 0.65rem; color: var(--jl-danger); font-weight: 600; }
+.reschedule-history__list { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
+.reschedule-history__operation { min-width: 0; padding: 0.65rem; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); background: var(--jl-surface); }
+.reschedule-history__operation-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem 0.7rem; min-width: 0; }
+.reschedule-history__operation-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.2rem 0.7rem; min-width: 0; color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
+.reschedule-history__operation-meta time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.reschedule-history__operation-meta span { min-width: 0; overflow-wrap: anywhere; }
+.reschedule-history__operation-action { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.2rem 0.8rem; min-width: 0; margin-top: 0.35rem; }
+.reschedule-history__operation-action p { flex: 1 1 16rem; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.reschedule-history__selector { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; cursor: pointer; font-weight: 600; }
+.reschedule-history__selector input { flex: 0 0 auto; width: 1rem; height: 1rem; margin: 0; accent-color: var(--jl-primary); }
+.reschedule-history__status { display: inline-flex; max-width: 100%; padding: 0.2rem 0.45rem; border-radius: var(--jl-radius-sm); background: var(--jl-neutral-status-bg); color: var(--jl-neutral-status); font-size: var(--jl-font-size-xs); font-weight: 600; overflow-wrap: anywhere; }
+.reschedule-history__status--eligible { background: var(--jl-success-bg); color: var(--jl-success); }
+.reschedule-history__status--already_reversed { background: var(--jl-info-bg); color: var(--jl-info); }
+.reschedule-history__status--conflict { background: var(--jl-warning-bg); color: var(--jl-warning); }
+.reschedule-history__operation details { margin-top: 0.35rem; }
+.reschedule-history__operation summary { width: fit-content; max-width: 100%; cursor: pointer; color: var(--jl-primary); font-weight: 600; }
+.reschedule-history__activities { display: grid; gap: 0.35rem; margin: 0.4rem 0 0; padding: 0; list-style: none; }
+.reschedule-history__activities li { min-width: 0; padding: 0.4rem 0; border-top: 1px solid var(--jl-border); overflow-wrap: anywhere; }
+.reschedule-history__activities strong { display: block; }
+.reschedule-history__path-unavailable { display: block; color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); }
+.reschedule-history__dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.2rem 0.7rem; margin-top: 0.2rem; color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); font-variant-numeric: tabular-nums; }
+.reschedule-history__current { margin: 0.2rem 0 0; color: var(--jl-warning); font-size: var(--jl-font-size-xs); }
+.reschedule-history__reversal { margin-top: 0.5rem; padding-top: 0.4rem; border-top: 1px solid var(--jl-border); color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); overflow-wrap: anywhere; }
+.reschedule-history__reversal p { margin: 0.2rem 0; }
+.reschedule-history__form { display: grid; gap: 0.4rem; min-width: 0; }
+.reschedule-history__form > p { margin: 0; color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
+.reschedule-history__form > .reschedule-history__hint { color: var(--jl-warning); }
+.reschedule-history__form > .reschedule-history__clear { justify-self: start; min-height: 1.8rem; margin: 0; padding: 0.1rem 0.35rem; border: 0; background: transparent; color: var(--jl-primary); text-decoration: underline; }
+.reschedule-history__form > .reschedule-history__clear:not(:disabled):hover { background: var(--jl-primary-soft); }
+.reschedule-history__form label { font-size: var(--jl-font-size-sm); font-weight: 600; }
+.reschedule-history__form textarea { width: 100%; min-width: 0; min-height: 3.5rem; padding: 0.45rem 0.6rem; border: 1px solid var(--jl-border-strong); border-radius: var(--jl-radius-sm); background: var(--jl-surface); color: var(--jl-text); resize: vertical; }
+.reschedule-history__actions,.reschedule-history__viewer-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+.reschedule-history__viewer-footer p { margin: 0; color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
+.change-history-confirm-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(37 43 40 / 54%); }
+.change-history-confirm { width: min(30rem, calc(100vw - 2rem)); padding: 1rem; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-lg); background: var(--jl-surface); box-shadow: var(--jl-shadow-md); }
+.change-history-confirm h3 { margin: 0 0 0.5rem; }
+.change-history-confirm p { margin: 0.45rem 0; }
+.change-history-confirm__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
 .calendar-impact-panel {
   position: absolute;
   z-index: 20;
@@ -786,6 +833,10 @@ form button {
 }
 
 @media (max-width: 54rem) {
+  .change-history-backdrop { padding: 0.4rem; }
+  .change-history-dialog { width: calc(100vw - 0.8rem); max-height: 96dvh; }
+  .change-history-dialog__header,.change-history-dialog__body,.change-history-dialog__footer { padding-inline: 0.7rem; }
+  .reschedule-history__dates { grid-template-columns: minmax(0, 1fr); }
   .calendar-impact-panel {
     top: 5rem;
     right: 0.25rem;

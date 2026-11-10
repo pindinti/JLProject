@@ -43,6 +43,15 @@ function repository(): ScheduleRepository {
     listWorkingPlans: vi.fn(async () => []),
     applyCalendarReschedule: vi.fn(async (_ws, _product, _actor, operationId, _calendarVersion,
       _reason, proposals) => ({ status: "updated" as const, count: proposals.length, operationId })),
+    reverseCalendarReschedule: vi.fn(async (_ws, _product, _actor, originalOperationId,
+      operationId) => ({ status: "reversed" as const, count: 2, originalOperationId, operationId })),
+    listCalendarRescheduleHistory: vi.fn(async () => ({ status: "ok" as const, operations: [{
+      operationId: "a1111111-1111-4111-8111-111111111111", changedAt: "2026-11-10T12:00:00.000Z",
+      actorName: "Synthetic Actor", reason: "Synthetic original justification", status: "eligible" as const,
+      reversal: null, activities: [{ activityId: activity, name: "Synthetic activity",
+        previousStart: "2026-11-01", previousEnd: "2026-11-03", newStart: "2026-11-01", newEnd: "2026-11-04",
+        currentStart: "2026-11-01", currentEnd: "2026-11-04" }]
+    }] })),
     updateActivity: vi.fn(async () => ({ status: "ok" as const, value: { ...a, version: 2 } })),
     changeActivityDates: vi.fn(async () => ({ status: "updated" as const,
       activity: { ...a, plannedStart: "2026-11-02", version: 2 } })),
@@ -96,6 +105,8 @@ async function call(input: Request, role: WorkspaceRole | null, repo = repositor
 
 describe("schedule hierarchy API", () => {
   const applyPath = `${base}/calendar-impact/apply`;
+  const originalOperationId = "a1111111-1111-4111-8111-111111111111";
+  const reversePath = `${base}/calendar-reschedules/${originalOperationId}/reverse`;
   const selection = { activityId: activity, version: 3 };
   const planned = { id: activity, disciplineId: discipline, stageId: stage, version: 3,
     planningMode: "working_days" as const, plannedStart: "2026-11-09", plannedEnd: "2026-11-10",
@@ -175,6 +186,96 @@ describe("schedule hierarchy API", () => {
     expect(failed.status).toBe(503);
     expect(await failed.text()).not.toContain("private SQL detail");
   });
+
+  it("reverses one explicit operation with the verified actor and a justification", async () => {
+    const repo = repository();
+    const result = await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "editor", repo);
+    expect(result.status).toBe(200);
+    await expect(result.json()).resolves.toMatchObject({ reversedCount: 2,
+      originalOperationId, operationId: expect.any(String) });
+    expect(repo.reverseCalendarReschedule).toHaveBeenCalledWith(ws, product, actor,
+      originalOperationId, expect.any(String), "Synthetic reversal reason");
+    expect((await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "admin", repo)).status)
+      .toBe(200);
+  });
+
+  it("denies unauthenticated, viewer, inactive, and cross-workspace reversal", async () => {
+    const repo = repository();
+    const payload = { reason: "Synthetic reversal reason" };
+    const anonymous = await handleRequest(request(reversePath, "POST", payload), environment,
+      async () => null, () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+    expect((await call(request(reversePath, "POST", payload), "viewer", repo)).status).toBe(403);
+    expect((await call(request(reversePath, "POST", payload), "editor", repo, false)).status).toBe(403);
+    expect((await call(request(reversePath.replace(ws, otherWs), "POST", payload), "admin", repo)).status).toBe(403);
+    expect(repo.reverseCalendarReschedule).not.toHaveBeenCalled();
+  });
+
+  it("validates reversal input and distinguishes missing, stale, and duplicate operations", async () => {
+    const repo = repository();
+    for (const invalid of [{}, { reason: "short" }, { reason: "Synthetic reversal reason", actorId: actor }])
+      expect((await call(request(reversePath, "POST", invalid), "admin", repo)).status).toBe(400);
+    expect((await call(request(reversePath.replace(originalOperationId, "bad"), "POST",
+      { reason: "Synthetic reversal reason" }), "admin", repo)).status).toBe(400);
+    expect(repo.reverseCalendarReschedule).not.toHaveBeenCalled();
+    vi.mocked(repo.reverseCalendarReschedule).mockResolvedValueOnce({ status: "not_found" })
+      .mockResolvedValueOnce({ status: "stale", activityId: activity })
+      .mockResolvedValueOnce({ status: "already_reversed" });
+    expect((await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "admin", repo)).status).toBe(404);
+    const stale = await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "admin", repo);
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({ code: "activity_changed", activityId: activity });
+    const duplicate = await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "admin", repo);
+    expect(duplicate.status).toBe(409);
+    await expect(duplicate.json()).resolves.toMatchObject({ code: "already_reversed" });
+  });
+
+  it("hides database details when reversal fails", async () => {
+    const repo = repository();
+    vi.mocked(repo.reverseCalendarReschedule).mockRejectedValueOnce(new Error("private SQL detail"));
+    const failed = await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "admin", repo);
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private SQL detail");
+  });
+  it("returns scoped rescheduling history to active members without accepting actor claims", async () => {
+    const repo = repository();
+    const historyPath = `${base}/calendar-reschedules/history`;
+    const result = await call(request(historyPath), "viewer", repo);
+    expect(result.status).toBe(200);
+    expect(result.headers.get("Cache-Control")).toBe("no-store");
+    await expect(result.json()).resolves.toMatchObject({ operations: [{
+      operationId: originalOperationId, actorName: "Synthetic Actor", status: "eligible",
+      reason: "Synthetic original justification", activities: [{ activityId: activity,
+        previousEnd: "2026-11-03", newEnd: "2026-11-04" }]
+    }] });
+    expect(repo.listCalendarRescheduleHistory).toHaveBeenCalledWith(ws, product, actor);
+    expect(repo.reverseCalendarReschedule).not.toHaveBeenCalled();
+    expect((await call(request(`${historyPath}?actorId=${actor}`), "admin", repo)).status).toBe(400);
+  });
+
+  it("denies anonymous, inactive, and cross-workspace rescheduling history reads", async () => {
+    const repo = repository();
+    const historyPath = `${base}/calendar-reschedules/history`;
+    const anonymous = await handleRequest(request(historyPath), environment, async () => null,
+      () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+    expect((await call(request(historyPath), null, repo)).status).toBe(403);
+    expect((await call(request(historyPath), "viewer", repo, false)).status).toBe(403);
+    expect((await call(request(historyPath.replace(ws, otherWs)), "admin", repo)).status).toBe(403);
+    expect(repo.listCalendarRescheduleHistory).not.toHaveBeenCalled();
+  });
+
+  it("maps database history authorization and failure results to safe responses", async () => {
+    const repo = repository();
+    const historyPath = `${base}/calendar-reschedules/history`;
+    vi.mocked(repo.listCalendarRescheduleHistory).mockResolvedValueOnce({ status: "forbidden" });
+    expect((await call(request(historyPath), "admin", repo)).status).toBe(403);
+    vi.mocked(repo.listCalendarRescheduleHistory).mockRejectedValueOnce(new Error("private SQL detail"));
+    const failed = await call(request(historyPath), "admin", repo);
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private SQL detail");
+  });
+
   it("returns scoped read-only calendar impacts to active members", async () => {
     const repo = repository();
     const calendar = calculationCalendar(2, [{

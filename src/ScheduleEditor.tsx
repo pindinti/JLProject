@@ -4,6 +4,7 @@ import { messages } from "./locales/pt-BR";
 import { ColorField } from "./ColorField";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { ScheduleWorkspace } from "./ScheduleWorkspace";
+import { CalendarRescheduleHistoryDialog } from "./CalendarRescheduleHistoryDialog";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
 import { dayNumber } from "../domain/schedule-workspace";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
@@ -115,6 +116,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   const [impactState, setImpactState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [impactData, setImpactData] = useState<CalendarImpactResponse | null>(null);
   const [impactOpen, setImpactOpen] = useState(false);
+  const [rescheduleHistoryOpen, setRescheduleHistoryOpen] = useState(false);
   const [selectedImpactIds, setSelectedImpactIds] = useState<Set<string>>(new Set());
   const [impactReason, setImpactReason] = useState("");
   const [impactConfirmOpen, setImpactConfirmOpen] = useState(false);
@@ -729,6 +731,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
               if (row.kind === "discipline" || row.kind === "stage") toggle(row.id, row.kind);
             }} onEdit={editRow} onAdd={addChild} onAddDiscipline={() => startDiscipline()}
             onRefresh={() => { closeDraft(); void load(false); }} onHistory={openHistory}
+            onRescheduleHistory={() => setRescheduleHistoryOpen(true)}
             onCreateTarget={createTarget} onUpdateTarget={updateTarget} onDeleteTarget={deleteTarget} />
         </>
       )}
@@ -821,7 +824,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
               <label htmlFor="calendar-impact-reason">{messages.calendarImpactReason}</label>
               <textarea id="calendar-impact-reason" value={impactReason} maxLength={2000} rows={3}
                 disabled={impactBusy} onChange={(event) => setImpactReason(event.target.value)} />
-              <p>{messages.calendarImpactReversalUnavailable}</p>
+              <p>{messages.calendarImpactReversalHistoryHint}</p>
               <button type="button" disabled={impactBusy || selectedImpacts.length === 0 ||
                 impactReason.trim().length < 10} onClick={() => {
                   setImpactFeedback("");
@@ -837,7 +840,6 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
           aria-describedby="calendar-impact-confirm-description" className="calendar-impact-confirm">
           <h3 id="calendar-impact-confirm-title">{messages.calendarImpactConfirmTitle}</h3>
           <p id="calendar-impact-confirm-description">{messages.calendarImpactConfirmDescription(selectedImpacts.length)}</p>
-          <p>{messages.calendarImpactReversalUnavailable}</p>
           <div className="calendar-impact-confirm__actions">
             <button type="button" disabled={impactBusy} onClick={() => {
               setImpactConfirmOpen(false);
@@ -849,6 +851,9 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
           </div>
         </div>
       </div>}
+      {rescheduleHistoryOpen && state === "ready" && <CalendarRescheduleHistoryDialog base={base} hierarchy={hierarchy}
+        canEdit={canEdit} onClose={() => setRescheduleHistoryOpen(false)} onAccessLost={onAccessLost}
+        onReversed={async () => { await load(false); await refreshImpacts(); }} />}
       {((draft && canEdit) || historySubject) && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) closeDraft();
       }}><div ref={drawerRef} className="schedule-drawer" role="dialog" aria-modal="true"

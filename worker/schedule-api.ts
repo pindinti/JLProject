@@ -7,11 +7,11 @@ import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
   type CalendarRescheduleProposal, type DisciplineInput, type Mutation, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
-const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|targets|disciplines)(?:\/(.*))?$/;
+const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "calendar_impact" | "calendar_impact_apply" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
-  disciplineId?: string; stageId?: string; activityId?: string; targetId?: string };
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+  disciplineId?: string; stageId?: string; activityId?: string; targetId?: string; operationId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
 function response(body: Record<string, unknown>, status: number) {
@@ -26,6 +26,12 @@ function parseRoute(pathname: string): Route | null {
   if (root === "calendar-impact") return remainder === "apply"
     ? { workspaceId, productId, kind: "calendar_impact_apply" }
     : remainder ? null : { workspaceId, productId, kind: "calendar_impact" };
+  if (root === "calendar-reschedules") {
+    if (remainder === "history") return { workspaceId, productId, kind: "calendar_reschedule_history" };
+    const operation = remainder?.match(/^([^/]+)\/reverse$/);
+    return operation ? { workspaceId, productId, kind: "calendar_reschedule_reverse",
+      operationId: operation[1] } : null;
+  }
   if (root === "targets") return !remainder ? { workspaceId, productId, kind: "targets" }
     : /^[^/]+$/.test(remainder) ? { workspaceId, productId, kind: "target", targetId: remainder } : null;
   const parts = remainder?.split("/") ?? [];
@@ -237,7 +243,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   calendarFactory: (environment: WorkerEnvironment) => CalendarRepository = createCalendarRepository): Promise<Response> {
   const route = parseRoute(new URL(request.url).pathname);
   if (!route) return response({ error: "Não encontrado." }, 404);
-  const ids = [route.workspaceId, route.productId, route.disciplineId, route.stageId, route.activityId, route.targetId]
+  const ids = [route.workspaceId, route.productId, route.disciplineId, route.stageId,
+    route.activityId, route.targetId, route.operationId]
     .filter((item): item is string => item !== undefined);
   if (ids.some((item) => !uuid.test(item))) return response({ error: "Identificador inválido." }, 400);
   const write = request.method !== "GET";
@@ -275,6 +282,16 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       return response({ calendarVersion: calendar.version, impacts }, 200);
     } catch { return response({ error: "Não foi possível verificar o impacto do calendário." }, 503); }
   }
+  if (route.kind === "calendar_reschedule_history" && request.method === "GET") {
+    if (new URL(request.url).search) return response({ error: "Consulta inválida." }, 400);
+    try {
+      const result = await repository.listCalendarRescheduleHistory(ws, productId, identity.subject);
+      if (result.status === "ok") return response({ operations: result.operations }, 200);
+      if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+      if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
+      return response({ error: "Não foi possível consultar o histórico." }, 400);
+    } catch { return response({ error: "Não foi possível carregar o histórico de reprogramações." }, 503); }
+  }
   if (route.kind === "calendar_impact_apply" && request.method === "POST") {
     const value = await body(request);
     const parsed = value && calendarRescheduleInput(value);
@@ -308,6 +325,26 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       if (result.status === "invalid") return response({ error: "Seleção ou justificativa inválida." }, 400);
       return response({ error: "O calendário ou uma atividade mudou. Atualize a prévia e tente novamente." }, 409);
     } catch { return response({ error: "Não foi possível reagendar as atividades. Tente novamente." }, 503); }
+  }
+  if (route.kind === "calendar_reschedule_reverse" && request.method === "POST") {
+    if (new URL(request.url).search) return response({ error: "Consulta inválida." }, 400);
+    const value = await body(request);
+    const reason = value && only(value, ["reason"]) ? label(value["reason"], 2000) : null;
+    if (!reason || reason.length < 10)
+      return response({ error: "Informe uma justificativa de pelo menos 10 caracteres." }, 400);
+    try {
+      const result = await repository.reverseCalendarReschedule(ws, productId, identity.subject,
+        route.operationId!.toLowerCase(), crypto.randomUUID(), reason);
+      if (result.status === "reversed") return response({ reversedCount: result.count,
+        originalOperationId: result.originalOperationId, operationId: result.operationId }, 200);
+      if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+      if (result.status === "not_found") return response({ error: "Reprogramação não encontrada." }, 404);
+      if (result.status === "already_reversed") return response({ error: "Esta reprogramação já foi revertida.",
+        code: "already_reversed" }, 409);
+      if (result.status === "stale") return response({ error: "Uma atividade foi alterada após a reprogramação.",
+        code: "activity_changed", activityId: result.activityId }, 409);
+      return response({ error: "Solicitação de reversão inválida." }, 400);
+    } catch { return response({ error: "Não foi possível reverter a reprogramação. Tente novamente." }, 503); }
   }
   if (route.kind === "targets" && request.method === "GET") {
     return response({ targets: await repository.listTargets(ws, productId) }, 200);

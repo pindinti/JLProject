@@ -17,13 +17,13 @@ type CalendarYearSnapshot = { version: number; exceptions: CalendarExceptionDate
 
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
-  onRefresh, onHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
+  onRefresh, onHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
   onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
-  onAddDiscipline: () => void; onRefresh: () => void;
+  onAddDiscipline: () => void; onRefresh: () => void; onRescheduleHistory: () => void;
   onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
     targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
@@ -219,6 +219,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       <div className="workspace-toolbar-actions">
         {canEdit && <button type="button" onClick={onAddDiscipline}>{messages.addDiscipline}</button>}
         <button type="button" onClick={() => { setCalendarExceptionsByYear({}); onRefresh(); }}>{messages.refreshHierarchy}</button>
+        <button type="button" onClick={onRescheduleHistory}>{messages.calendarRescheduleHistory}</button>
       </div>
       <div className="workspace-zoom" role="group" aria-label={messages.scheduleZoom}>
         {([ ["day", messages.zoomDay], ["week", messages.zoomWeek], ["month", messages.zoomMonth] ] as const).map(([value, label]) =>
