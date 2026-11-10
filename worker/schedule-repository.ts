@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import type { CalendarImpactCandidate } from "../domain/calendar-impact";
 import type { WorkerEnvironment } from "./database";
 
 export interface DisciplineInput {
@@ -61,6 +62,7 @@ export interface ScheduleRepository {
   createStage(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: StageInput): Promise<Mutation<Stage>>;
   updateStage(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: StageInput, version: number): Promise<Mutation<Stage>>;
   listActivities(workspaceId: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]>;
+  listWorkingPlans(workspaceId: string, productId: string): Promise<CalendarImpactCandidate[]>;
   createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
   createWorkingActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string,
     actorId: string, input: WorkingActivityInput): Promise<Mutation<Activity>>;
@@ -338,6 +340,27 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       return value ? { status: "ok", value } : { status: "not_found" };
     },
     listActivities,
+    async listWorkingPlans(ws, productId) {
+      const rows = await sql`SELECT id::text AS id, discipline_id::text AS "disciplineId",
+        stage_id::text AS "stageId", version,
+        to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
+        to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd",
+        working_day_duration AS "workingDayDuration",
+        planning_calendar_version AS "planningCalendarVersion"
+        FROM public.stage_activities
+        WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+          AND planning_mode = 'working_days'
+        ORDER BY id`;
+      return rows.map((row): CalendarImpactCandidate => ({
+        id: text(row["id"]), disciplineId: text(row["disciplineId"]),
+        stageId: text(row["stageId"]), version: Number(row["version"]),
+        planningMode: "working_days", plannedStart: nullable(row["plannedStart"]),
+        plannedEnd: nullable(row["plannedEnd"]),
+        workingDayDuration: row["workingDayDuration"] == null ? null : Number(row["workingDayDuration"]),
+        planningCalendarVersion: row["planningCalendarVersion"] == null
+          ? null : Number(row["planningCalendarVersion"])
+      }));
+    },
     async createActivity(ws, productId, disciplineId, stageId, actorId, input) {
       const rows = await sql`WITH locked_product AS MATERIALIZED (
         SELECT workspace_id, id FROM public.products

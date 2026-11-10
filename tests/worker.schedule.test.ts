@@ -40,6 +40,7 @@ function repository(): ScheduleRepository {
     listStages: vi.fn(async () => [s]), createStage: vi.fn(async () => ({ status: "ok" as const, value: s })),
     updateStage: vi.fn(async () => ({ status: "ok" as const, value: { ...s, version: 2 } })),
     listActivities: vi.fn(async () => [a]), createActivity: vi.fn(async () => ({ status: "ok" as const, value: a })),
+    listWorkingPlans: vi.fn(async () => []),
     updateActivity: vi.fn(async () => ({ status: "ok" as const, value: { ...a, version: 2 } })),
     changeActivityDates: vi.fn(async () => ({ status: "updated" as const,
       activity: { ...a, plannedStart: "2026-11-02", version: 2 } })),
@@ -92,6 +93,62 @@ async function call(input: Request, role: WorkspaceRole | null, repo = repositor
 }
 
 describe("schedule hierarchy API", () => {
+  it("returns scoped read-only calendar impacts to active members", async () => {
+    const repo = repository();
+    const calendar = calculationCalendar(2, [{
+      id: "e1111111-1111-4111-8111-111111111111", kind: "company_shutdown",
+      name: null, municipality: null, description: "Synthetic closure",
+      startDate: "2026-11-10", endDate: "2026-11-10", version: 1
+    }]);
+    vi.mocked(repo.listWorkingPlans).mockResolvedValue([
+      { id: activity, disciplineId: discipline, stageId: stage, version: 3,
+        planningMode: "working_days", plannedStart: "2026-11-09", plannedEnd: "2026-11-10",
+        workingDayDuration: 2, planningCalendarVersion: 1 },
+      { id: targetId, disciplineId: discipline, stageId: stage, version: 1,
+        planningMode: "manual", plannedStart: "2026-11-09", plannedEnd: "2026-11-10",
+        workingDayDuration: null, planningCalendarVersion: null }
+    ]);
+    const path = `${base}/calendar-impact`;
+    const result = await call(request(path), "viewer", repo, true, calendar);
+    expect(result.status).toBe(200);
+    expect(result.headers.get("Cache-Control")).toBe("no-store");
+    await expect(result.json()).resolves.toMatchObject({ calendarVersion: 2, impacts: [{
+      activityId: activity, impact: "date_change", currentEndDate: "2026-11-10",
+      proposedEndDate: "2026-11-11", savedCalendarVersion: 1,
+      skippedDates: [{ date: "2026-11-10" }]
+    }] });
+    expect(repo.listWorkingPlans).toHaveBeenCalledWith(ws, product);
+    expect(calendar.readForCalculation).toHaveBeenCalledWith(ws);
+    expect(repo.changeActivityDates).not.toHaveBeenCalled();
+    expect(repo.changeActivityWorkingPlan).not.toHaveBeenCalled();
+  });
+
+  it("denies unauthenticated, inactive, foreign, invalid, and unknown-product impact reads", async () => {
+    const path = `${base}/calendar-impact`;
+    const repo = repository();
+    const anonymous = await handleRequest(request(path), environment, async () => null,
+      () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+    expect((await call(request(path), null, repo)).status).toBe(403);
+    expect((await call(request(path), "viewer", repo, false)).status).toBe(403);
+    expect((await call(request(path.replace(ws, otherWs)), "admin", repo)).status).toBe(403);
+    expect((await call(request(path.replace(product, "bad")), "admin", repo)).status).toBe(400);
+    expect((await call(request(path), "admin", { ...repo, productExists: async () => false })).status).toBe(404);
+    expect((await call(request(`${path}?actorId=${actor}`), "admin", repo)).status).toBe(400);
+    expect((await call(request(path, "POST", {}), "admin", repo)).status).toBe(405);
+    expect(repo.listWorkingPlans).not.toHaveBeenCalled();
+  });
+
+  it("hides calendar impact calculation and repository failures", async () => {
+    const path = `${base}/calendar-impact`;
+    const repo = repository();
+    const failed = await call(request(path), "editor", {
+      ...repo, listWorkingPlans: async () => { throw new Error("private SQL detail"); }
+    });
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private SQL detail");
+  });
+
   it("scopes read-only targets to an authenticated product member", async () => {
     const repo = repository();
     const path = `${base}/targets`;

@@ -1,15 +1,16 @@
 import { authorizeWorkspace, type MembershipRepository } from "./authorization";
 import { calculateWorkingDayEndDate } from "../domain/working-day-calculation";
+import { detectCalendarImpact } from "../domain/calendar-impact";
 import { createCalendarRepository, type CalendarRepository } from "./calendar-repository";
 import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
   type DisciplineInput, type Mutation, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
-const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|targets|disciplines)(?:\/(.*))?$/;
+const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "calendar_impact" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
   disciplineId?: string; stageId?: string; activityId?: string; targetId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
@@ -22,6 +23,7 @@ function parseRoute(pathname: string): Route | null {
   if (!match) return null;
   const [, workspaceId, productId, root, remainder] = match;
   if (root === "hierarchy") return remainder ? null : { workspaceId, productId, kind: "hierarchy" };
+  if (root === "calendar-impact") return remainder ? null : { workspaceId, productId, kind: "calendar_impact" };
   if (root === "targets") return !remainder ? { workspaceId, productId, kind: "targets" }
     : /^[^/]+$/.test(remainder) ? { workspaceId, productId, kind: "target", targetId: remainder } : null;
   const parts = remainder?.split("/") ?? [];
@@ -234,6 +236,18 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   if (route.kind === "hierarchy" && request.method === "GET") {
     const hierarchy = await repository.getHierarchy(ws, productId);
     return hierarchy ? response({ hierarchy }, 200) : response({ error: "Não encontrado." }, 404);
+  }
+  if (route.kind === "calendar_impact" && request.method === "GET") {
+    if (new URL(request.url).search) return response({ error: "Consulta inválida." }, 400);
+    try {
+      const calendar = await calendarFactory(environment).readForCalculation(ws);
+      const plans = await repository.listWorkingPlans(ws, productId);
+      const impacts = plans.flatMap((plan) => {
+        const impact = detectCalendarImpact(plan, calendar.version, calendar.exceptions);
+        return impact ? [impact] : [];
+      });
+      return response({ calendarVersion: calendar.version, impacts }, 200);
+    } catch { return response({ error: "Não foi possível verificar o impacto do calendário." }, 503); }
   }
   if (route.kind === "targets" && request.method === "GET") {
     return response({ targets: await repository.listTargets(ws, productId) }, 200);
