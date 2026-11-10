@@ -115,8 +115,15 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   const [impactState, setImpactState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [impactData, setImpactData] = useState<CalendarImpactResponse | null>(null);
   const [impactOpen, setImpactOpen] = useState(false);
+  const [selectedImpactIds, setSelectedImpactIds] = useState<Set<string>>(new Set());
+  const [impactReason, setImpactReason] = useState("");
+  const [impactConfirmOpen, setImpactConfirmOpen] = useState(false);
+  const [impactBusy, setImpactBusy] = useState(false);
+  const [impactFeedback, setImpactFeedback] = useState("");
+  const impactSubmitting = useRef(false);
   const impactRequest = useRef(0);
   const impactPanelRef = useRef<HTMLElement>(null);
+  const impactConfirmRef = useRef<HTMLDivElement>(null);
   const impactTriggerRef = useRef<HTMLElement | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -126,6 +133,9 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
 
   const refreshImpacts = useCallback(async () => {
     const requestId = ++impactRequest.current;
+    setSelectedImpactIds(new Set());
+    setImpactConfirmOpen(false);
+    setImpactFeedback("");
     setImpactState("loading");
     setImpactData(null);
     try {
@@ -244,7 +254,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   useEffect(() => { if (historySubject) queueMicrotask(() => void loadHistory(historySubject)); }, [historySubject, loadHistory]);
 
   useEffect(() => {
-    if (!impactOpen) return;
+    if (!impactOpen || impactConfirmOpen) return;
     queueMicrotask(() => impactPanelRef.current?.querySelector<HTMLElement>("button")?.focus());
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -255,7 +265,29 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [impactOpen]);
+  }, [impactOpen, impactConfirmOpen]);
+
+  useEffect(() => {
+    if (!impactConfirmOpen) return;
+    queueMicrotask(() => impactConfirmRef.current?.querySelector<HTMLElement>("button")?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !impactBusy) {
+        event.preventDefault();
+        setImpactConfirmOpen(false);
+        queueMicrotask(() => impactPanelRef.current?.querySelector<HTMLElement>("#calendar-impact-reason")?.focus());
+      }
+      if (event.key !== "Tab" || !impactConfirmRef.current) return;
+      const buttons = [...impactConfirmRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      if (buttons.length === 0) return;
+      if (event.shiftKey && document.activeElement === buttons[0]) {
+        event.preventDefault(); buttons[buttons.length - 1].focus();
+      } else if (!event.shiftKey && document.activeElement === buttons[buttons.length - 1]) {
+        event.preventDefault(); buttons[0].focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [impactConfirmOpen, impactBusy]);
 
   useEffect(() => {
     if (!draft && !historySubject) return;
@@ -583,6 +615,10 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       ?.stages.find((item) => item.id === impact.stageId)
       ?.activities.find((item) => item.id === impact.activityId)
   })), [impactData, hierarchy]);
+  const dateChangingRows = impactRows.filter(({ impact }) => impact.impact === "date_change" &&
+    (impact.proposedStartDate !== impact.currentStartDate || impact.proposedEndDate !== impact.currentEndDate));
+  const versionOnlyRows = impactRows.filter(({ impact }) => impact.impact === "version_only" ||
+    (impact.proposedStartDate === impact.currentStartDate && impact.proposedEndDate === impact.currentEndDate));
   const impactStale = impactRows.some(({ impact, activity }) =>
     !activity || activity.planningMode !== "working_days" ||
     activity.version !== impact.activityVersion ||
@@ -597,6 +633,60 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     impact.proposedStartDate !== impact.currentStartDate || impact.proposedEndDate !== impact.currentEndDate).length;
   const unverifiedCoverageYears = [...new Set(visibleImpacts.flatMap((impact) =>
     impact.optionalDaysVerified ? [] : impact.unverifiedOptionalYears))].sort((left, right) => left - right);
+  const selectableImpacts = visibleImpacts.filter((impact) => impact.impact === "date_change" &&
+    (impact.proposedStartDate !== impact.currentStartDate || impact.proposedEndDate !== impact.currentEndDate));
+  const selectedImpacts = selectableImpacts.filter((impact) => selectedImpactIds.has(impact.activityId));
+
+  async function applyCalendarImpacts() {
+    if (impactSubmitting.current || !canEdit || impactState !== "ready" || impactStale ||
+        !impactData || selectedImpacts.length === 0 || !impactConfirmOpen) return;
+    const reason = impactReason.trim();
+    if (reason.length < 10 || reason.length > 2000 ||
+        Array.from(reason).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
+      setImpactFeedback(messages.calendarImpactReasonRequired);
+      setImpactConfirmOpen(false);
+      return;
+    }
+    impactSubmitting.current = true;
+    setImpactBusy(true);
+    setImpactFeedback("");
+    try {
+      const result = await authenticatedFetch(`${base}/calendar-impact/apply`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ calendarVersion: impactData.calendarVersion, reason,
+          selections: selectedImpacts.map((impact) => ({ activityId: impact.activityId,
+            version: impact.activityVersion })) })
+      });
+      if (result.status === 401 || result.status === 403) {
+        setImpactFeedback(messages.accessDenied);
+        onAccessLost();
+        return;
+      }
+      if (result.status === 409) {
+        setImpactFeedback(messages.calendarImpactApplyStale);
+        setImpactData(null);
+        setImpactState("idle");
+        setSelectedImpactIds(new Set());
+        return;
+      }
+      if (result.status === 400) { setImpactFeedback(messages.calendarImpactApplyInvalid); return; }
+      if (!result.ok) { setImpactFeedback(messages.calendarImpactApplyError); return; }
+      const payload = await result.json() as { changedCount?: number };
+      if (payload.changedCount !== selectedImpacts.length) throw new Error("Invalid reschedule result.");
+      setImpactOpen(false);
+      setSelectedImpactIds(new Set());
+      setImpactReason("");
+      setFeedback(messages.calendarImpactApplySuccess(payload.changedCount));
+      await load(false);
+      queueMicrotask(() => (impactTriggerRef.current?.isConnected
+        ? impactTriggerRef.current : document.querySelector<HTMLElement>(".schedule-breadcrumb"))?.focus());
+    } catch { setImpactFeedback(messages.calendarImpactApplyError); }
+    finally {
+      impactSubmitting.current = false;
+      setImpactBusy(false);
+      setImpactConfirmOpen(false);
+    }
+  }
 
   return (
     <section className="schedule-editor" aria-labelledby="schedule-title">
@@ -644,38 +734,121 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       )}
       {impactOpen && state === "ready" && <aside ref={impactPanelRef} className="calendar-impact-panel"
         role="dialog" aria-labelledby="calendar-impact-title">
-        <div className="calendar-impact-panel__header">
+        <header className="calendar-impact-panel__header">
           <h3 id="calendar-impact-title">{messages.calendarImpactTitle}</h3>
-          <button type="button" onClick={() => {
+          <button type="button" disabled={impactBusy} onClick={() => {
             setImpactOpen(false);
             queueMicrotask(() => impactTriggerRef.current?.focus());
           }}>{messages.calendarImpactLater}</button>
+        </header>
+        <div className="calendar-impact-panel__context">
+          <p>{messages.calendarImpactReadOnly}</p>
+          {impactFeedback && <p role="alert" className="calendar-impact-warning">{impactFeedback}</p>}
+          {impactState === "loading" && <p role="status">{messages.calendarImpactLoading}</p>}
+          {impactState === "error" && <p role="alert">{messages.calendarImpactError}</p>}
+          {impactState === "ready" && impactStale && <p role="alert">{messages.calendarImpactStale}</p>}
+          {impactState === "ready" && !impactStale &&
+            <p className="calendar-impact-panel__version">{messages.calendarImpactSnapshot(impactData?.calendarVersion ?? 0)}</p>}
         </div>
-        <p>{messages.calendarImpactReadOnly}</p>
-        {impactState === "loading" && <p role="status">{messages.calendarImpactLoading}</p>}
-        {impactState === "error" && <p role="alert">{messages.calendarImpactError}</p>}
-        {impactState === "ready" && impactStale && <p role="alert">{messages.calendarImpactStale}</p>}
-        {impactState === "ready" && !impactStale && <>
-          <p className="calendar-impact-panel__version">{messages.calendarImpactSnapshot(impactData?.calendarVersion ?? 0)}</p>
-          <ol className="calendar-impact-list">{impactRows.map(({ impact, activity }) => {
-            const difference = dayNumber(impact.proposedEndDate) - dayNumber(impact.currentEndDate);
-            return <li key={impact.activityId}>
-              <h4>{activity?.name ?? messages.scheduleNotFound}</h4>
-              <span className="calendar-impact-kind">{impact.impact === "date_change"
-                ? messages.calendarImpactDateChange : messages.calendarImpactVersionOnly}</span>
-              <p>{messages.calendarImpactCurrentEnd(formatCivilDate(impact.currentEndDate))}</p>
-              <p>{messages.calendarImpactProposedEnd(formatCivilDate(impact.proposedEndDate))}</p>
-              <p>{messages.calendarImpactDifference(difference)}</p>
-              <p>{messages.calendarImpactVersions(impact.savedCalendarVersion, impact.currentCalendarVersion)}</p>
-              {!impact.optionalDaysVerified && <p className="calendar-impact-warning" role="status">
-                {messages.calendarImpactCoverageWarning(impact.unverifiedOptionalYears.join(", "))}
-              </p>}
-            </li>;
-          })}</ol>
-        </>}
-        <button type="button" onClick={() => void (impactStale ? load(false) : refreshImpacts())}
-          disabled={impactState === "loading"}>{messages.calendarImpactRefresh}</button>
+        {impactState === "ready" && !impactStale && <div className="calendar-impact-list-region"
+          role="region" aria-label={messages.calendarImpactDateChangesHeading} tabIndex={0}>
+          {canEdit && selectableImpacts.length > 0 && <div className="calendar-impact-selection">
+            <label className="calendar-impact-selection__label">
+              <input type="checkbox" checked={selectedImpacts.length === selectableImpacts.length}
+              disabled={impactBusy} onChange={(event) => setSelectedImpactIds(event.target.checked
+                  ? new Set(selectableImpacts.map((impact) => impact.activityId)) : new Set())} />
+              <span>{messages.calendarImpactSelectAll}</span>
+            </label>
+            <span className="calendar-impact-selection__count" aria-live="polite">
+              {messages.calendarImpactSelectionCount(selectedImpacts.length, selectableImpacts.length)}
+            </span>
+          </div>}
+          <ol className="calendar-impact-list" aria-label={messages.calendarImpactDateChangesHeading}>
+            {dateChangingRows.map(({ impact, activity }) => {
+              const difference = dayNumber(impact.proposedEndDate) - dayNumber(impact.currentEndDate);
+              return <li key={impact.activityId}>
+                <h4>{canEdit && impact.impact === "date_change" &&
+                  (impact.proposedStartDate !== impact.currentStartDate ||
+                    impact.proposedEndDate !== impact.currentEndDate) ? <label className="calendar-impact-activity">
+                  <input type="checkbox" checked={selectedImpactIds.has(impact.activityId)} disabled={impactBusy}
+                    onChange={(event) => setSelectedImpactIds((previous) => {
+                      const next = new Set(previous);
+                      if (event.target.checked) next.add(impact.activityId); else next.delete(impact.activityId);
+                      return next;
+                    })} />
+                  <span className="calendar-impact-activity__name">{activity?.name ?? messages.scheduleNotFound}</span>
+                </label> : <span className="calendar-impact-activity__name">
+                  {activity?.name ?? messages.scheduleNotFound}
+                </span>}</h4>
+                <span className="calendar-impact-kind">{messages.calendarImpactDateChange}</span>
+                <div className="calendar-impact-dates">
+                  <p>{messages.calendarImpactCurrentEnd(formatCivilDate(impact.currentEndDate))}</p>
+                  <p>{messages.calendarImpactProposedEnd(formatCivilDate(impact.proposedEndDate))}</p>
+                </div>
+                <div className="calendar-impact-meta">
+                  <p>{messages.calendarImpactDifference(difference)}</p>
+                  <p>{messages.calendarImpactVersions(impact.savedCalendarVersion, impact.currentCalendarVersion)}</p>
+                </div>
+                {!impact.optionalDaysVerified && <p className="calendar-impact-warning" role="status">
+                  {messages.calendarImpactCoverageWarning(impact.unverifiedOptionalYears.join(", "))}
+                </p>}
+              </li>;
+            })}
+          </ol>
+          {versionOnlyRows.length > 0 && <details className="calendar-impact-version-only">
+            <summary>{messages.calendarImpactVersionOnlyCount(versionOnlyRows.length)}</summary>
+            <ol className="calendar-impact-version-only__list">
+              {versionOnlyRows.map(({ impact, activity }) => <li key={impact.activityId}>
+                <h4 className="calendar-impact-activity__name">{activity?.name ?? messages.scheduleNotFound}</h4>
+                <p className="calendar-impact-kind">{messages.calendarImpactVersionOnly}</p>
+                <div className="calendar-impact-dates">
+                  <p>{messages.calendarImpactCurrentEnd(formatCivilDate(impact.currentEndDate))}</p>
+                  <p>{messages.calendarImpactProposedEnd(formatCivilDate(impact.proposedEndDate))}</p>
+                </div>
+                <div className="calendar-impact-meta">
+                  <p>{messages.calendarImpactVersions(impact.savedCalendarVersion, impact.currentCalendarVersion)}</p>
+                </div>
+                {!impact.optionalDaysVerified && <p className="calendar-impact-warning" role="status">
+                  {messages.calendarImpactCoverageWarning(impact.unverifiedOptionalYears.join(", "))}
+                </p>}
+              </li>)}
+            </ol>
+          </details>}
+        </div>}
+        <footer className="calendar-impact-panel__footer">
+          {impactState === "ready" && !impactStale && canEdit && selectableImpacts.length > 0 &&
+            <div className="calendar-impact-apply">
+              <label htmlFor="calendar-impact-reason">{messages.calendarImpactReason}</label>
+              <textarea id="calendar-impact-reason" value={impactReason} maxLength={2000} rows={3}
+                disabled={impactBusy} onChange={(event) => setImpactReason(event.target.value)} />
+              <p>{messages.calendarImpactReversalUnavailable}</p>
+              <button type="button" disabled={impactBusy || selectedImpacts.length === 0 ||
+                impactReason.trim().length < 10} onClick={() => {
+                  setImpactFeedback("");
+                  setImpactConfirmOpen(true);
+                }}>{messages.calendarImpactApply}</button>
+            </div>}
+          <button type="button" onClick={() => void (impactStale ? load(false) : refreshImpacts())}
+            disabled={impactState === "loading" || impactBusy}>{messages.calendarImpactRefresh}</button>
+        </footer>
       </aside>}
+      {impactConfirmOpen && impactOpen && <div className="calendar-impact-confirm-backdrop">
+        <div ref={impactConfirmRef} role="alertdialog" aria-modal="true" aria-labelledby="calendar-impact-confirm-title"
+          aria-describedby="calendar-impact-confirm-description" className="calendar-impact-confirm">
+          <h3 id="calendar-impact-confirm-title">{messages.calendarImpactConfirmTitle}</h3>
+          <p id="calendar-impact-confirm-description">{messages.calendarImpactConfirmDescription(selectedImpacts.length)}</p>
+          <p>{messages.calendarImpactReversalUnavailable}</p>
+          <div className="calendar-impact-confirm__actions">
+            <button type="button" disabled={impactBusy} onClick={() => {
+              setImpactConfirmOpen(false);
+              queueMicrotask(() => impactPanelRef.current?.querySelector<HTMLElement>("#calendar-impact-reason")?.focus());
+            }}>{messages.cancel}</button>
+            <button type="button" disabled={impactBusy} onClick={() => void applyCalendarImpacts()}>
+              {impactBusy ? messages.calendarImpactApplying : messages.calendarImpactConfirm}
+            </button>
+          </div>
+        </div>
+      </div>}
       {((draft && canEdit) || historySubject) && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) closeDraft();
       }}><div ref={drawerRef} className="schedule-drawer" role="dialog" aria-modal="true"

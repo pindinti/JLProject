@@ -57,6 +57,185 @@ function setupImpacts(impacts: ActivityCalendarImpact[], tree: { productId: stri
 }
 
 describe("schedule editor", () => {
+  it("lets editors select date changes, excludes version-only rows, and submits only IDs and versions after confirmation", async () => {
+    const second = { ...workingActivity, id: "02eb3d51-f256-4b9a-b939-a44ec2149906", name: "Second activity" };
+    const versionOnly = { ...workingActivity, id: "4c3c7b16-9ff4-41f7-8835-11b2b26966dd", name: "Version-only activity" };
+    const tree = { productId: product.id, disciplines: [{ ...discipline, stages: [{ ...stage,
+      activities: [workingActivity, second, versionOnly] }] }] };
+    setupImpacts([dateImpact, { ...dateImpact, activityId: second.id },
+      { ...dateImpact, activityId: versionOnly.id, impact: "version_only",
+        proposedEndDate: dateImpact.currentEndDate }], tree);
+    mount("editor");
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog", { name: "Prévia de impactos do calendário" });
+    expect(within(panel).getByText("0 de 2 selecionadas")).toBeInTheDocument();
+    expect(within(panel).getAllByText(/pontos facultativos não está verificada/)).toHaveLength(3);
+    expect(within(panel).getByText("A reversão ainda não está disponível nesta interface.")).toBeInTheDocument();
+    expect(within(panel).getByText("Version-only activity").closest("li")?.querySelector("input")).toBeNull();
+    const apply = within(panel).getByRole("button", { name: "Reprogramar selecionadas" });
+    expect(apply).toBeDisabled();
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Synthetic activity" }));
+    expect(within(panel).getByText("1 de 2 selecionadas")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Selecionar todas" }));
+    expect(within(panel).getByText("2 de 2 selecionadas")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Second activity" }));
+    expect(within(panel).getByText("1 de 2 selecionadas")).toBeInTheDocument();
+    fireEvent.change(within(panel).getByLabelText(/Justificativa da alteração/),
+      { target: { value: "Ajuste sintético do calendário" } });
+    fireEvent.click(apply);
+    const dialog = screen.getByRole("alertdialog", { name: "Confirmar reprogramação" });
+    expect(within(dialog).getByText(/Reprogramar 1 atividade selecionada/)).toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact/apply"))).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact/apply"))).toHaveLength(0);
+    fireEvent.click(apply);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirmar reprogramação" }));
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact/apply"))).toHaveLength(1));
+    const call = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/calendar-impact/apply"))!;
+    expect(call[1]).toMatchObject({ method: "POST" });
+    expect(JSON.parse(call[1].body as string)).toEqual({ calendarVersion: 2,
+      reason: "Ajuste sintético do calendário", selections: [{ activityId: activity.id, version: 3 }] });
+  });
+
+  it("keeps impact review read-only for viewers", async () => {
+    setupImpacts([dateImpact]);
+    mount("viewer");
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog");
+    expect(within(panel).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Reprogramar selecionadas" })).not.toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Agora não" })).toBeInTheDocument();
+  });
+
+  it("renders impact activities as full-width labels with a separate checkbox column", async () => {
+    const second = { ...workingActivity, id: "02eb3d51-f256-4b9a-b939-a44ec2149906", name: "Second synthetic activity" };
+    const versionOnly = { ...workingActivity, id: "4c3c7b16-9ff4-41f7-8835-11b2b26966dd", name: "Version-only activity" };
+    const tree = { productId: product.id, disciplines: [{ ...discipline, stages: [{ ...stage,
+      activities: [workingActivity, second, versionOnly] }] }] };
+    setupImpacts([dateImpact, { ...dateImpact, activityId: second.id },
+      { ...dateImpact, activityId: versionOnly.id, impact: "version_only",
+        proposedStartDate: dateImpact.currentStartDate, proposedEndDate: dateImpact.currentEndDate }], tree);
+    mount("editor");
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog", { name: "Prévia de impactos do calendário" });
+    const listRegion = within(panel).getByRole("region");
+    const rows = panel.querySelectorAll(".calendar-impact-list > li");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const label = row.querySelector("h4 label.calendar-impact-activity");
+      expect(label).toBeInTheDocument();
+      const checkbox = label?.querySelector("input[type=checkbox]");
+      const title = label?.querySelector(".calendar-impact-activity__name");
+      expect(checkbox).toBeInTheDocument();
+      expect(title).toBeInTheDocument();
+      expect(label?.children).toHaveLength(2);
+      expect(label?.children[0]).toBe(checkbox);
+      expect(checkbox?.nextElementSibling).toBe(title);
+      expect(row.querySelectorAll(".calendar-impact-dates > p")).toHaveLength(2);
+      expect(row.querySelector(".calendar-impact-dates")).toHaveTextContent("Término atual: 10/11/2026");
+      expect(row.querySelector(".calendar-impact-dates")).toHaveTextContent("Término proposto: 11/11/2026");
+      expect(row.querySelector(".calendar-impact-meta")).toBeInTheDocument();
+      expect(row.querySelector(".calendar-impact-meta")).toHaveTextContent("Versão do calendário: 1 → 2");
+      expect(row.querySelector(".calendar-impact-warning")).toHaveTextContent("2026");
+    }
+    expect(listRegion).toHaveAttribute("tabindex", "0");
+    const selection = panel.querySelector(".calendar-impact-selection");
+    expect(selection?.children).toHaveLength(2);
+    expect(selection?.querySelector("label")).toHaveTextContent("Selecionar todas");
+    expect(selection?.querySelector("label input + span")).toBeInTheDocument();
+    expect(selection?.querySelector(".calendar-impact-selection__count")).toHaveTextContent("0 de 2 selecionadas");
+    const versionOnlySection = panel.querySelector(".calendar-impact-version-only");
+    expect(versionOnlySection).toBeInTheDocument();
+    expect(versionOnlySection).not.toHaveAttribute("open");
+    expect(versionOnlySection?.querySelector("summary")).toHaveTextContent(/1\)/);
+    expect(versionOnlySection?.querySelector("li input[type=checkbox]")).toBeNull();
+    expect(panel.querySelectorAll(".calendar-impact-version-only__list > li")).toHaveLength(1);
+    const footer = panel.querySelector(".calendar-impact-panel__footer");
+    expect(footer?.querySelector("textarea#calendar-impact-reason")).toBeInTheDocument();
+    expect(footer?.querySelector("button")).toHaveTextContent("Reprogramar selecionadas");
+  });
+
+  it("waits for server success before refreshing dates and blocks duplicate submissions", async () => {
+    setupImpacts([dateImpact]);
+    const fallback = api.fetch.getMockImplementation()!;
+    let resolveApply!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { resolveApply = resolve; });
+    let changed = false;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/calendar-impact/apply")) return pending;
+      if (path.endsWith("/hierarchy") && changed) return Promise.resolve(json({ hierarchy: {
+        productId: product.id, disciplines: [{ ...discipline, stages: [{ ...stage,
+          activities: [{ ...workingActivity, plannedEnd: "2026-11-11", version: 4,
+            planningCalendarVersion: 2 }] }] }] } }));
+      if (path.endsWith("/calendar-impact") && changed) return Promise.resolve(json({ calendarVersion: 2, impacts: [] }));
+      return fallback(path, options);
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog");
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Synthetic activity" }));
+    fireEvent.change(within(panel).getByLabelText(/Justificativa da alteração/),
+      { target: { value: "Ajuste sintético do calendário" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Reprogramar selecionadas" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirmar reprogramação" }));
+    expect(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Reprogramando…" })).toBeDisabled();
+    expect(within(panel).getByText("Término atual: 10/11/2026")).toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact/apply"))).toHaveLength(1);
+    changed = true;
+    resolveApply(json({ changedCount: 1, operationId: "synthetic" }));
+    expect(await screen.findByText("1 atividade reprogramada com registro de auditoria.")).toBeInTheDocument();
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy")).length)
+      .toBeGreaterThan(1));
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact")).length)
+      .toBeGreaterThan(1));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("invalidates stale proposals and reports authorization loss", async () => {
+    setupImpacts([dateImpact]);
+    const fallback = api.fetch.getMockImplementation()!;
+    let applyStatus = 409;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) =>
+      path.endsWith("/calendar-impact/apply") ? Promise.resolve(json({}, applyStatus)) : fallback(path, options));
+    const onAccessLost = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog");
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Synthetic activity" }));
+    fireEvent.change(within(panel).getByLabelText(/Justificativa da alteração/),
+      { target: { value: "Ajuste sintético do calendário" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Reprogramar selecionadas" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirmar reprogramação" }));
+    expect(await within(panel).findByText("O calendário ou uma atividade mudou. Atualize a prévia antes de tentar novamente.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("checkbox")).not.toBeInTheDocument();
+    applyStatus = 403;
+    fireEvent.click(within(panel).getByRole("button", { name: "Atualizar prévia" }));
+    fireEvent.click(await within(panel).findByRole("checkbox", { name: "Synthetic activity" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Reprogramar selecionadas" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirmar reprogramação" }));
+    await waitFor(() => expect(onAccessLost).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the preview and selection available after a temporary apply failure", async () => {
+    setupImpacts([dateImpact]);
+    const fallback = api.fetch.getMockImplementation()!;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) =>
+      path.endsWith("/calendar-impact/apply") ? Promise.reject(new Error("network unavailable"))
+        : fallback(path, options));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog");
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Synthetic activity" }));
+    fireEvent.change(within(panel).getByLabelText(/Justificativa da alteração/),
+      { target: { value: "Ajuste sintético do calendário" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Reprogramar selecionadas" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirmar reprogramação" }));
+    expect(await within(panel).findByText("Não foi possível reprogramar as atividades. Tente novamente.")).toBeInTheDocument();
+    expect(within(panel).getByRole("checkbox", { name: "Synthetic activity" })).toBeChecked();
+    expect(within(panel).getByText("Término atual: 10/11/2026")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy"))).toHaveLength(1);
+  });
   it("reviews date and version impacts without writing or overlaying manual activities", async () => {
     const manual = { ...activity, id: "4c3c7b16-9ff4-41f7-8835-11b2b26966dd", name: "Manual activity" };
     const second = { ...workingActivity, id: "02eb3d51-f256-4b9a-b939-a44ec2149906",

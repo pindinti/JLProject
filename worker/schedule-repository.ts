@@ -43,6 +43,13 @@ export type DateChangeResult = { status: "updated" | "unchanged"; activity: Acti
   { status: "not_found" | "stale" | "invalid" | "forbidden" };
 export type WorkingPlanResult = { status: "updated" | "unchanged"; activity: Activity } |
   { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
+export interface CalendarRescheduleProposal {
+  activityId: string; disciplineId: string; stageId: string; expectedVersion: number;
+  startDate: string; currentEndDate: string; proposedEndDate: string;
+  workingDays: number; savedCalendarVersion: number;
+}
+export type CalendarRescheduleResult = { status: "updated"; count: number; operationId: string } |
+  { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
 export type Mutation<T> = { status: "ok"; value: T } |
   { status: "not_found" | "duplicate" | "stale" | "stale_calendar" | "conflict" | "invalid" | "forbidden" };
 
@@ -63,6 +70,9 @@ export interface ScheduleRepository {
   updateStage(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: StageInput, version: number): Promise<Mutation<Stage>>;
   listActivities(workspaceId: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]>;
   listWorkingPlans(workspaceId: string, productId: string): Promise<CalendarImpactCandidate[]>;
+  applyCalendarReschedule(workspaceId: string, productId: string, actorId: string,
+    operationId: string, calendarVersion: number, reason: string,
+    proposals: CalendarRescheduleProposal[]): Promise<CalendarRescheduleResult>;
   createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
   createWorkingActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string,
     actorId: string, input: WorkingActivityInput): Promise<Mutation<Activity>>;
@@ -360,6 +370,17 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         planningCalendarVersion: row["planningCalendarVersion"] == null
           ? null : Number(row["planningCalendarVersion"])
       }));
+    },
+    async applyCalendarReschedule(ws, productId, actorId, operationId, calendarVersion, reason, proposals) {
+      const rows = await sql`SELECT public.apply_calendar_reschedule(
+        ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
+        ${calendarVersion}::bigint, ${reason}, ${JSON.stringify(proposals)}::jsonb) AS result`;
+      const result = rows[0]?.["result"] as { status?: string; count?: number } | undefined;
+      if (result?.status === "updated" && result.count === proposals.length)
+        return { status: "updated", count: result.count, operationId };
+      if (result && ["not_found", "stale", "stale_calendar", "invalid", "forbidden"].includes(result.status ?? ""))
+        return { status: result.status as "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
+      throw new Error("Unexpected calendar reschedule result.");
     },
     async createActivity(ws, productId, disciplineId, stageId, actorId, input) {
       const rows = await sql`WITH locked_product AS MATERIALIZED (

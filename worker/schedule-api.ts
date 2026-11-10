@@ -5,12 +5,12 @@ import { createCalendarRepository, type CalendarRepository } from "./calendar-re
 import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
-  type DisciplineInput, type Mutation, type ScheduleRepository, type StageInput } from "./schedule-repository";
+  type CalendarRescheduleProposal, type DisciplineInput, type Mutation, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "calendar_impact" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "calendar_impact" | "calendar_impact_apply" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
   disciplineId?: string; stageId?: string; activityId?: string; targetId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
@@ -23,7 +23,9 @@ function parseRoute(pathname: string): Route | null {
   if (!match) return null;
   const [, workspaceId, productId, root, remainder] = match;
   if (root === "hierarchy") return remainder ? null : { workspaceId, productId, kind: "hierarchy" };
-  if (root === "calendar-impact") return remainder ? null : { workspaceId, productId, kind: "calendar_impact" };
+  if (root === "calendar-impact") return remainder === "apply"
+    ? { workspaceId, productId, kind: "calendar_impact_apply" }
+    : remainder ? null : { workspaceId, productId, kind: "calendar_impact" };
   if (root === "targets") return !remainder ? { workspaceId, productId, kind: "targets" }
     : /^[^/]+$/.test(remainder) ? { workspaceId, productId, kind: "target", targetId: remainder } : null;
   const parts = remainder?.split("/") ?? [];
@@ -169,6 +171,30 @@ function workingPlanInput(value: Record<string, unknown>): {
     calendarVersion: Number(value["calendarVersion"]), reason, version: Number(value["version"]) };
 }
 
+function calendarRescheduleInput(value: Record<string, unknown>):
+  { calendarVersion: number; reason: string; selections: { activityId: string; version: number }[] } | null {
+  if (!only(value, ["calendarVersion", "reason", "selections"]) ||
+      !Number.isSafeInteger(value["calendarVersion"]) || Number(value["calendarVersion"]) < 1 ||
+      !Array.isArray(value["selections"]) || value["selections"].length < 1 ||
+      value["selections"].length > 50) return null;
+  const reason = label(value["reason"], 2000);
+  if (!reason || reason.length < 10) return null;
+  const selections = value["selections"] as unknown[];
+  const seen = new Set<string>();
+  const parsed: { activityId: string; version: number }[] = [];
+  for (const selection of selections) {
+    if (!selection || typeof selection !== "object" || Array.isArray(selection)) return null;
+    const item = selection as Record<string, unknown>;
+    if (!only(item, ["activityId", "version"]) || typeof item["activityId"] !== "string" ||
+        !uuid.test(item["activityId"]) || !version(item["version"])) return null;
+    const activityId = item["activityId"].toLowerCase();
+    if (seen.has(activityId)) return null;
+    seen.add(activityId);
+    parsed.push({ activityId, version: item["version"] as number });
+  }
+  return { calendarVersion: Number(value["calendarVersion"]), reason, selections: parsed };
+}
+
 function targetInput(value: Record<string, unknown>, editing: boolean):
   { input: { name: string; description: string | null; targetDate: string; color: string };
     version?: number; reason?: string | null } | null {
@@ -248,6 +274,40 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       });
       return response({ calendarVersion: calendar.version, impacts }, 200);
     } catch { return response({ error: "Não foi possível verificar o impacto do calendário." }, 503); }
+  }
+  if (route.kind === "calendar_impact_apply" && request.method === "POST") {
+    const value = await body(request);
+    const parsed = value && calendarRescheduleInput(value);
+    if (!parsed) return response({ error: "Selecione atividades válidas e informe uma justificativa de pelo menos 10 caracteres." }, 400);
+    try {
+      const calendar = await calendarFactory(environment).readForCalculation(ws);
+      if (calendar.version !== parsed.calendarVersion)
+        return response({ error: "O calendário mudou. Atualize a prévia e tente novamente." }, 409);
+      const plans = await repository.listWorkingPlans(ws, productId);
+      const byId = new Map(plans.map((plan) => [plan.id.toLowerCase(), plan]));
+      const proposals: CalendarRescheduleProposal[] = [];
+      for (const selection of parsed.selections) {
+        const plan = byId.get(selection.activityId);
+        if (!plan) return response({ error: "A atividade selecionada não está disponível para reagendamento." }, 409);
+        if (plan.version !== selection.version)
+          return response({ error: "A atividade foi alterada. Atualize a prévia e tente novamente." }, 409);
+        const impact = detectCalendarImpact(plan, calendar.version, calendar.exceptions);
+        if (!impact || impact.impact !== "date_change")
+          return response({ error: "A seleção não contém uma alteração de data. Atualize a prévia." }, 409);
+        proposals.push({ activityId: impact.activityId, disciplineId: impact.disciplineId,
+          stageId: impact.stageId, expectedVersion: impact.activityVersion,
+          startDate: impact.currentStartDate, currentEndDate: impact.currentEndDate,
+          proposedEndDate: impact.proposedEndDate, workingDays: impact.workingDays,
+          savedCalendarVersion: impact.savedCalendarVersion });
+      }
+      const result = await repository.applyCalendarReschedule(ws, productId, identity.subject,
+        crypto.randomUUID(), calendar.version, parsed.reason, proposals);
+      if (result.status === "updated") return response({ changedCount: result.count, operationId: result.operationId }, 200);
+      if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+      if (result.status === "not_found") return response({ error: "Produto ou atividade não encontrado." }, 404);
+      if (result.status === "invalid") return response({ error: "Seleção ou justificativa inválida." }, 400);
+      return response({ error: "O calendário ou uma atividade mudou. Atualize a prévia e tente novamente." }, 409);
+    } catch { return response({ error: "Não foi possível reagendar as atividades. Tente novamente." }, 503); }
   }
   if (route.kind === "targets" && request.method === "GET") {
     return response({ targets: await repository.listTargets(ws, productId) }, 200);

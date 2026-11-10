@@ -41,6 +41,8 @@ function repository(): ScheduleRepository {
     updateStage: vi.fn(async () => ({ status: "ok" as const, value: { ...s, version: 2 } })),
     listActivities: vi.fn(async () => [a]), createActivity: vi.fn(async () => ({ status: "ok" as const, value: a })),
     listWorkingPlans: vi.fn(async () => []),
+    applyCalendarReschedule: vi.fn(async (_ws, _product, _actor, operationId, _calendarVersion,
+      _reason, proposals) => ({ status: "updated" as const, count: proposals.length, operationId })),
     updateActivity: vi.fn(async () => ({ status: "ok" as const, value: { ...a, version: 2 } })),
     changeActivityDates: vi.fn(async () => ({ status: "updated" as const,
       activity: { ...a, plannedStart: "2026-11-02", version: 2 } })),
@@ -93,6 +95,86 @@ async function call(input: Request, role: WorkspaceRole | null, repo = repositor
 }
 
 describe("schedule hierarchy API", () => {
+  const applyPath = `${base}/calendar-impact/apply`;
+  const selection = { activityId: activity, version: 3 };
+  const planned = { id: activity, disciplineId: discipline, stageId: stage, version: 3,
+    planningMode: "working_days" as const, plannedStart: "2026-11-09", plannedEnd: "2026-11-10",
+    workingDayDuration: 2, planningCalendarVersion: 1 };
+  const closure: CalendarException = { id: "e1111111-1111-4111-8111-111111111111",
+    kind: "company_shutdown", name: null, municipality: null, description: "Synthetic closure",
+    startDate: "2026-11-10", endDate: "2026-11-10", version: 1 };
+
+  it("applies only explicit recalculated date changes with a server identity and reason", async () => {
+    const repo = repository();
+    vi.mocked(repo.listWorkingPlans).mockResolvedValue([planned]);
+    const result = await call(request(applyPath, "POST", { calendarVersion: 2,
+      reason: "Synthetic calendar adjustment", selections: [selection] }), "editor", repo,
+    true, calculationCalendar(2, [closure]));
+    expect(result.status).toBe(200);
+    await expect(result.json()).resolves.toMatchObject({ changedCount: 1 });
+    expect(repo.applyCalendarReschedule).toHaveBeenCalledWith(ws, product, actor,
+      expect.any(String), 2, "Synthetic calendar adjustment", [{
+        activityId: activity, disciplineId: discipline, stageId: stage, expectedVersion: 3,
+        startDate: "2026-11-09", currentEndDate: "2026-11-10",
+        proposedEndDate: "2026-11-11", workingDays: 2, savedCalendarVersion: 1
+      }]);
+  });
+
+  it("denies unauthenticated, viewer, inactive, and foreign-workspace apply requests", async () => {
+    const repo = repository();
+    const payload = { calendarVersion: 2, reason: "Synthetic calendar adjustment", selections: [selection] };
+    const anonymous = await handleRequest(request(applyPath, "POST", payload), environment,
+      async () => null, () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+    expect((await call(request(applyPath, "POST", payload), "viewer", repo)).status).toBe(403);
+    expect((await call(request(applyPath, "POST", payload), "editor", repo, false)).status).toBe(403);
+    expect((await call(request(applyPath.replace(ws, otherWs), "POST", payload), "admin", repo)).status).toBe(403);
+    expect(repo.applyCalendarReschedule).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid selections, stale versions, calendars, and version-only proposals", async () => {
+    const repo = repository();
+    vi.mocked(repo.listWorkingPlans).mockResolvedValue([planned]);
+    const payload = { calendarVersion: 2, reason: "Synthetic calendar adjustment", selections: [selection] };
+    for (const invalid of [
+      { ...payload, reason: "short" }, { ...payload, selections: [] },
+      { ...payload, selections: [selection, selection] },
+      { ...payload, selections: [{ ...selection, actorId: actor }] },
+      { ...payload, selections: [{ ...selection, activityId: "bad" }] }
+    ]) expect((await call(request(applyPath, "POST", invalid), "admin", repo)).status).toBe(400);
+    expect((await call(request(applyPath, "POST", { ...payload, calendarVersion: 1 }),
+      "admin", repo)).status).toBe(409);
+    expect((await call(request(applyPath, "POST", { ...payload, selections: [{ ...selection, version: 2 }] }),
+      "admin", repo)).status).toBe(409);
+    expect((await call(request(applyPath, "POST", payload), "admin", repo)).status).toBe(409);
+    expect(repo.applyCalendarReschedule).not.toHaveBeenCalled();
+  });
+
+  it("does not submit a partial batch when one selected activity is manual or stale", async () => {
+    const repo = repository();
+    vi.mocked(repo.listWorkingPlans).mockResolvedValue([planned]);
+    const payload = { calendarVersion: 2, reason: "Synthetic calendar adjustment",
+      selections: [selection, { activityId: targetId, version: 1 }] };
+    const result = await call(request(applyPath, "POST", payload), "admin", repo,
+      true, calculationCalendar(2, [closure]));
+    expect(result.status).toBe(409);
+    expect(repo.applyCalendarReschedule).not.toHaveBeenCalled();
+  });
+
+  it("returns conflict for concurrent database edits and hides write failures", async () => {
+    const repo = repository();
+    vi.mocked(repo.listWorkingPlans).mockResolvedValue([planned]);
+    const payload = { calendarVersion: 2, reason: "Synthetic calendar adjustment", selections: [selection] };
+    vi.mocked(repo.applyCalendarReschedule).mockResolvedValueOnce({ status: "stale" });
+    const conflict = await call(request(applyPath, "POST", payload), "admin", repo,
+      true, calculationCalendar(2, [closure]));
+    expect(conflict.status).toBe(409);
+    vi.mocked(repo.applyCalendarReschedule).mockRejectedValueOnce(new Error("private SQL detail"));
+    const failed = await call(request(applyPath, "POST", payload), "admin", repo,
+      true, calculationCalendar(2, [closure]));
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private SQL detail");
+  });
   it("returns scoped read-only calendar impacts to active members", async () => {
     const repo = repository();
     const calendar = calculationCalendar(2, [{
