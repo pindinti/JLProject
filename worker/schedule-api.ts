@@ -5,12 +5,13 @@ import { createCalendarRepository, type CalendarRepository } from "./calendar-re
 import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
-  type CalendarRescheduleProposal, type DisciplineInput, type Mutation, type ScheduleRepository, type StageInput } from "./schedule-repository";
+  type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type Mutation,
+  type ScheduleRepository, type StageInput } from "./schedule-repository";
 
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
   disciplineId?: string; stageId?: string; activityId?: string; targetId?: string; operationId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
@@ -22,7 +23,10 @@ function parseRoute(pathname: string): Route | null {
   const match = pathname.match(prefix);
   if (!match) return null;
   const [, workspaceId, productId, root, remainder] = match;
-  if (root === "hierarchy") return remainder ? null : { workspaceId, productId, kind: "hierarchy" };
+  if (root === "hierarchy") return remainder === "deletion-preview"
+    ? { workspaceId, productId, kind: "deletion_preview" }
+    : remainder === "deletions" ? { workspaceId, productId, kind: "deletion_execute" }
+      : remainder ? null : { workspaceId, productId, kind: "hierarchy" };
   if (root === "calendar-impact") return remainder === "apply"
     ? { workspaceId, productId, kind: "calendar_impact_apply" }
     : remainder ? null : { workspaceId, productId, kind: "calendar_impact" };
@@ -269,6 +273,45 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   if (route.kind === "hierarchy" && request.method === "GET") {
     const hierarchy = await repository.getHierarchy(ws, productId);
     return hierarchy ? response({ hierarchy }, 200) : response({ error: "Não encontrado." }, 404);
+  }
+  if (route.kind === "deletion_preview" && request.method === "GET") {
+    if (membership.role === "viewer") return response({ error: "Acesso não autorizado." }, 403);
+    const params = new URL(request.url).searchParams;
+    const kind = params.get("kind");
+    const targetId = params.get("targetId");
+    if (params.size !== 2 || !["activity", "stage", "discipline"].includes(kind ?? "") ||
+        !targetId || !uuid.test(targetId))
+      return response({ error: "Informe um item válido para a prévia de exclusão." }, 400);
+    try {
+      const result = await repository.previewDeletion(ws, productId, identity.subject,
+        kind as DeletionKind, targetId.toLowerCase());
+      if (result.status === "ok") return response({ counts: result.counts, fingerprint: result.fingerprint }, 200);
+      if (result.status === "not_found") return response({ error: "Item não encontrado." }, 404);
+      if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+      return response({ error: "Consulta inválida." }, 400);
+    } catch { return response({ error: "Não foi possível consultar o impacto da exclusão." }, 503); }
+  }
+  if (route.kind === "deletion_execute" && request.method === "POST") {
+    const value = await body(request);
+    const kind = value?.["kind"];
+    const targetId = value?.["targetId"];
+    const fingerprint = value?.["fingerprint"];
+    const reason = value && label(value["reason"], 2000);
+    if (!value || !only(value, ["kind", "targetId", "fingerprint", "reason"]) ||
+        !["activity", "stage", "discipline"].includes(String(kind)) ||
+        typeof targetId !== "string" || !uuid.test(targetId) ||
+        typeof fingerprint !== "string" || !/^[0-9a-f]{32}$/.test(fingerprint) ||
+        !reason || reason.length < 10)
+      return response({ error: "Informe um item, uma prévia atual e uma justificativa de pelo menos 10 caracteres." }, 400);
+    try {
+      const result = await repository.deleteSubtree(ws, productId, identity.subject,
+        crypto.randomUUID(), kind as DeletionKind, targetId.toLowerCase(), fingerprint, reason);
+      if (result.status === "deleted") return response({ operationId: result.operationId, counts: result.counts }, 200);
+      if (result.status === "not_found") return response({ error: "Item não encontrado." }, 404);
+      if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+      if (result.status === "stale") return response({ error: "A estrutura mudou. Atualize a prévia e tente novamente." }, 409);
+      return response({ error: "Solicitação inválida." }, 400);
+    } catch { return response({ error: "Não foi possível excluir o item. Nenhuma alteração foi confirmada." }, 503); }
   }
   if (route.kind === "calendar_impact" && request.method === "GET") {
     if (new URL(request.url).search) return response({ error: "Consulta inválida." }, 400);

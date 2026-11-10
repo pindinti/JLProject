@@ -629,6 +629,17 @@ form button {
 .calendar-impact-confirm h3 { margin: 0 0 0.6rem; }
 .calendar-impact-confirm p { margin: 0.4rem 0; }
 .calendar-impact-confirm__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+.schedule-deletion-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(37 43 40 / 48%); }
+.schedule-deletion-dialog { display: grid; gap: 0.65rem; width: min(30rem, 100%); max-height: min(90dvh, 42rem); overflow-y: auto; padding: 1.25rem; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-lg); background: var(--jl-surface); color: var(--jl-text); box-shadow: var(--jl-shadow-md); }
+.schedule-deletion-dialog h2,.schedule-deletion-dialog p { margin: 0; }
+.schedule-deletion-dialog__target { font-weight: 700; overflow-wrap: anywhere; }
+.schedule-deletion-dialog__impact { padding: 0.65rem; border-radius: var(--jl-radius-sm); background: var(--jl-primary-soft); font-weight: 600; }
+.schedule-deletion-dialog__error { color: var(--jl-danger); }
+.schedule-deletion-dialog form { display: grid; gap: 0.35rem; }
+.schedule-deletion-dialog textarea { width: 100%; min-width: 0; min-height: 5rem; resize: vertical; }
+.schedule-deletion-dialog small { color: var(--jl-text-muted); }
+.schedule-deletion-dialog__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+.workspace-inline-actions button.workspace-icon-action--delete:hover:not(:disabled) { color: var(--jl-danger); }
 .calendar-highlight-status { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); }
 .calendar-highlight-status button { min-height: 1.7rem; padding: 0.1rem 0.3rem; border: 0; background: transparent; color: var(--jl-primary); text-decoration: underline; }
 .schedule-breadcrumb { min-height: 1.8rem; padding: 0.15rem 0.45rem; border: 0; background: transparent; color: var(--jl-primary); font-size: var(--jl-font-size-sm); white-space: nowrap; }

@@ -68,8 +68,19 @@ export type CalendarRescheduleHistoryResult = { status: "ok"; operations: Calend
   { status: "not_found" | "forbidden" | "invalid" };
 export type Mutation<T> = { status: "ok"; value: T } |
   { status: "not_found" | "duplicate" | "stale" | "stale_calendar" | "conflict" | "invalid" | "forbidden" };
+export type DeletionKind = "activity" | "stage" | "discipline";
+export interface DeletionCounts { disciplines: number; stages: number; activities: number }
+export type DeletionPreview = { status: "ok"; fingerprint: string; counts: DeletionCounts } |
+  { status: "not_found" | "invalid" | "forbidden" };
+export type DeletionResult = { status: "deleted"; operationId: string; counts: DeletionCounts } |
+  { status: "not_found" | "invalid" | "forbidden" | "stale" };
 
 export interface ScheduleRepository {
+  previewDeletion(workspaceId: string, productId: string, actorId: string,
+    kind: DeletionKind, targetId: string): Promise<DeletionPreview>;
+  deleteSubtree(workspaceId: string, productId: string, actorId: string,
+    operationId: string, kind: DeletionKind, targetId: string,
+    fingerprint: string, reason: string): Promise<DeletionResult>;
   listStageDefinitions(workspaceId: string): Promise<StageDefinition[]>;
   updateStageDefinitionColor(workspaceId: string, definitionId: string, expectedColor: string,
     color: string): Promise<StageDefinitionColorMutation>;
@@ -207,14 +218,17 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     const rows = await sql`SELECT 1 FROM public.product_disciplines AS d
       JOIN public.products AS p ON p.id = d.product_id AND p.workspace_id = d.workspace_id
       WHERE d.workspace_id = ${ws}::uuid AND d.product_id = ${productId}::uuid
-        AND d.id = ${disciplineId}::uuid AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
+        AND d.id = ${disciplineId}::uuid AND d.deleted_at IS NULL
+        AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
     return rows.length > 0;
   }
   async function stageExists(ws: string, productId: string, disciplineId: string, stageId: string, activeOnly: boolean) {
     const rows = await sql`SELECT 1 FROM public.discipline_stages AS s
       JOIN public.products AS p ON p.id = s.product_id AND p.workspace_id = s.workspace_id
+      JOIN public.product_disciplines AS d ON d.id = s.discipline_id AND d.deleted_at IS NULL
       WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
         AND s.discipline_id = ${disciplineId}::uuid AND s.id = ${stageId}::uuid
+        AND s.deleted_at IS NULL
         AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
     return rows.length > 0;
   }
@@ -222,15 +236,19 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     stageId: string, activityId: string, activeOnly: boolean) {
     const rows = await sql`SELECT 1 FROM public.stage_activities AS a
       JOIN public.products AS p ON p.id = a.product_id AND p.workspace_id = a.workspace_id
+      JOIN public.discipline_stages AS s ON s.id = a.stage_id AND s.deleted_at IS NULL
+      JOIN public.product_disciplines AS d ON d.id = a.discipline_id AND d.deleted_at IS NULL
       WHERE a.workspace_id = ${ws}::uuid AND a.product_id = ${productId}::uuid
         AND a.discipline_id = ${disciplineId}::uuid AND a.stage_id = ${stageId}::uuid
-        AND a.id = ${activityId}::uuid AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
+        AND a.id = ${activityId}::uuid AND a.deleted_at IS NULL
+        AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
     return rows.length > 0;
   }
   async function listDisciplines(ws: string, productId: string): Promise<Discipline[]> {
     const rows = await sql`SELECT id::text AS id, product_id::text AS "productId", name,
       short_code AS "shortCode", color, display_order AS "displayOrder", description, version
       FROM public.product_disciplines WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+        AND deleted_at IS NULL
       ORDER BY display_order, id`;
     return rows.map(discipline);
   }
@@ -238,7 +256,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     const rows = await sql`SELECT id::text AS id, product_id::text AS "productId", name,
       short_code AS "shortCode", color, display_order AS "displayOrder", description, version
       FROM public.product_disciplines WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
-        AND id = ${disciplineId}::uuid LIMIT 1`;
+        AND id = ${disciplineId}::uuid AND deleted_at IS NULL LIMIT 1`;
     return rows[0] ? discipline(rows[0]) : null;
   }
   async function listStages(ws: string, productId: string, disciplineId: string): Promise<Stage[]> {
@@ -249,8 +267,9 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       FROM public.discipline_stages AS s
       JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = s.workspace_id
       LEFT JOIN public.stage_activities AS a ON a.stage_id = s.id AND a.workspace_id = s.workspace_id
+        AND a.deleted_at IS NULL
       WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
-        AND s.discipline_id = ${disciplineId}::uuid
+        AND s.discipline_id = ${disciplineId}::uuid AND s.deleted_at IS NULL
       GROUP BY s.id, def.id ORDER BY s.display_order, s.id`;
     return rows.map(stage);
   }
@@ -262,8 +281,9 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       FROM public.discipline_stages AS s
       JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = s.workspace_id
       LEFT JOIN public.stage_activities AS a ON a.stage_id = s.id AND a.workspace_id = s.workspace_id
+        AND a.deleted_at IS NULL
       WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
-        AND s.discipline_id = ${disciplineId}::uuid AND s.id = ${stageId}::uuid
+        AND s.discipline_id = ${disciplineId}::uuid AND s.id = ${stageId}::uuid AND s.deleted_at IS NULL
       GROUP BY s.id, def.id LIMIT 1`;
     return rows[0] ? stage(rows[0]) : null;
   }
@@ -276,6 +296,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       FROM public.stage_activities
       WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
         AND discipline_id = ${disciplineId}::uuid AND stage_id = ${stageId}::uuid
+        AND deleted_at IS NULL
       ORDER BY display_order, id`;
     return rows.map(activity);
   }
@@ -288,11 +309,31 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       FROM public.stage_activities
       WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
         AND discipline_id = ${disciplineId}::uuid AND stage_id = ${stageId}::uuid
-        AND id = ${activityId}::uuid LIMIT 1`;
+        AND id = ${activityId}::uuid AND deleted_at IS NULL LIMIT 1`;
     return rows[0] ? activity(rows[0]) : null;
   }
 
   return {
+    async previewDeletion(ws, productId, actorId, kind, targetId) {
+      const rows = await sql`SELECT public.preview_schedule_deletion(
+        ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${kind}, ${targetId}::uuid) AS result`;
+      const result = rows[0]?.["result"] as DeletionPreview | undefined;
+      if (result?.status === "ok") return { status: "ok", fingerprint: result.fingerprint,
+        counts: result.counts };
+      if (result && ["not_found", "invalid", "forbidden"].includes(result.status))
+        return { status: result.status as "not_found" | "invalid" | "forbidden" };
+      throw new Error("Unexpected deletion preview result.");
+    },
+    async deleteSubtree(ws, productId, actorId, operationId, kind, targetId, fingerprint, reason) {
+      const rows = await sql`SELECT public.delete_schedule_subtree(
+        ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
+        ${kind}, ${targetId}::uuid, ${fingerprint}, ${reason}) AS result`;
+      const result = rows[0]?.["result"] as DeletionResult | undefined;
+      if (result?.status === "deleted") return { status: "deleted", operationId, counts: result.counts };
+      if (result && ["not_found", "invalid", "forbidden", "stale"].includes(result.status))
+        return { status: result.status as "not_found" | "invalid" | "forbidden" | "stale" };
+      throw new Error("Unexpected deletion result.");
+    },
     async listStageDefinitions(ws) {
       const rows = await sql`SELECT id::text AS id, code, color FROM public.stage_definitions
         WHERE workspace_id = ${ws}::uuid ORDER BY lower(code), id`;
@@ -379,7 +420,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         planning_calendar_version AS "planningCalendarVersion"
         FROM public.stage_activities
         WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
-          AND planning_mode = 'working_days'
+          AND planning_mode = 'working_days' AND deleted_at IS NULL
         ORDER BY id`;
       return rows.map((row): CalendarImpactCandidate => ({
         id: text(row["id"]), disciplineId: text(row["disciplineId"]),
@@ -613,9 +654,12 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         a.planning_calendar_version AS "planningCalendarVersion"
         FROM public.products AS p
         LEFT JOIN public.product_disciplines AS d ON d.product_id = p.id AND d.workspace_id = p.workspace_id
+          AND d.deleted_at IS NULL
         LEFT JOIN public.discipline_stages AS s ON s.discipline_id = d.id AND s.workspace_id = p.workspace_id
+          AND s.deleted_at IS NULL
         LEFT JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = p.workspace_id
         LEFT JOIN public.stage_activities AS a ON a.stage_id = s.id AND a.workspace_id = p.workspace_id
+          AND a.deleted_at IS NULL
         WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid
         ORDER BY d.display_order, d.id, s.display_order, s.id, a.display_order, a.id`;
       return assembleHierarchy(productId, rows);

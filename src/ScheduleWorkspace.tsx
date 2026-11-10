@@ -14,20 +14,23 @@ import { authenticatedFetch } from "./auth";
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
 const noCalendarImpacts: ActivityCalendarImpact[] = [];
 type CalendarYearSnapshot = { version: number; exceptions: CalendarExceptionDates[] };
+type DeletionTarget = { kind: "discipline" | "stage" | "activity"; id: string; label: string };
 
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
-  onRefresh, onHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
+  onRefresh, onHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
+  onAccessLost = () => undefined }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
   onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
-  onAddDiscipline: () => void; onRefresh: () => void; onRescheduleHistory: () => void;
+  onAddDiscipline: () => void; onRefresh: () => void | Promise<void>; onRescheduleHistory: () => void;
   onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
     targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
   onDeleteTarget: (target: ScheduleTarget) => Promise<void>;
+  onAccessLost?: () => void;
 }) {
   const [zoom, setZoom] = useState<Zoom>("week");
   const [tableWidth, setTableWidth] = useState(50);
@@ -41,6 +44,18 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const [productExpanded, setProductExpanded] = useState(true);
   const [mobilePane, setMobilePane] = useState<"table" | "gantt">("table");
   const [targetDialog, setTargetDialog] = useState<ScheduleTarget | "new" | null>(null);
+  const [deletionTarget, setDeletionTarget] = useState<DeletionTarget | null>(null);
+  const [deletionPreview, setDeletionPreview] = useState<{ fingerprint: string;
+    counts: { disciplines: number; stages: number; activities: number } } | null>(null);
+  const [deletionReason, setDeletionReason] = useState("");
+  const [deletionError, setDeletionError] = useState("");
+  const [deletionLoading, setDeletionLoading] = useState(false);
+  const [deletionBusy, setDeletionBusy] = useState(false);
+  const [deletionStale, setDeletionStale] = useState(false);
+  const deletionSubmitting = useRef(false);
+  const deletionRequest = useRef(0);
+  const deletionTrigger = useRef<HTMLButtonElement | null>(null);
+  const deletionDialog = useRef<HTMLDivElement>(null);
   const [calendarExceptionsByYear, setCalendarExceptionsByYear] = useState<Record<number, CalendarYearSnapshot | null>>({});
   const splitRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -108,6 +123,126 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const milestoneLaneCount = milestoneLabels.reduce((count, label) => Math.max(count, label.lane + 1), 0);
   const targetHeadHeight = Math.max(29, milestoneLaneCount * 18 + 22);
   const headerHeight = Math.max(82, 28 + 24 + targetHeadHeight);
+
+  async function fetchDeletionPreview(target: DeletionTarget,
+    resetReason: boolean) {
+    const requestId = ++deletionRequest.current;
+    if (resetReason) setDeletionReason("");
+    setDeletionPreview(null);
+    setDeletionStale(false);
+    setDeletionError("");
+    setDeletionLoading(true);
+    if (!workspaceId) {
+      setDeletionError(messages.scheduleDeletionPreviewError);
+      setDeletionLoading(false);
+      return;
+    }
+    const query = new URLSearchParams({ kind: target.kind, targetId: target.id });
+    try {
+      const result = await authenticatedFetch(`/api/workspaces/${workspaceId}/products/${product.id}/hierarchy/deletion-preview?${query}`);
+      if (requestId !== deletionRequest.current) return;
+      if (result.status === 401 || result.status === 403) {
+        onAccessLost();
+        setDeletionError(messages.scheduleDeletionPermissionError);
+        return;
+      }
+      if (result.status === 404) {
+        setDeletionError(messages.scheduleDeletionNotFound);
+        return;
+      }
+      if (!result.ok) throw new Error("Deletion preview failed.");
+      const value = await result.json() as { fingerprint?: unknown;
+        counts?: Partial<{ disciplines: number; stages: number; activities: number }> };
+      if (typeof value.fingerprint !== "string" || !/^[0-9a-f]{32}$/.test(value.fingerprint) ||
+          !value.counts || ![value.counts.disciplines, value.counts.stages, value.counts.activities]
+            .every((count) => Number.isSafeInteger(count) && Number(count) >= 0))
+        throw new Error("Invalid deletion preview.");
+      setDeletionPreview({ fingerprint: value.fingerprint, counts: {
+        disciplines: Number(value.counts.disciplines), stages: Number(value.counts.stages),
+        activities: Number(value.counts.activities)
+      } });
+    } catch {
+      if (requestId === deletionRequest.current) setDeletionError(messages.scheduleDeletionPreviewError);
+    } finally {
+      if (requestId === deletionRequest.current) setDeletionLoading(false);
+    }
+  }
+
+  function startDeletion(row: VisibleRow, trigger: HTMLButtonElement) {
+    if (!canEdit || row.kind === "product" || deletionBusy) return;
+    deletionTrigger.current = trigger;
+    const target: DeletionTarget = { kind: row.kind, id: row.id, label: row.label };
+    setDeletionTarget(target);
+    void fetchDeletionPreview(target, true);
+  }
+
+  async function confirmDeletion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canEdit || !deletionTarget || !deletionPreview || deletionStale || deletionSubmitting.current) return;
+    const reason = deletionReason.trim();
+    if (reason.length < 10) {
+      setDeletionError(messages.scheduleDeletionReasonHint);
+      return;
+    }
+    deletionSubmitting.current = true;
+    setDeletionBusy(true);
+    setDeletionError("");
+    try {
+      const result = await authenticatedFetch(`/api/workspaces/${workspaceId}/products/${product.id}/hierarchy/deletions`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: deletionTarget.kind, targetId: deletionTarget.id,
+          fingerprint: deletionPreview.fingerprint, reason })
+      });
+      if (result.status === 401 || result.status === 403) {
+        onAccessLost();
+        setDeletionError(messages.scheduleDeletionPermissionError);
+        return;
+      }
+      if (result.status === 404) {
+        setDeletionError(messages.scheduleDeletionNotFound);
+        return;
+      }
+      if (result.status === 409) {
+        setDeletionStale(true);
+        setDeletionError(messages.scheduleDeletionConflict);
+        return;
+      }
+      if (result.status === 400) {
+        setDeletionError(messages.scheduleDeletionInvalid);
+        return;
+      }
+      if (!result.ok) throw new Error("Deletion request failed.");
+      setDeletionTarget(null);
+      setDeletionPreview(null);
+      setSelected(null);
+      await onRefresh();
+      document.querySelector<HTMLElement>(".workspace-table-rows")?.focus();
+    } catch {
+      setDeletionError(messages.scheduleDeletionSaveError);
+    } finally {
+      deletionSubmitting.current = false;
+      setDeletionBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!deletionTarget) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !deletionSubmitting.current) {
+        event.preventDefault();
+        deletionRequest.current++;
+        setDeletionTarget(null);
+        setDeletionPreview(null);
+        queueMicrotask(() => deletionTrigger.current?.focus());
+      }
+    };
+    document.addEventListener("keydown", dismiss);
+    return () => document.removeEventListener("keydown", dismiss);
+  }, [deletionTarget]);
+
+  useEffect(() => {
+    if (deletionTarget) deletionDialog.current?.querySelector<HTMLElement>("button, textarea")?.focus();
+  }, [deletionTarget, deletionLoading, deletionPreview]);
 
   useEffect(() => {
     if (scale.startDay !== bounds.startDay || scale.endDay !== bounds.endDay)
@@ -294,7 +429,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
         </div>
       </div>
       <div className="workspace-body">
-        <div className="workspace-table-rows" role="table" aria-label={messages.scheduleTable}>
+        <div className="workspace-table-rows" role="table" aria-label={messages.scheduleTable} tabIndex={-1}>
           {rows.map((row) => <div key={row.key} className={`workspace-table-row row-${row.kind}${selected === row.key ? " selected" : ""}`}
             data-row-key={row.key} role="row" aria-selected={selected === row.key}>
             <div role="cell" className="workspace-name-cell" style={{ paddingLeft: `${({ product: 0, discipline: 12, stage: 27, activity: 42 })[row.kind]}px` }}>
@@ -320,6 +455,12 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
                   title={row.kind === "discipline" ? messages.addStage : messages.addActivity}
                   onClick={() => { setSelected(row.key); onAdd(row); }}>
                   <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M10 3v14M3 10h14" /></svg>
+                </button>}
+                {canEdit && row.kind !== "product" && <button type="button" className="workspace-icon-action workspace-icon-action--delete"
+                  aria-label={`${messages.deleteScheduleItem(row.kind)}: ${row.label}`}
+                  title={`${messages.deleteScheduleItem(row.kind)}: ${row.label}`}
+                  onClick={(event) => { setSelected(row.key); startDeletion(row, event.currentTarget); }}>
+                  <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M4 6h12m-10 0 .7 10h6.6L14 6M8 6V4h4v2m-3 3v4m2-4v4" /></svg>
                 </button>}
                 {row.kind === "activity" && !canEdit && <button type="button" className="workspace-icon-action"
                   title={messages.activityDateHistory} onClick={() => { setSelected(row.key); onHistory(row); }}
@@ -403,6 +544,47 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       initialDate={selectedDate ?? today} canEdit={canEdit}
       onClose={() => setTargetDialog(null)} onCreate={onCreateTarget} onUpdate={onUpdateTarget}
       onDelete={onDeleteTarget} />}
+    {deletionTarget && <div className="schedule-deletion-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !deletionBusy) {
+        deletionRequest.current++;
+        setDeletionTarget(null);
+        setDeletionPreview(null);
+        queueMicrotask(() => deletionTrigger.current?.focus());
+      }
+    }}>
+      <div ref={deletionDialog} className="schedule-deletion-dialog" role="alertdialog" aria-modal="true"
+        aria-labelledby="schedule-deletion-title" aria-describedby="schedule-deletion-explanation">
+        <h2 id="schedule-deletion-title">{messages.confirmScheduleDeletion}</h2>
+        <p className="schedule-deletion-dialog__target">{messages.scheduleDeletionTarget(deletionTarget.kind, deletionTarget.label)}</p>
+        <p id="schedule-deletion-explanation">{messages.scheduleDeletionExplanation}</p>
+        {deletionLoading ? <p role="status">{messages.scheduleDeletionPreviewLoading}</p> : deletionPreview &&
+          <p className="schedule-deletion-dialog__impact" aria-live="polite">{messages.scheduleDeletionImpact(
+            deletionPreview.counts.disciplines, deletionPreview.counts.stages, deletionPreview.counts.activities)}</p>}
+        {deletionError && <p role="alert" className="schedule-deletion-dialog__error">{deletionError}</p>}
+        {deletionStale && <button type="button" disabled={deletionBusy} onClick={() =>
+          void fetchDeletionPreview(deletionTarget, false)}>{messages.scheduleDeletionRefreshPreview}</button>}
+        <form onSubmit={(event) => void confirmDeletion(event)}>
+          <label htmlFor="schedule-deletion-reason">{messages.scheduleDeletionReason}</label>
+          <textarea id="schedule-deletion-reason" maxLength={2000} required minLength={10}
+            value={deletionReason} disabled={deletionBusy || !deletionPreview || deletionLoading}
+            aria-describedby="schedule-deletion-reason-hint"
+            onChange={(event) => { setDeletionReason(event.target.value); setDeletionError(""); }} />
+          <small id="schedule-deletion-reason-hint">{messages.scheduleDeletionReasonHint}</small>
+          <div className="schedule-deletion-dialog__actions">
+            <button type="button" disabled={deletionBusy} onClick={() => {
+              deletionRequest.current++;
+              setDeletionTarget(null);
+              setDeletionPreview(null);
+              queueMicrotask(() => deletionTrigger.current?.focus());
+            }}>{messages.scheduleDeletionCancel}</button>
+            <button type="submit" disabled={deletionBusy || deletionLoading || !deletionPreview ||
+              deletionStale || deletionReason.trim().length < 10}>
+              {deletionBusy ? messages.scheduleDeletionSubmitting : messages.scheduleDeletionConfirm}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>}
   </section>;
 }
 

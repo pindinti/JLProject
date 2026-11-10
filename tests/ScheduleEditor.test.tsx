@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ScheduleEditor } from "../src/ScheduleEditor";
 import { formatCivilDate, parseBrazilianDate } from "../src/civil-date";
@@ -38,12 +38,14 @@ function setup(tree: { productId: string; disciplines: unknown[] } = { productId
       ? json({ targets }) : path.endsWith("/date-history")
         ? json({ changes: [] }) : path.endsWith("/calendar-impact")
           ? json({ calendarVersion: 0, impacts: [] }) : path.includes("/calendar?year=")
-            ? json({ calendar: { version: 0, exceptions: [] } }) : json({ stageDefinitions: definitions })));
+            ? json({ calendar: { version: 0, exceptions: [] } }) : path.includes("/deletion-preview")
+              ? json({ fingerprint: "a".repeat(32), counts: { disciplines: 0, stages: 0, activities: 1 } })
+              : json({ stageDefinitions: definitions })));
 }
-function mount(role: "admin" | "editor" | "viewer" = "admin") {
+function mount(role: "admin" | "editor" | "viewer" = "admin", onSummaryRefresh?: () => Promise<void>) {
   const onAccessLost = vi.fn();
   render(<ScheduleEditor workspace={{ ...workspace, role }} product={product}
-    onBack={vi.fn()} onAccessLost={onAccessLost} />);
+    onBack={vi.fn()} onAccessLost={onAccessLost} onSummaryRefresh={onSummaryRefresh} />);
   return onAccessLost;
 }
 
@@ -57,6 +59,84 @@ function setupImpacts(impacts: ActivityCalendarImpact[], tree: { productId: stri
 }
 
 describe("schedule editor", () => {
+  it("requires a fresh server preview and reason, then reloads only after deletion succeeds", async () => {
+    let resolveDeletion: ((response: Response) => void) | undefined;
+    const summaryRefresh = vi.fn(async () => undefined);
+    api.fetch.mockImplementation((path: string) => {
+      if (path.endsWith("/hierarchy/deletions"))
+        return new Promise<Response>((resolve) => { resolveDeletion = resolve; });
+      if (path.includes("/deletion-preview")) return Promise.resolve(json({ fingerprint: "b".repeat(32),
+        counts: { disciplines: 0, stages: 0, activities: 1 } }));
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id, disciplines: [discipline] } }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
+      if (path.includes("/calendar?year=")) return Promise.resolve(json({ calendar: { version: 0, exceptions: [] } }));
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount("editor", summaryRefresh);
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir atividade: Synthetic activity" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Confirmar exclusão do cronograma" });
+    expect(within(dialog).getByText("Atividade: Synthetic activity")).toBeInTheDocument();
+    expect(within(dialog).getByText(/0 disciplinas, 0 etapas e 1 atividade/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/histórico e a revisão R00 serão preservados/)).toBeInTheDocument();
+    expect(api.fetch.mock.calls.some(([path]) => String(path).includes("/deletion-preview?kind=activity"))).toBe(true);
+    const submit = within(dialog).getByRole("button", { name: "Excluir do cronograma" });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Justificativa da exclusão"), { target: { value: "Curta" } });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Justificativa da exclusão"), {
+      target: { value: "Remoção sintética para validar o fluxo" }
+    });
+    fireEvent.click(submit);
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/hierarchy/deletions"))).toBe(true));
+    const deletionCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/deletions"))!;
+    expect(JSON.parse(deletionCall[1]?.body as string)).toEqual({ kind: "activity",
+      targetId: activity.id, fingerprint: "b".repeat(32), reason: "Remoção sintética para validar o fluxo" });
+    expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy"))).toHaveLength(1);
+    expect(summaryRefresh).not.toHaveBeenCalled();
+    const impactReadsBeforeSuccess = api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact")).length;
+    await act(async () => { resolveDeletion?.(json({ operationId: "synthetic-operation", counts: { disciplines: 0, stages: 0, activities: 1 } })); });
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy"))).toHaveLength(2));
+    expect(summaryRefresh).toHaveBeenCalledOnce();
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact")).length)
+      .toBe(impactReadsBeforeSuccess + 1));
+  });
+
+  it("hides deletion controls from viewers", async () => {
+    mount("viewer");
+    await screen.findByText("Synthetic activity");
+    expect(screen.queryByRole("button", { name: /Excluir atividade/ })).not.toBeInTheDocument();
+  });
+
+  it("blocks a stale deletion fingerprint and fetches a new preview before allowing retry", async () => {
+    let previewCount = 0;
+    const summaryRefresh = vi.fn(async () => undefined);
+    api.fetch.mockImplementation((path: string) => {
+      if (path.endsWith("/hierarchy/deletions")) return Promise.resolve(json({ error: "stale" }, 409));
+      if (path.includes("/deletion-preview")) return Promise.resolve(json({ fingerprint: (++previewCount).toString(16).padStart(32, "0"),
+        counts: { disciplines: 0, stages: 0, activities: 1 } }));
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id, disciplines: [discipline] } }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
+      if (path.includes("/calendar?year=")) return Promise.resolve(json({ calendar: { version: 0, exceptions: [] } }));
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount("editor", summaryRefresh);
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir atividade: Synthetic activity" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Confirmar exclusão do cronograma" });
+    fireEvent.change(within(dialog).getByLabelText("Justificativa da exclusão"), {
+      target: { value: "Remoção sintética com prévia desatualizada" }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Excluir do cronograma" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/A estrutura mudou desde a prévia/);
+    expect(within(dialog).getByRole("button", { name: "Excluir do cronograma" })).toBeDisabled();
+    expect(summaryRefresh).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Atualizar prévia" }));
+    await waitFor(() => expect(previewCount).toBe(2));
+    expect(within(dialog).queryByText(/A estrutura mudou desde a prévia/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Excluir do cronograma" })).toBeEnabled();
+  });
+
   it("lets editors select date changes, excludes version-only rows, and submits only IDs and versions after confirmation", async () => {
     const second = { ...workingActivity, id: "02eb3d51-f256-4b9a-b939-a44ec2149906", name: "Second activity" };
     const versionOnly = { ...workingActivity, id: "4c3c7b16-9ff4-41f7-8835-11b2b26966dd", name: "Version-only activity" };

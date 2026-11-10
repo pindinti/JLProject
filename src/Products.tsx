@@ -86,6 +86,29 @@ export function Products({ workspace, onAccessLost }: {
     } catch { setState("error"); }
   }, [endpoint, onAccessLost]);
 
+  const refreshProductCounts = useCallback(async () => {
+    setCountsLoading(true);
+    const countResults = await Promise.all(products.map(async (product) => {
+      try {
+        const response = await authenticatedFetch(`${endpoint}/${product.id}/hierarchy`);
+        if (response.status === 401 || response.status === 403) {
+          onAccessLost();
+          return [product.id, null] as const;
+        }
+        if (!response.ok) return [product.id, null] as const;
+        const payload = await response.json() as { hierarchy: ProductHierarchy };
+        const disciplines = payload.hierarchy.disciplines;
+        return [product.id, { disciplines: disciplines.length,
+          stages: disciplines.reduce((total, discipline) => total + discipline.stages.length, 0),
+          activities: disciplines.reduce((total, discipline) => total + discipline.stages.reduce(
+            (stageTotal, stage) => stageTotal + stage.activities.length, 0
+          ), 0) }] as const;
+      } catch { return [product.id, null] as const; }
+    }));
+    setProductCounts((current) => ({ ...current, ...Object.fromEntries(countResults) }));
+    setCountsLoading(false);
+  }, [endpoint, onAccessLost, products]);
+
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
 
   function selectProduct(product: Product) {
@@ -230,7 +253,7 @@ export function Products({ workspace, onAccessLost }: {
       <button type="button" onClick={() => void load()}>{messages.retry}</button></div>;
     return scheduleProduct
       ? <ScheduleEditor workspace={workspace} product={scheduleProduct}
-          onBack={backToProducts} onAccessLost={onAccessLost} />
+          onBack={backToProducts} onAccessLost={onAccessLost} onSummaryRefresh={refreshProductCounts} />
       : <div role="alert"><p>{messages.scheduleNotFound}</p>
           <button type="button" onClick={backToProducts}>{messages.backToProducts}</button></div>;
   }

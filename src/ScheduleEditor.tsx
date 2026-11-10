@@ -93,9 +93,10 @@ function WorkingPreviewDetails({ preview, loading }: { preview: WorkingPreview |
   </section>;
 }
 
-export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
+export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSummaryRefresh }: {
   workspace: WorkspaceSummary; product: ScheduleProduct;
   onBack: () => void; onAccessLost: () => void;
+  onSummaryRefresh?: () => Promise<void>;
 }) {
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
   const [definitions, setDefinitions] = useState<StageDefinition[]>([]);
@@ -730,9 +731,14 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
             canEdit={canEdit} onToggle={(row) => {
               if (row.kind === "discipline" || row.kind === "stage") toggle(row.id, row.kind);
             }} onEdit={editRow} onAdd={addChild} onAddDiscipline={() => startDiscipline()}
-            onRefresh={() => { closeDraft(); void load(false); }} onHistory={openHistory}
+            onRefresh={async () => {
+              closeDraft();
+              await load(false);
+              await onSummaryRefresh?.();
+            }} onHistory={openHistory}
             onRescheduleHistory={() => setRescheduleHistoryOpen(true)}
-            onCreateTarget={createTarget} onUpdateTarget={updateTarget} onDeleteTarget={deleteTarget} />
+            onCreateTarget={createTarget} onUpdateTarget={updateTarget} onDeleteTarget={deleteTarget}
+            onAccessLost={onAccessLost} />
         </>
       )}
       {impactOpen && state === "ready" && <aside ref={impactPanelRef} className="calendar-impact-panel"

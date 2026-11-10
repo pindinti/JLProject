@@ -29,6 +29,10 @@ const a = { id: activity, stageId: stage, name: "Tarefa sintética", activityTyp
 
 function repository(): ScheduleRepository {
   return {
+    previewDeletion: vi.fn(async () => ({ status: "ok" as const,
+      fingerprint: "a".repeat(32), counts: { disciplines: 1, stages: 2, activities: 3 } })),
+    deleteSubtree: vi.fn(async (_ws, _product, _actor, operationId) => ({ status: "deleted" as const,
+      operationId, counts: { disciplines: 1, stages: 2, activities: 3 } })),
     listStageDefinitions: vi.fn(async () => [{ id: "a9999999-9999-4999-8999-999999999999", code: "EC", color: "#445566" }]),
     updateStageDefinitionColor: vi.fn(async (_workspaceId, definitionId, _expectedColor, color) => ({
       status: "ok" as const, value: { id: definitionId, code: "EC", color }
@@ -104,6 +108,60 @@ async function call(input: Request, role: WorkspaceRole | null, repo = repositor
 }
 
 describe("schedule hierarchy API", () => {
+  const previewPath = `${base}/hierarchy/deletion-preview?kind=discipline&targetId=${discipline}`;
+  const deletePath = `${base}/hierarchy/deletions`;
+  const deletionBody = { kind: "discipline", targetId: discipline,
+    fingerprint: "a".repeat(32), reason: "Synthetic hierarchy deletion" };
+
+  it("previews a scoped subtree without exposing affected identifiers", async () => {
+    const repo = repository();
+    const result = await call(request(previewPath), "editor", repo);
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ fingerprint: "a".repeat(32),
+      counts: { disciplines: 1, stages: 2, activities: 3 } });
+    expect(repo.previewDeletion).toHaveBeenCalledWith(ws, product, actor, "discipline", discipline);
+    expect(repo.deleteSubtree).not.toHaveBeenCalled();
+  });
+
+  it("requires an authenticated active editor or admin for preview and deletion", async () => {
+    const repo = repository();
+    const anonymous = await handleRequest(request(deletePath, "POST", deletionBody), environment,
+      async () => null, () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+    for (const role of ["viewer", null] as const) {
+      expect((await call(request(previewPath), role, repo)).status).toBe(403);
+      expect((await call(request(deletePath, "POST", deletionBody), role, repo)).status).toBe(403);
+    }
+    expect((await call(request(deletePath, "POST", deletionBody), "editor", repo, false)).status).toBe(403);
+    expect((await call(request(deletePath.replace(ws, otherWs), "POST", deletionBody), "admin", repo)).status).toBe(403);
+    expect(repo.deleteSubtree).not.toHaveBeenCalled();
+  });
+
+  it("deletes only an explicitly identified subtree using the authenticated actor", async () => {
+    const repo = repository();
+    const result = await call(request(deletePath, "POST", deletionBody), "admin", repo);
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ counts: { activities: 3 } });
+    expect(repo.deleteSubtree).toHaveBeenCalledWith(ws, product, actor,
+      expect.any(String), "discipline", discipline, "a".repeat(32), deletionBody.reason);
+  });
+
+  it("rejects malformed, forged, stale, and failed deletion requests safely", async () => {
+    const repo = repository();
+    for (const invalid of [{ ...deletionBody, reason: "short" },
+      { ...deletionBody, actorId: actor }, { ...deletionBody, targetId: "bad" },
+      { ...deletionBody, fingerprint: "bad" }, { ...deletionBody, kind: "product" }])
+      expect((await call(request(deletePath, "POST", invalid), "admin", repo)).status).toBe(400);
+    expect((await call(request(`${base}/hierarchy/deletion-preview?kind=stage&targetId=bad`),
+      "admin", repo)).status).toBe(400);
+    expect(repo.deleteSubtree).not.toHaveBeenCalled();
+    vi.mocked(repo.deleteSubtree).mockResolvedValueOnce({ status: "stale" });
+    expect((await call(request(deletePath, "POST", deletionBody), "admin", repo)).status).toBe(409);
+    vi.mocked(repo.deleteSubtree).mockRejectedValueOnce(new Error("private SQL detail"));
+    const failed = await call(request(deletePath, "POST", deletionBody), "admin", repo);
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private SQL detail");
+  });
   const applyPath = `${base}/calendar-impact/apply`;
   const originalOperationId = "a1111111-1111-4111-8111-111111111111";
   const reversePath = `${base}/calendar-reschedules/${originalOperationId}/reverse`;

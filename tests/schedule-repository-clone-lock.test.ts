@@ -65,4 +65,22 @@ describe("product row locks for clone consistency", () => {
       expect(query).toContain("FOR UPDATE");
     }
   });
+
+  it("excludes deleted hierarchy rows from active reads and calendar impact candidates", async () => {
+    const schedules = repository();
+    await schedules.listDisciplines(workspaceId, productId);
+    await schedules.listStages(workspaceId, productId, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+    await schedules.listActivities(workspaceId, productId, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3",
+      "a3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+    await schedules.listWorkingPlans(workspaceId, productId);
+    await schedules.getHierarchy(workspaceId, productId);
+    expect(database.calls[0]).toContain("deleted_at IS NULL");
+    expect(database.calls[1]).toContain("s.deleted_at IS NULL");
+    expect(database.calls[1]).toContain("a.deleted_at IS NULL");
+    expect(database.calls[2]).toContain("deleted_at IS NULL");
+    expect(database.calls[3]).toContain("deleted_at IS NULL");
+    expect(database.calls[4]).toContain("d.deleted_at IS NULL");
+    expect(database.calls[4]).toContain("s.deleted_at IS NULL");
+    expect(database.calls[4]).toContain("a.deleted_at IS NULL");
+  });
 });
