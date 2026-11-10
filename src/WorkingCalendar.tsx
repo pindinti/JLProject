@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   calendarRulesForYear, type CalendarException, type CalendarExceptionInput,
-  type CalendarExceptionKind, type CalendarHistoryEntry
+  type CalendarExceptionKind
 } from "../domain/working-calendar";
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
+import { CalendarHistoryDialog } from "./CalendarHistoryDialog";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { messages } from "./locales/pt-BR";
 
@@ -16,10 +17,6 @@ interface Draft {
   startDate: string;
   endDate: string;
 }
-
-const historyTime = new Intl.DateTimeFormat("pt-BR", {
-  timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short"
-});
 
 function currentSaoPauloYear(): number {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -39,8 +36,8 @@ function exceptionDetail(item: CalendarException): string {
   return `${item.description} · ${formatCivilDate(item.startDate)} a ${formatCivilDate(item.endDate)}`;
 }
 
-function historyDetail(item: CalendarException | null): string {
-  return item ? `${exceptionTitle(item)} — ${exceptionDetail(item)}` : "";
+function historyDetail(item: CalendarException): string {
+  return `${exceptionTitle(item)} — ${exceptionDetail(item)}`;
 }
 
 export function WorkingCalendar({ workspace, onAccessLost, initialYear = currentSaoPauloYear() }: {
@@ -52,10 +49,7 @@ export function WorkingCalendar({ workspace, onAccessLost, initialYear = current
   const [version, setVersion] = useState(0);
   const [exceptions, setExceptions] = useState<CalendarException[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [history, setHistory] = useState<CalendarHistoryEntry[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState(false);
-  const [nextBeforeVersion, setNextBeforeVersion] = useState<number | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -82,30 +76,7 @@ export function WorkingCalendar({ workspace, onAccessLost, initialYear = current
     } catch { setState("error"); }
   }, [endpoint, onAccessLost, year]);
 
-  const loadHistory = useCallback(async (beforeVersion: number | null) => {
-    setHistoryLoading(true);
-    setHistoryError(false);
-    try {
-      const suffix = beforeVersion === null ? "" : `?beforeVersion=${beforeVersion}`;
-      const response = await authenticatedFetch(`${endpoint}/history${suffix}`);
-      if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
-      if (!response.ok) throw new Error("Calendar history lookup failed.");
-      const data = await response.json() as {
-        history?: { entries?: unknown; nextBeforeVersion?: unknown }
-      };
-      const page = data.history;
-      if (!page || !Array.isArray(page.entries) ||
-          (page.nextBeforeVersion !== null && !Number.isSafeInteger(page.nextBeforeVersion)))
-        throw new Error("Invalid calendar history response.");
-      const entries = page.entries as CalendarHistoryEntry[];
-      setHistory((previous) => beforeVersion === null ? entries : [...previous, ...entries]);
-      setNextBeforeVersion(page.nextBeforeVersion as number | null);
-    } catch { setHistoryError(true); }
-    finally { setHistoryLoading(false); }
-  }, [endpoint, onAccessLost]);
-
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
-  useEffect(() => { queueMicrotask(() => void loadHistory(null)); }, [loadHistory]);
 
   function create(kind: CalendarExceptionKind) {
     setFeedback("");
@@ -159,7 +130,7 @@ export function WorkingCalendar({ workspace, onAccessLost, initialYear = current
       if (response.status === 400) { setFeedback(messages.calendarInvalid); return; }
       if (!response.ok) throw new Error("Calendar mutation failed.");
       setDraft(null);
-      await Promise.all([load(), loadHistory(null)]);
+      await load();
       setFeedback(messages.calendarSaved);
     } catch { setFeedback(messages.calendarSaveError); }
     finally { setBusy(false); }
@@ -177,7 +148,7 @@ export function WorkingCalendar({ workspace, onAccessLost, initialYear = current
       if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
       if (response.status === 409) { setFeedback(messages.calendarConflict); await load(); return; }
       if (!response.ok) throw new Error("Calendar removal failed.");
-      await Promise.all([load(), loadHistory(null)]);
+      await load();
       setFeedback(messages.calendarRemoved);
     } catch { setFeedback(messages.calendarSaveError); }
     finally { setBusy(false); }
@@ -198,12 +169,15 @@ export function WorkingCalendar({ workspace, onAccessLost, initialYear = current
     <header className="working-calendar__heading">
       <div><h3 id="working-calendar-title">{messages.workingCalendar}</h3>
         <p>{messages.workingCalendarDescription}</p></div>
-      <div className="working-calendar__year" aria-label={messages.calendarYear(year)}>
-        <button type="button" aria-label={messages.calendarPreviousYear} disabled={year <= 2026}
-          onClick={() => setYear(year - 1)}>‹</button>
-        <strong>{year}</strong>
-        <button type="button" aria-label={messages.calendarNextYear} disabled={year >= 2100}
-          onClick={() => setYear(year + 1)}>›</button>
+      <div className="working-calendar__header-actions">
+        <button type="button" onClick={() => setHistoryOpen(true)}>{messages.calendarHistoryOpen}</button>
+        <div className="working-calendar__year" aria-label={messages.calendarYear(year)}>
+          <button type="button" aria-label={messages.calendarPreviousYear} disabled={year <= 2026}
+            onClick={() => setYear(year - 1)}>‹</button>
+          <strong>{year}</strong>
+          <button type="button" aria-label={messages.calendarNextYear} disabled={year >= 2100}
+            onClick={() => setYear(year + 1)}>›</button>
+        </div>
       </div>
     </header>
     <p className="working-calendar__note">{messages.calendarWeekends}</p>
@@ -271,21 +245,7 @@ export function WorkingCalendar({ workspace, onAccessLost, initialYear = current
       </div>
     </form>}
     {feedback && <p role="alert" className="feedback">{feedback}</p>}
-    <section className="working-calendar__section" aria-labelledby="calendar-history-title">
-      <h4 id="calendar-history-title">{messages.calendarHistory}</h4>
-      {historyLoading && history.length === 0 && <p role="status">{messages.calendarLoading}</p>}
-      {historyError && <p role="alert">{messages.calendarHistoryError}</p>}
-      {!historyLoading && history.length === 0 && !historyError && <p>{messages.calendarEmptyHistory}</p>}
-      {history.length > 0 && <ol className="calendar-history">{history.map((entry) => <li key={entry.operationId}>
-        <strong>{entry.action === "created" ? messages.calendarCreated :
-          entry.action === "updated" ? messages.calendarUpdated : messages.calendarRemovedAction}</strong>
-        <span>{messages.calendarVersion(entry.version)} · {historyTime.format(new Date(entry.changedAt))} ·
-          {" "}{entry.actorName ?? messages.calendarActorUnknown}</span>
-        {entry.before && <span>{messages.calendarBefore}: {historyDetail(entry.before)}</span>}
-        <span>{messages.calendarAfter}: {historyDetail(entry.after)}</span>
-      </li>)}</ol>}
-      {nextBeforeVersion !== null && <button type="button" disabled={historyLoading}
-        onClick={() => void loadHistory(nextBeforeVersion)}>{messages.calendarHistoryMore}</button>}
-    </section>
+    {historyOpen && <CalendarHistoryDialog endpoint={endpoint} onAccessLost={onAccessLost}
+      onClose={() => setHistoryOpen(false)} describeException={historyDetail} exceptionTitle={exceptionTitle} />}
   </section>;
 }

@@ -167,6 +167,13 @@ describe("products UI", () => {
   it("loads products and creates one through the same-origin API", async () => {
     render(<App />);
     expect(await screen.findByRole("link", { name: /Synthetic product/ })).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "Produtos" });
+    const homeHeader = heading.closest(".products-heading");
+    expect(homeHeader?.querySelector(".products-primary-actions")).toContainElement(
+      screen.getByRole("button", { name: "Cadastrar produto" }));
+    expect(homeHeader?.querySelector(".products-primary-actions")).toContainElement(
+      screen.getByRole("button", { name: "Importar planilha" }));
+    expect(homeHeader?.nextElementSibling).toHaveClass("product-list");
     expect(screen.queryByRole("button", { name: "Voltar" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cadastrar produto" }));
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Novo teste" } });

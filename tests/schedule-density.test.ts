@@ -18,6 +18,6 @@ describe("compact schedule density styles", () => {
 
   it("overrides the global dark button hover on activity names while retaining full-row selection", () => {
     expect(styles).toMatch(/\.schedule-workspace \.workspace-row-name:not\(:disabled\):hover\s*\{\s*background:\s*transparent;\s*\}/);
-    expect(styles).toMatch(/\.workspace-table-row\.selected,[\s\S]*?\.workspace-chart-row\.selected,[\s\S]*?\.workspace-chart-row:hover\s*\{ background: var\(--jl-primary-soft\); \}/);
+    expect(styles).toMatch(/\.workspace-table-row\.selected,[\s\S]*?\.workspace-chart-row\.selected,[\s\S]*?\.workspace-chart-row:hover\s*\{ background: color-mix\(in srgb, var\(--jl-primary-soft\) 58%, transparent\); \}/);
   });
 });

@@ -37,6 +37,8 @@ textarea {
   padding-top: calc(var(--jl-header-height) + var(--jl-space-6));
 }
 
+.jl-app { --jl-page-gutter: max(4vw, var(--jl-space-6)); }
+
 .application-card {
   width: min(100%, 38rem);
   border: 1px solid var(--jl-border);
@@ -217,7 +219,7 @@ form button {
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--jl-space-6);
-  padding: 0 max(var(--jl-space-6), calc((100vw - 1440px) / 2 + var(--jl-space-6)));
+  padding: 0 var(--jl-page-gutter);
   border-bottom: 1px solid var(--jl-border);
   background: var(--jl-surface);
   box-shadow: var(--jl-shadow-sm);
@@ -287,7 +289,7 @@ form button {
     grid-template-rows: 1fr auto;
     align-content: center;
     gap: 2px var(--jl-space-4);
-    padding: var(--jl-space-2) var(--jl-space-4);
+    padding: var(--jl-space-2) var(--jl-page-gutter);
   }
 
   .global-header__brand { grid-area: brand; }
@@ -298,6 +300,7 @@ form button {
 
 @media (max-width: 40rem) {
   :root { --jl-header-height: 128px; }
+  .jl-app { --jl-page-gutter: var(--jl-space-4); }
 
   .global-header {
     grid-template-columns: minmax(0, 1fr);
@@ -308,7 +311,7 @@ form button {
     grid-template-rows: auto auto auto;
     align-content: center;
     gap: var(--jl-space-1);
-    padding: var(--jl-space-2) var(--jl-space-3);
+    padding: var(--jl-space-2) var(--jl-page-gutter);
   }
 
   .global-header__brand { gap: var(--jl-space-2); }
@@ -335,7 +338,7 @@ form button {
 
 .application-shell:has(.products) {
   display: block;
-  padding: calc(var(--jl-header-height) + var(--jl-space-4)) max(4vw, var(--jl-space-6)) var(--jl-space-8);
+  padding: calc(var(--jl-header-height) + var(--jl-space-4)) var(--jl-page-gutter) var(--jl-space-8);
 }
 
 .application-card:has(.settings-view) {
@@ -377,6 +380,8 @@ form button {
 
 .working-calendar { display: grid; gap: var(--jl-space-4); margin-bottom: var(--jl-space-8); }
 .working-calendar__heading { display: flex; align-items: center; justify-content: space-between; gap: var(--jl-space-4); }
+.working-calendar__header-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--jl-space-2); }
+.working-calendar__header-actions > button { border-color: var(--jl-border-strong); background: var(--jl-surface); color: var(--jl-primary); }
 .working-calendar__heading h3 { margin: 0 0 var(--jl-space-1); font-size: var(--jl-font-size-lg); }
 .working-calendar__heading p, .working-calendar__note { margin: 0; color: var(--jl-text-muted); }
 .working-calendar__year, .calendar-list__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--jl-space-2); }
@@ -399,16 +404,31 @@ form button {
 .calendar-list__actions button:last-child:not(:first-child) { background: var(--jl-surface); color: var(--jl-primary); border-color: var(--jl-border-strong); }
 .working-calendar__form { max-width: 38rem; }
 .working-calendar__form .calendar-list__actions button { margin-top: var(--jl-space-2); }
-.calendar-history { display: grid; width: 100%; gap: var(--jl-space-3); }
-.calendar-history li { display: grid; gap: var(--jl-space-1); padding: var(--jl-space-3); border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); }
+.calendar-history { display: grid; width: 100%; gap: var(--jl-space-2); }
+.calendar-history li { min-width: 0; padding: var(--jl-space-2); border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); overflow-wrap: anywhere; }
+.calendar-history__card-header { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--jl-space-1) var(--jl-space-2); min-width: 0; }
+.calendar-history__identity { display: flex; flex: 1 1 auto; align-items: baseline; flex-wrap: wrap; gap: 0.15rem var(--jl-space-2); min-width: 0; }
+.calendar-history__identity strong { min-width: 0; overflow-wrap: anywhere; }
+.calendar-history__identity time,.calendar-history__identity span { min-width: 0; color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
+.calendar-history__identity time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.calendar-history__badge { flex: 0 0 auto; margin-left: auto; padding: 0.15rem 0.4rem; border-radius: var(--jl-radius-sm); background: var(--jl-surface-alt); color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); font-weight: 600; }
+.calendar-history details { margin-top: var(--jl-space-1); }
+.calendar-history summary { width: fit-content; cursor: pointer; color: var(--jl-primary); font-weight: 600; }
+.calendar-history__values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--jl-space-3); margin: var(--jl-space-2) 0 0; }
+.calendar-history__values div { min-width: 0; padding-top: var(--jl-space-2); border-top: 1px solid var(--jl-border); }
+.calendar-history__values dt { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); font-weight: 600; }
+.calendar-history__values dd { margin: var(--jl-space-1) 0 0; }
+.calendar-history__footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--jl-space-2); }
+.calendar-history__footer button:first-child:not(:last-child) { margin-right: auto; }
 
 @media (max-width: 40rem) {
   .application-card:has(.settings-view) { margin-top: 0; padding: var(--jl-space-4); }
-  .application-shell:has(.products) { padding-inline: var(--jl-space-4); }
   .settings-view__heading { flex-direction: column; }
   .settings-view__planned { grid-template-columns: minmax(0, 1fr); }
   .working-calendar__heading, .calendar-list__row { align-items: flex-start; flex-direction: column; }
+  .working-calendar__header-actions { justify-content: flex-start; }
   .working-calendar__rules { grid-template-columns: minmax(0, 1fr); }
+  .calendar-history__values { grid-template-columns: minmax(0, 1fr); }
 }
 
 .application-card:has(.schedule-editor) {
@@ -689,7 +709,7 @@ form button {
 .workspace-table-row.selected,
 .workspace-chart-row.selected,
 .workspace-table-row:hover,
-.workspace-chart-row:hover { background: var(--jl-primary-soft); }
+.workspace-chart-row:hover { background: color-mix(in srgb, var(--jl-primary-soft) 58%, transparent); }
 .workspace-name-cell { display: flex; align-items: center; gap: 0.2rem; min-width: 0; }
 .workspace-name-cell .color-chip { width: 0.75rem; height: 0.75rem; flex: 0 0 auto; }
 .workspace-expand,
@@ -950,18 +970,25 @@ form button {
 
 .products-heading {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--jl-space-4);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--jl-space-2);
 }
 
-.products-heading h2 { margin-bottom: var(--jl-space-1); }
-.products-heading p { margin: 0; color: var(--jl-text-muted); }
+.products-heading h2 { margin: 0; }
 
 .products-primary-actions {
   display: flex;
   flex-wrap: wrap;
+  width: 100%;
   gap: var(--jl-space-2);
+}
+.products-primary-actions button {
+  display: inline-flex;
+  flex: 0 1 11.5rem;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
 }
 
 .product-card {
@@ -1087,12 +1114,6 @@ form button {
 }
 
 .product-card__menu-items button:hover { background: var(--jl-primary-soft); }
-
-@media (max-width: 40rem) {
-  .products-heading { align-items: flex-start; flex-direction: column; }
-  .products-primary-actions { width: 100%; }
-  .products-primary-actions button { flex: 1 1 auto; }
-}
 
 .product-details,
 .product-form {

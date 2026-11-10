@@ -238,12 +238,10 @@ export function Products({ workspace, onAccessLost }: {
   return (
     <section className="products" aria-labelledby="products-title">
       <div className="products-heading">
-        <div>
-          <h2 id="products-title">{messages.products}</h2>
-        </div>
+        <h2 id="products-title">{messages.products}</h2>
         {canEdit && <div className="products-primary-actions">
           <button type="button" disabled={busy} onClick={newProduct}>{messages.registerProduct}</button>
-          <button type="button" className="back-button" disabled={busy} onClick={() => {
+          <button type="button" disabled={busy} onClick={() => {
             window.history.pushState(null, "", "/produtos/importar");
             setShowImport(true);
           }}>{messages.importTitle}</button>
