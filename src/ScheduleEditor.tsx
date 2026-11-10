@@ -1,10 +1,12 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
 import { ColorField } from "./ColorField";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { ScheduleWorkspace } from "./ScheduleWorkspace";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
+import { dayNumber } from "../domain/schedule-workspace";
+import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import type { SkippedDateReason, SkippedWorkingDate } from "../domain/working-day-calculation";
 
 export interface ScheduleProduct { id: string; name: string; active: boolean }
@@ -42,6 +44,7 @@ interface DateDraft {
   originalCalendarVersion: number | null;
 }
 interface HistorySubject { id: string; disciplineId: string; stageId: string; name: string }
+interface CalendarImpactResponse { calendarVersion: number; impacts: ActivityCalendarImpact[] }
 interface DateChange { operationId: string; changedAt: string; previousStart: string | null;
   previousEnd: string | null; newStart: string; newEnd: string; reason: string }
 const auditDate = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo",
@@ -109,11 +112,38 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("loading");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [impactState, setImpactState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [impactData, setImpactData] = useState<CalendarImpactResponse | null>(null);
+  const [impactOpen, setImpactOpen] = useState(false);
+  const impactRequest = useRef(0);
+  const impactPanelRef = useRef<HTMLElement>(null);
+  const impactTriggerRef = useRef<HTMLElement | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const historyRequest = useRef(0);
   const canEdit = product.active && (workspace.role === "admin" || workspace.role === "editor");
   const base = `/api/workspaces/${workspace.id}/products/${product.id}`;
+
+  const refreshImpacts = useCallback(async () => {
+    const requestId = ++impactRequest.current;
+    setImpactState("loading");
+    setImpactData(null);
+    try {
+      const result = await authenticatedFetch(`${base}/calendar-impact`);
+      if (requestId !== impactRequest.current) return;
+      if (result.status === 401 || result.status === 403) { onAccessLost(); return; }
+      if (!result.ok) throw new Error("Calendar impact lookup failed.");
+      const payload = await result.json() as CalendarImpactResponse;
+      if (!Number.isSafeInteger(payload?.calendarVersion) || !Array.isArray(payload?.impacts) ||
+          payload.impacts.some((item) => !item || typeof item.activityId !== "string" ||
+            !["date_change", "version_only"].includes(item.impact))) {
+        throw new Error("Invalid calendar impact response.");
+      }
+      setImpactData(payload);
+      setImpactState("ready");
+      if (payload.impacts.length === 0) setImpactOpen(false);
+    } catch { if (requestId === impactRequest.current) setImpactState("error"); }
+  }, [base, onAccessLost]);
 
   const loadHistory = useCallback(async (subject: HistorySubject) => {
     const requestId = ++historyRequest.current;
@@ -206,7 +236,24 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
   }, [clearWorkingPreview]);
 
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
+  useEffect(() => {
+    if (state === "ready" && hierarchy) queueMicrotask(() => void refreshImpacts());
+  }, [state, hierarchy, refreshImpacts]);
   useEffect(() => { if (historySubject) queueMicrotask(() => void loadHistory(historySubject)); }, [historySubject, loadHistory]);
+
+  useEffect(() => {
+    if (!impactOpen) return;
+    queueMicrotask(() => impactPanelRef.current?.querySelector<HTMLElement>("button")?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setImpactOpen(false);
+        queueMicrotask(() => impactTriggerRef.current?.focus());
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [impactOpen]);
 
   useEffect(() => {
     if (!draft && !historySubject) return;
@@ -227,7 +274,10 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     return () => window.removeEventListener("keydown", keyboard);
   }, [draft, historySubject, busy, closeDraft]);
 
-  function rememberFocus() { previousFocus.current = document.activeElement as HTMLElement | null; }
+  function rememberFocus() {
+    previousFocus.current = document.activeElement as HTMLElement | null;
+    setImpactOpen(false);
+  }
 
   function toggle(id: string, level: "discipline" | "stage") {
     const update = (previous: Set<string> | null) => {
@@ -525,6 +575,23 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     setHistorySubject({ id: row.id, disciplineId: row.disciplineId, stageId: row.stageId, name: row.label });
   }
 
+  const impactRows = useMemo(() => (impactData?.impacts ?? []).map((impact) => ({
+    impact,
+    activity: hierarchy?.disciplines.find((item) => item.id === impact.disciplineId)
+      ?.stages.find((item) => item.id === impact.stageId)
+      ?.activities.find((item) => item.id === impact.activityId)
+  })), [impactData, hierarchy]);
+  const impactStale = impactRows.some(({ impact, activity }) =>
+    !activity || activity.planningMode !== "working_days" ||
+    activity.version !== impact.activityVersion ||
+    activity.plannedStart !== impact.currentStartDate ||
+    activity.plannedEnd !== impact.currentEndDate ||
+    activity.workingDayDuration !== impact.workingDays ||
+    activity.planningCalendarVersion !== impact.savedCalendarVersion ||
+    impact.currentCalendarVersion !== impactData?.calendarVersion);
+  const visibleImpacts = useMemo(() => impactState === "ready" && !impactStale
+    ? impactRows.map(({ impact }) => impact) : [], [impactRows, impactStale, impactState]);
+
   return (
     <section className="schedule-editor" aria-labelledby="schedule-title">
       <header className="schedule-titlebar">
@@ -538,9 +605,26 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       {state === "error" && <div role="alert"><p>{messages.scheduleLoadError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && hierarchy && (
         <>
+          {impactState === "loading" && <p className="calendar-impact-status" role="status">{messages.calendarImpactLoading}</p>}
+          {impactState === "error" && <div className="calendar-impact-notice" role="alert">
+            <span>{messages.calendarImpactError}</span>
+            <button type="button" onClick={() => void refreshImpacts()}>{messages.retry}</button>
+          </div>}
+          {impactState === "ready" && impactStale && <div className="calendar-impact-notice" role="alert">
+            <span>{messages.calendarImpactStale}</span>
+            <button type="button" onClick={() => void load(false)}>{messages.refreshHierarchy}</button>
+          </div>}
+          {visibleImpacts.length > 0 && <div className="calendar-impact-notice" aria-live="polite">
+            <span>{messages.calendarImpactNotice(visibleImpacts.length)}</span>
+            <button type="button" onClick={(event) => {
+              impactTriggerRef.current = event.currentTarget;
+              setImpactOpen(true);
+            }}>{messages.reviewCalendarImpacts}</button>
+          </div>}
           {feedback && !draft && <div role="alert" className="feedback"><p>{feedback}</p></div>}
           {hierarchy.disciplines.length === 0 && <p>{messages.noDisciplines}</p>}
           <ScheduleWorkspace key={product.id} product={product} tree={hierarchy} targets={targets}
+            calendarImpacts={impactOpen ? visibleImpacts : undefined}
             openDisciplines={openDisciplines ?? new Set()} openStages={openStages ?? new Set()}
             canEdit={canEdit} onToggle={(row) => {
               if (row.kind === "discipline" || row.kind === "stage") toggle(row.id, row.kind);
@@ -549,6 +633,40 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
             onCreateTarget={createTarget} onUpdateTarget={updateTarget} onDeleteTarget={deleteTarget} />
         </>
       )}
+      {impactOpen && state === "ready" && <aside ref={impactPanelRef} className="calendar-impact-panel"
+        role="dialog" aria-labelledby="calendar-impact-title">
+        <div className="calendar-impact-panel__header">
+          <h3 id="calendar-impact-title">{messages.calendarImpactTitle}</h3>
+          <button type="button" onClick={() => {
+            setImpactOpen(false);
+            queueMicrotask(() => impactTriggerRef.current?.focus());
+          }}>{messages.calendarImpactLater}</button>
+        </div>
+        <p>{messages.calendarImpactReadOnly}</p>
+        {impactState === "loading" && <p role="status">{messages.calendarImpactLoading}</p>}
+        {impactState === "error" && <p role="alert">{messages.calendarImpactError}</p>}
+        {impactState === "ready" && impactStale && <p role="alert">{messages.calendarImpactStale}</p>}
+        {impactState === "ready" && !impactStale && <>
+          <p className="calendar-impact-panel__version">{messages.calendarImpactSnapshot(impactData?.calendarVersion ?? 0)}</p>
+          <ol className="calendar-impact-list">{impactRows.map(({ impact, activity }) => {
+            const difference = dayNumber(impact.proposedEndDate) - dayNumber(impact.currentEndDate);
+            return <li key={impact.activityId}>
+              <h4>{activity?.name ?? messages.scheduleNotFound}</h4>
+              <span className="calendar-impact-kind">{impact.impact === "date_change"
+                ? messages.calendarImpactDateChange : messages.calendarImpactVersionOnly}</span>
+              <p>{messages.calendarImpactCurrentEnd(formatCivilDate(impact.currentEndDate))}</p>
+              <p>{messages.calendarImpactProposedEnd(formatCivilDate(impact.proposedEndDate))}</p>
+              <p>{messages.calendarImpactDifference(difference)}</p>
+              <p>{messages.calendarImpactVersions(impact.savedCalendarVersion, impact.currentCalendarVersion)}</p>
+              {!impact.optionalDaysVerified && <p className="calendar-impact-warning" role="status">
+                {messages.calendarImpactCoverageWarning(impact.unverifiedOptionalYears.join(", "))}
+              </p>}
+            </li>;
+          })}</ol>
+        </>}
+        <button type="button" onClick={() => void (impactStale ? load(false) : refreshImpacts())}
+          disabled={impactState === "loading"}>{messages.calendarImpactRefresh}</button>
+      </aside>}
       {((draft && canEdit) || historySubject) && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) closeDraft();
       }}><div ref={drawerRef} className="schedule-drawer" role="dialog" aria-modal="true"

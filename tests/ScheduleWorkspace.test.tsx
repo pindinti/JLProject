@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { makeTimeline, timelinePosition, type ScheduleTarget, type ScheduleTree } from "../domain/schedule-workspace";
+import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import { ScheduleWorkspace } from "../src/ScheduleWorkspace";
 
 const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic discipline",
@@ -12,9 +13,10 @@ const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic 
 const targets = [{ id: "target", name: "Synthetic target", targetDate: "2026-11-07",
   description: null, color: "#AA4557", operationalDate: null, displayOrder: 0, version: 1 }];
 
-function mount(canEdit = true) {
+function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[]) {
   return render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
     targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
+    calendarImpacts={calendarImpacts}
     canEdit={canEdit} onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()}
     onAddDiscipline={vi.fn()} onRefresh={vi.fn()}
     onCreateTarget={vi.fn(async (value) => ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }))}
@@ -23,6 +25,30 @@ function mount(canEdit = true) {
 }
 
 describe("schedule workspace refinements", () => {
+  it("layers a non-interactive proposal on activity rows without replacing saved bars", () => {
+    const impact: ActivityCalendarImpact = {
+      activityId: "activity", disciplineId: "discipline", stageId: "stage", activityVersion: 1,
+      workingDays: 2, savedCalendarVersion: 1, currentCalendarVersion: 2,
+      currentStartDate: "2026-11-01", currentEndDate: "2028-01-17",
+      proposedStartDate: "2026-11-01", proposedEndDate: "2028-01-19",
+      impact: "date_change", skippedDates: [], optionalDaysVerified: false,
+      unverifiedOptionalYears: [2028]
+    };
+    const { container } = mount(true, [impact]);
+    const original = container.querySelector<HTMLElement>(".timeline-bar.bar-activity")!;
+    const proposed = container.querySelector<HTMLElement>(".timeline-proposed-bar")!;
+    expect(original).toHaveStyle({ backgroundColor: "#336699" });
+    expect(proposed.dataset.activityId).toBe("activity");
+    expect(proposed.style.width).not.toBe(original.style.width);
+    expect(proposed).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelectorAll(".timeline-target-line")).toHaveLength(1);
+    expect([...container.querySelectorAll<HTMLElement>(".workspace-table-row")].map((row) => row.dataset.rowKey))
+      .toEqual([...container.querySelectorAll<HTMLElement>(".workspace-chart-row")].map((row) => row.dataset.rowKey));
+    fireEvent.click(screen.getByRole("button", { name: "Mês" }));
+    expect(container.querySelector(".timeline-proposed-bar")).toBeInTheDocument();
+    expect(container.querySelectorAll(".workspace-chart-row")).toHaveLength(4);
+  });
+
   it("keeps one visible horizontal scrollbar outside the long vertical row scroller", () => {
     const { container } = mount();
     expect(container.querySelector(".schedule-workspace")).toHaveAttribute("data-density", "compact");

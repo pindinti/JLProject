@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ScheduleEditor } from "../src/ScheduleEditor";
 import { formatCivilDate, parseBrazilianDate } from "../src/civil-date";
+import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 
 const api = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../src/auth", () => ({ authenticatedFetch: api.fetch }));
@@ -18,6 +19,16 @@ const stage = { id: activity.stageId, disciplineId: "bba53e18-f13f-4b2d-a02e-65a
 const discipline = { id: stage.disciplineId, productId: product.id, name: "Synthetic discipline",
   shortCode: "ENG", color: "#225588", description: null, displayOrder: 0, version: 1, stages: [stage] };
 const definitions = [{ id: "add2b76e-72b5-4a0a-b8e8-3bd095688a01", code: "EC", color: "#336699" }];
+const workingActivity = { ...activity, plannedStart: "2026-11-09", plannedEnd: "2026-11-10",
+  version: 3, planningMode: "working_days" as const, workingDayDuration: 2, planningCalendarVersion: 1 };
+const workingTree = { productId: product.id, disciplines: [{ ...discipline, stages: [{ ...stage,
+  derivedStart: "2026-11-09", derivedEnd: "2026-11-10", activities: [workingActivity] }] }] };
+const dateImpact: ActivityCalendarImpact = { activityId: activity.id, disciplineId: discipline.id,
+  stageId: stage.id, activityVersion: 3, workingDays: 2, savedCalendarVersion: 1,
+  currentCalendarVersion: 2, currentStartDate: "2026-11-09", currentEndDate: "2026-11-10",
+  proposedStartDate: "2026-11-09", proposedEndDate: "2026-11-11", impact: "date_change",
+  skippedDates: [{ date: "2026-11-10", reasons: [{ kind: "national_holiday", code: "test" }] }],
+  optionalDaysVerified: false, unverifiedOptionalYears: [2026] };
 
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }); }
 function setup(tree: { productId: string; disciplines: unknown[] } = { productId: product.id, disciplines: [discipline] },
@@ -25,7 +36,8 @@ function setup(tree: { productId: string; disciplines: unknown[] } = { productId
   api.fetch.mockImplementation((path: string) => Promise.resolve(path.endsWith("/hierarchy")
     ? json({ hierarchy: tree }) : path.endsWith("/targets")
       ? json({ targets }) : path.endsWith("/date-history")
-        ? json({ changes: [] }) : json({ stageDefinitions: definitions })));
+        ? json({ changes: [] }) : path.endsWith("/calendar-impact")
+          ? json({ calendarVersion: 0, impacts: [] }) : json({ stageDefinitions: definitions })));
 }
 function mount(role: "admin" | "editor" | "viewer" = "admin") {
   const onAccessLost = vi.fn();
@@ -36,7 +48,91 @@ function mount(role: "admin" | "editor" | "viewer" = "admin") {
 
 beforeEach(() => { vi.clearAllMocks(); setup(); });
 
+function setupImpacts(impacts: ActivityCalendarImpact[], tree: { productId: string; disciplines: unknown[] } = workingTree) {
+  setup(tree);
+  const fallback = api.fetch.getMockImplementation()!;
+  api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith("/calendar-impact")
+    ? Promise.resolve(json({ calendarVersion: 2, impacts })) : fallback(path, options));
+}
+
 describe("schedule editor", () => {
+  it("reviews date and version impacts without writing or overlaying manual activities", async () => {
+    const manual = { ...activity, id: "4c3c7b16-9ff4-41f7-8835-11b2b26966dd", name: "Manual activity" };
+    const second = { ...workingActivity, id: "02eb3d51-f256-4b9a-b939-a44ec2149906",
+      name: "Version-only activity" };
+    const tree = { productId: product.id, disciplines: [{ ...discipline, stages: [{ ...stage,
+      activities: [workingActivity, second, manual] }] }] };
+    setupImpacts([dateImpact, { ...dateImpact, activityId: second.id, impact: "version_only",
+      proposedEndDate: dateImpact.currentEndDate, optionalDaysVerified: true,
+      unverifiedOptionalYears: [] }], tree);
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    expect(await screen.findByText("2 atividades com impactos do calendário")).toBeInTheDocument();
+    expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog", { name: "Prévia de impactos do calendário" });
+    expect(within(panel).getByText("Synthetic activity")).toBeInTheDocument();
+    expect(within(panel).getByText("Version-only activity")).toBeInTheDocument();
+    expect(within(panel).queryByText("Manual activity")).not.toBeInTheDocument();
+    expect(within(panel).getAllByText("Término atual: 10/11/2026")).toHaveLength(2);
+    expect(within(panel).getByText("Término proposto: 11/11/2026")).toBeInTheDocument();
+    expect(within(panel).getByText("Versão mudou; datas mantidas")).toBeInTheDocument();
+    expect(within(panel).getByText(/não está verificada para 2026/)).toBeInTheDocument();
+    expect(container.querySelectorAll(".timeline-proposed-bar")).toHaveLength(1);
+    expect(container.querySelector(".timeline-proposed-bar")).toHaveAttribute("data-activity-id", activity.id);
+    expect(api.fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: expect.stringMatching(/POST|PATCH|PUT|DELETE/) }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Agora não" }));
+    expect(screen.queryByRole("dialog", { name: "Prévia de impactos do calendário" })).not.toBeInTheDocument();
+    expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revisar impactos" })).toBeInTheDocument();
+  });
+
+  it("refreshes impact data and clears the preview when the server reports no impact", async () => {
+    let impacts: ActivityCalendarImpact[] = [dateImpact];
+    setup(workingTree);
+    const fallback = api.fetch.getMockImplementation()!;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith("/calendar-impact")
+      ? Promise.resolve(json({ calendarVersion: 2, impacts })) : fallback(path, options));
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    impacts = [];
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Atualizar prévia" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Revisar impactos" })).not.toBeInTheDocument());
+    expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a retryable error and suppresses stale overlays on a failed refresh", async () => {
+    setupImpacts([dateImpact]);
+    const fallback = api.fetch.getMockImplementation()!;
+    let fail = false;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) =>
+      path.endsWith("/calendar-impact") && fail ? Promise.resolve(json({}, 503)) : fallback(path, options));
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    fail = true;
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Atualizar prévia" }));
+    expect(await screen.findAllByText("Não foi possível carregar os impactos do calendário. Tente novamente.")).toHaveLength(2);
+    expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();
+    fail = false;
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Atualizar prévia" }));
+    await waitFor(() => expect(container.querySelector(".timeline-proposed-bar")).toBeInTheDocument());
+  });
+
+  it("withholds mismatched activity proposals and requests fresh schedule data", async () => {
+    setupImpacts([{ ...dateImpact, activityVersion: 2 }]);
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    expect(await screen.findByText("O cronograma mudou desde o cálculo da prévia. Atualize os dados para revisar os impactos.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revisar impactos" })).not.toBeInTheDocument();
+    expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Atualizar dados" })[0]);
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/calendar-impact")).length)
+      .toBeGreaterThan(1));
+  });
+
   it("uses a compact product breadcrumb and keeps schedule actions in the workspace toolbar", async () => {
     const { container } = render(<ScheduleEditor workspace={workspace} product={product}
       onBack={vi.fn()} onAccessLost={vi.fn()} />);
@@ -180,6 +276,7 @@ describe("schedule editor", () => {
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
     let sharedColor = "#336699";
     api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
       if (path.endsWith("/stage-definitions"))
         return Promise.resolve(json({ stageDefinitions: [{ ...definitions[0], color: sharedColor }] }));
       if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id,
@@ -260,6 +357,7 @@ describe("schedule editor", () => {
       endDate: workingDays === 4 ? "2026-11-11" : "2026-11-10", workingDays,
       calendarVersion: 8, optionalDaysVerified: false, unverifiedOptionalYears: [2027], skippedDates: [] });
     api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
       if (path.includes("working-day-preview")) {
         const url = new URL(path, "https://app.test");
         return Promise.resolve(json({ preview: previewFor(url.searchParams.get("startDate")!,
@@ -313,6 +411,7 @@ describe("schedule editor", () => {
     let current = activity;
     let changes: unknown[] = [];
     api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
       if (path.endsWith("/date-history")) return Promise.resolve(json({ changes }));
       if (path.endsWith("/dates") && options?.method === "PATCH") {
         current = { ...current, plannedStart: "2026-11-03", plannedEnd: "2026-11-10", version: 2 };

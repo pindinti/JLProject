@@ -6,13 +6,17 @@ import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { messages } from "./locales/pt-BR";
 import { ColorField } from "./ColorField";
 import { layoutMilestoneLabels } from "./design/gantt-colors";
+import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+const noCalendarImpacts: ActivityCalendarImpact[] = [];
 
 export function ScheduleWorkspace({ product, tree, targets, openDisciplines, openStages,
-  canEdit, onToggle, onEdit, onAdd, onAddDiscipline, onRefresh, onHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
+  canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
+  onRefresh, onHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[];
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
+  calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
   onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
   onAddDiscipline: () => void; onRefresh: () => void;
@@ -41,7 +45,17 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   const dragging = useRef(false);
   const rows = useMemo(() => visibleScheduleRows(product, tree, openDisciplines, openStages, productExpanded),
     [product, tree, openDisciplines, openStages, productExpanded]);
-  const scale = useMemo(() => makeTimeline(tree, targets, zoom, today, bounds), [tree, targets, zoom, today, bounds]);
+  const scale = useMemo(() => {
+    const previewBounds = { ...bounds };
+    for (const impact of calendarImpacts) {
+      if (impact.impact !== "date_change") continue;
+      previewBounds.startDay = Math.min(previewBounds.startDay, dayNumber(impact.proposedStartDate) - 14);
+      previewBounds.endDay = Math.max(previewBounds.endDay, dayNumber(impact.proposedEndDate) + 14);
+    }
+    return makeTimeline(tree, targets, zoom, today, previewBounds);
+  }, [tree, targets, zoom, today, bounds, calendarImpacts]);
+  const impactByActivity = useMemo(() => new Map(calendarImpacts.filter((impact) =>
+    impact.impact === "date_change").map((impact) => [impact.activityId, impact])), [calendarImpacts]);
   const milestoneLabels = useMemo(() => layoutMilestoneLabels(targets,
     (date) => timelinePosition(scale, date), scale.width), [targets, scale]);
   const milestoneLaneCount = milestoneLabels.reduce((count, label) => Math.max(count, label.lane + 1), 0);
@@ -294,6 +308,9 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
               title={`${messages.today}: ${formatCivilDate(today)}`} />
             {rows.map((row) => {
               const interval = timelineInterval(scale, row.start, row.end);
+              const impact = row.kind === "activity" ? impactByActivity.get(row.id) : undefined;
+              const proposedInterval = impact
+                ? timelineInterval(scale, impact.proposedStartDate, impact.proposedEndDate) : null;
               return <div key={row.key} className={`workspace-chart-row row-${row.kind}${selected === row.key ? " selected" : ""}`}
                 data-row-key={row.key}
                 onClick={() => setSelected(row.key)}>
@@ -302,6 +319,8 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
                   title={messages.scheduleBarDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end))}
                   aria-label={messages.scheduleBarDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end))}
                   onClick={() => setSelected(row.key)} />}
+                {proposedInterval && <span className="timeline-proposed-bar" data-activity-id={row.id}
+                  aria-hidden="true" style={{ left: proposedInterval.left, width: proposedInterval.width }} />}
                 {!interval && row.kind === "stage" && <span className="workspace-no-date">{messages.noActivities}</span>}
               </div>;
             })}
