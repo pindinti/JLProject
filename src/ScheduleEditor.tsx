@@ -141,7 +141,9 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
       }
       setImpactData(payload);
       setImpactState("ready");
-      if (payload.impacts.length === 0) setImpactOpen(false);
+      const hasDateChange = payload.impacts.some((item) =>
+        item.proposedStartDate !== item.currentStartDate || item.proposedEndDate !== item.currentEndDate);
+      if (!hasDateChange) setImpactOpen(false);
     } catch { if (requestId === impactRequest.current) setImpactState("error"); }
   }, [base, onAccessLost]);
 
@@ -591,6 +593,10 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
     impact.currentCalendarVersion !== impactData?.calendarVersion);
   const visibleImpacts = useMemo(() => impactState === "ready" && !impactStale
     ? impactRows.map(({ impact }) => impact) : [], [impactRows, impactStale, impactState]);
+  const actualDateChangeCount = visibleImpacts.filter((impact) =>
+    impact.proposedStartDate !== impact.currentStartDate || impact.proposedEndDate !== impact.currentEndDate).length;
+  const unverifiedCoverageYears = [...new Set(visibleImpacts.flatMap((impact) =>
+    impact.optionalDaysVerified ? [] : impact.unverifiedOptionalYears))].sort((left, right) => left - right);
 
   return (
     <section className="schedule-editor" aria-labelledby="schedule-title">
@@ -614,8 +620,11 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
             <span>{messages.calendarImpactStale}</span>
             <button type="button" onClick={() => void load(false)}>{messages.refreshHierarchy}</button>
           </div>}
-          {visibleImpacts.length > 0 && <div className="calendar-impact-notice" aria-live="polite">
-            <span>{messages.calendarImpactNotice(visibleImpacts.length)}</span>
+          {unverifiedCoverageYears.length > 0 && <div className="calendar-impact-notice calendar-impact-warning" role="status">
+            <span>{messages.calendarImpactCoverageWarning(unverifiedCoverageYears.join(", "))}</span>
+          </div>}
+          {actualDateChangeCount > 0 && <div className="calendar-impact-notice" aria-live="polite">
+            <span>{messages.calendarImpactNotice(actualDateChangeCount)}</span>
             <button type="button" onClick={(event) => {
               impactTriggerRef.current = event.currentTarget;
               setImpactOpen(true);
@@ -623,7 +632,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost }: {
           </div>}
           {feedback && !draft && <div role="alert" className="feedback"><p>{feedback}</p></div>}
           {hierarchy.disciplines.length === 0 && <p>{messages.noDisciplines}</p>}
-          <ScheduleWorkspace key={product.id} product={product} tree={hierarchy} targets={targets}
+          <ScheduleWorkspace key={`${workspace.id}:${product.id}`} workspaceId={workspace.id} product={product} tree={hierarchy} targets={targets}
             calendarImpacts={impactOpen ? visibleImpacts : undefined}
             openDisciplines={openDisciplines ?? new Set()} openStages={openStages ?? new Set()}
             canEdit={canEdit} onToggle={(row) => {

@@ -1,8 +1,11 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { makeTimeline, timelinePosition, type ScheduleTarget, type ScheduleTree } from "../domain/schedule-workspace";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import { ScheduleWorkspace } from "../src/ScheduleWorkspace";
+
+const auth = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock("../src/auth", () => ({ authenticatedFetch: auth.fetch }));
 
 const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic discipline",
   shortCode: "SD", color: "#225588", displayOrder: 0,
@@ -13,9 +16,9 @@ const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic 
 const targets = [{ id: "target", name: "Synthetic target", targetDate: "2026-11-07",
   description: null, color: "#AA4557", operationalDate: null, displayOrder: 0, version: 1 }];
 
-function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[]) {
+function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[], workspaceId?: string) {
   return render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
-    targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
+    targets={targets} workspaceId={workspaceId} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
     calendarImpacts={calendarImpacts}
     canEdit={canEdit} onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()}
     onAddDiscipline={vi.fn()} onRefresh={vi.fn()}
@@ -25,6 +28,81 @@ function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[]) {
 }
 
 describe("schedule workspace refinements", () => {
+  it("shades only weekends and applicable workspace calendar dates behind the Gantt", async () => {
+    auth.fetch.mockReset();
+    auth.fetch.mockImplementation(async (path: string) => {
+      const year = Number(new URL(path, "https://app.test").searchParams.get("year"));
+      const exceptions = year === 2026 ? [
+        { kind: "municipal_holiday", startDate: "2026-11-09", endDate: "2026-11-09" }
+      ] : year === 2027 ? [
+        { kind: "company_shutdown", startDate: "2027-02-08", endDate: "2027-02-10" }
+      ] : [];
+      return new Response(JSON.stringify({ calendar: { version: 1, exceptions } }), { status: 200 });
+    });
+    const { container } = mount(true, undefined, "workspace");
+    await waitFor(() => expect(container.querySelector('[data-start-date="2026-11-07"]')).toBeInTheDocument());
+    const bands = [...container.querySelectorAll<HTMLElement>(".timeline-nonworking-days span")];
+    const highlighted = (date: string) => bands.some((band) =>
+      band.dataset.startDate! <= date && date <= band.dataset.endDate!);
+    expect(highlighted("2026-11-07")).toBe(true);
+    expect(highlighted("2026-11-08")).toBe(true);
+    expect(highlighted("2026-11-09")).toBe(true);
+    expect(highlighted("2026-11-20")).toBe(true);
+    expect(highlighted("2026-12-24")).toBe(true);
+    expect(highlighted("2027-02-08")).toBe(true);
+    expect(highlighted("2027-02-10")).toBe(true);
+    expect(highlighted("2027-02-15")).toBe(false);
+    expect(bands.find((band) => band.dataset.startDate === "2026-11-20"))
+      .toHaveStyle({ width: "36px" });
+
+    const chartContent = container.querySelector(".workspace-chart-content")!;
+    const bandLayer = chartContent.querySelector(".timeline-nonworking-days")!;
+    expect(bandLayer).toHaveAttribute("aria-hidden", "true");
+    expect([...chartContent.children].indexOf(bandLayer)).toBeLessThan(
+      [...chartContent.children].indexOf(chartContent.querySelector(".timeline-target-line")!));
+    expect(bandLayer.compareDocumentPosition(chartContent.querySelector(".timeline-bar")!) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+
+    const weekend = bands.find((band) => band.dataset.startDate === "2026-11-07")!;
+    const originalLeft = weekend.style.left;
+    const originalWidth = weekend.style.width;
+    fireEvent.click(screen.getByRole("button", { name: "Dia" }));
+    const zoomedLeft = weekend.style.left;
+    expect(zoomedLeft).not.toBe(originalLeft);
+    expect(weekend.style.width).toBe("90px");
+    fireEvent.keyDown(screen.getByRole("separator"), { key: "ArrowRight" });
+    expect(weekend.style.left).toBe(zoomedLeft);
+    const scrollbar = container.querySelector<HTMLElement>(".workspace-horizontal-scroll")!;
+    scrollbar.scrollLeft = 240;
+    fireEvent.scroll(scrollbar);
+    expect(scrollbar.scrollLeft).toBe(240);
+    expect(weekend.style.width).not.toBe(originalWidth);
+  });
+
+  it("reports unavailable workspace exceptions and retries the current calendar range", async () => {
+    let fail = true;
+    auth.fetch.mockReset();
+    auth.fetch.mockImplementation(async () => {
+      if (fail) return new Response(null, { status: 503 });
+      return new Response(JSON.stringify({ calendar: { version: 4, exceptions: [
+        { kind: "municipal_holiday", startDate: "2026-11-09", endDate: "2026-11-09" }
+      ] } }), { status: 200 });
+    });
+    const { container } = mount(true, undefined, "workspace");
+    expect(await screen.findByText("Não foi possível carregar todas as exceções do calendário; alguns destaques podem faltar."))
+      .toBeInTheDocument();
+    expect(container.querySelector('[data-start-date="2026-11-07"]')).toBeInTheDocument();
+    expect([...container.querySelectorAll<HTMLElement>(".timeline-nonworking-days span")]
+      .some((band) => band.dataset.startDate! <= "2026-11-09" && "2026-11-09" <= band.dataset.endDate!)).toBe(false);
+
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Tentar carregar calendário novamente" }));
+    await waitFor(() => expect([...container.querySelectorAll<HTMLElement>(".timeline-nonworking-days span")]
+      .some((band) => band.dataset.startDate! <= "2026-11-09" && "2026-11-09" <= band.dataset.endDate!)).toBe(true));
+    expect(screen.queryByText("Não foi possível carregar todas as exceções do calendário; alguns destaques podem faltar."))
+      .not.toBeInTheDocument();
+  });
+
   it("layers a non-interactive proposal on activity rows without replacing saved bars", () => {
     const impact: ActivityCalendarImpact = {
       activityId: "activity", disciplineId: "discipline", stageId: "stage", activityVersion: 1,

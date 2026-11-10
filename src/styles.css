@@ -459,6 +459,8 @@ form button {
 .calendar-impact-list h4 { margin: 0 0 0.35rem; font-size: var(--jl-font-size-md); overflow-wrap: anywhere; }
 .calendar-impact-kind { color: var(--jl-primary); font-weight: 600; }
 .calendar-impact-warning { color: var(--jl-warning); }
+.calendar-highlight-status { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); }
+.calendar-highlight-status button { min-height: 1.7rem; padding: 0.1rem 0.3rem; border: 0; background: transparent; color: var(--jl-primary); text-decoration: underline; }
 .schedule-breadcrumb { min-height: 1.8rem; padding: 0.15rem 0.45rem; border: 0; background: transparent; color: var(--jl-primary); font-size: var(--jl-font-size-sm); white-space: nowrap; }
 
 .schedule-workspace {
@@ -614,6 +616,8 @@ form button {
 .timeline-today-label { position: absolute; top: 0; z-index: 1; padding: 0 0.2rem; background: var(--jl-success-bg); color: var(--jl-success); font-weight: 700; font-size: 0.72rem; white-space: nowrap; }
 .workspace-chart-scroll { align-self: start; }
 .workspace-chart-content { position: relative; background-image: linear-gradient(to right, var(--jl-gantt-grid) 1px, transparent 1px); background-size: 12px 100%; }
+.timeline-nonworking-days { position: absolute; z-index: 0; inset: 0; pointer-events: none; }
+.timeline-nonworking-days span { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--jl-gantt-weekend) 72%, transparent); }
 .workspace-chart-row { position: relative; }
 .timeline-bar {
   position: absolute;

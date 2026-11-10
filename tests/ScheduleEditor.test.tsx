@@ -37,7 +37,8 @@ function setup(tree: { productId: string; disciplines: unknown[] } = { productId
     ? json({ hierarchy: tree }) : path.endsWith("/targets")
       ? json({ targets }) : path.endsWith("/date-history")
         ? json({ changes: [] }) : path.endsWith("/calendar-impact")
-          ? json({ calendarVersion: 0, impacts: [] }) : json({ stageDefinitions: definitions })));
+          ? json({ calendarVersion: 0, impacts: [] }) : path.includes("/calendar?year=")
+            ? json({ calendar: { version: 0, exceptions: [] } }) : json({ stageDefinitions: definitions })));
 }
 function mount(role: "admin" | "editor" | "viewer" = "admin") {
   const onAccessLost = vi.fn();
@@ -67,7 +68,8 @@ describe("schedule editor", () => {
       unverifiedOptionalYears: [] }], tree);
     const { container } = render(<ScheduleEditor workspace={workspace} product={product}
       onBack={vi.fn()} onAccessLost={vi.fn()} />);
-    expect(await screen.findByText("2 atividades com impactos do calendário")).toBeInTheDocument();
+    expect(await screen.findByText("1 atividade com alteração de data proposta")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("pontos facultativos não está verificada para 2026");
     expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Revisar impactos" }));
     const panel = screen.getByRole("dialog", { name: "Prévia de impactos do calendário" });
@@ -87,7 +89,35 @@ describe("schedule editor", () => {
     expect(screen.getByRole("button", { name: "Revisar impactos" })).toBeInTheDocument();
   });
 
-  it("refreshes impact data and clears the preview when the server reports no impact", async () => {
+  it("suppresses the impact notice for version-only changes while surfacing coverage warnings", async () => {
+    const versionOnly = { ...dateImpact, impact: "version_only" as const,
+      proposedStartDate: dateImpact.currentStartDate, proposedEndDate: dateImpact.currentEndDate,
+      optionalDaysVerified: false, unverifiedOptionalYears: [2027] };
+    setupImpacts([versionOnly]);
+    render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/calendar-impact"))).toBe(true));
+    expect(await screen.findByText(/pontos facultativos não está verificada para 2027/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revisar impactos" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/atividade com alteração de data proposta/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Prévia de impactos do calendário" })).not.toBeInTheDocument();
+    expect(api.fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      method: expect.stringMatching(/POST|PATCH|PUT|DELETE/)
+    }));
+  });
+
+  it("counts actual proposed date changes in the review notification", async () => {
+    setupImpacts([dateImpact]);
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    expect(await screen.findByText("1 atividade com alteração de data proposta")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revisar impactos" })).toBeInTheDocument();
+    expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Revisar impactos" }));
+    expect(container.querySelector(".timeline-proposed-bar")).toBeInTheDocument();
+  });
+
+  it("closes an open review when refreshed results are version-only", async () => {
     let impacts: ActivityCalendarImpact[] = [dateImpact];
     setup(workingTree);
     const fallback = api.fetch.getMockImplementation()!;
@@ -96,7 +126,8 @@ describe("schedule editor", () => {
     const { container } = render(<ScheduleEditor workspace={workspace} product={product}
       onBack={vi.fn()} onAccessLost={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
-    impacts = [];
+    impacts = [{ ...dateImpact, impact: "version_only", proposedStartDate: dateImpact.currentStartDate,
+      proposedEndDate: dateImpact.currentEndDate, optionalDaysVerified: true, unverifiedOptionalYears: [] }];
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Atualizar prévia" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Revisar impactos" })).not.toBeInTheDocument());
     expect(container.querySelector(".timeline-proposed-bar")).not.toBeInTheDocument();

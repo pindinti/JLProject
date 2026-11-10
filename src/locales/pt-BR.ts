@@ -250,7 +250,7 @@ export const messages = {
   scheduleNotFound: "Cronograma não encontrado.",
   scheduleLoadError: "Não foi possível carregar o cronograma. Tente novamente.",
   refreshHierarchy: "Atualizar dados",
-  calendarImpactNotice: (count: number) => `${count.toLocaleString("pt-BR")} ${count === 1 ? "atividade com impacto" : "atividades com impactos"} do calendário`,
+  calendarImpactNotice: (count: number) => `${count.toLocaleString("pt-BR")} ${count === 1 ? "atividade com alteração de data proposta" : "atividades com alterações de data propostas"}`,
   reviewCalendarImpacts: "Revisar impactos",
   calendarImpactTitle: "Prévia de impactos do calendário",
   calendarImpactLater: "Agora não",
@@ -270,6 +270,9 @@ export const messages = {
     `Versão do calendário: ${saved.toLocaleString("pt-BR")} → ${current.toLocaleString("pt-BR")}`,
   calendarImpactCoverageWarning: (years: string) =>
     `A lista oficial de pontos facultativos não está verificada para ${years}. Confira o calendário.`,
+  calendarHighlightLoading: "Carregando feriados e exceções do calendário…",
+  calendarHighlightError: "Não foi possível carregar todas as exceções do calendário; alguns destaques podem faltar.",
+  calendarHighlightRetry: "Tentar carregar calendário novamente",
   noDisciplines: "Nenhuma disciplina cadastrada.",
   noStages: "Nenhuma etapa cadastrada nesta disciplina.",
   noActivities: "Nenhuma atividade cadastrada nesta etapa.",

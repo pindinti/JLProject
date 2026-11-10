@@ -7,14 +7,18 @@ import { messages } from "./locales/pt-BR";
 import { ColorField } from "./ColorField";
 import { layoutMilestoneLabels } from "./design/gantt-colors";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
+import { nonWorkingDayRanges } from "../domain/non-working-day-ranges";
+import { parseCivilDate, type CalendarExceptionDates } from "../domain/working-calendar";
+import { authenticatedFetch } from "./auth";
 
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
 const noCalendarImpacts: ActivityCalendarImpact[] = [];
+type CalendarYearSnapshot = { version: number; exceptions: CalendarExceptionDates[] };
 
-export function ScheduleWorkspace({ product, tree, targets, openDisciplines, openStages,
+export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
   onRefresh, onHistory, onCreateTarget, onUpdateTarget, onDeleteTarget }: {
-  product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[];
+  product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
@@ -37,6 +41,7 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   const [productExpanded, setProductExpanded] = useState(true);
   const [mobilePane, setMobilePane] = useState<"table" | "gantt">("table");
   const [targetDialog, setTargetDialog] = useState<ScheduleTarget | "new" | null>(null);
+  const [calendarExceptionsByYear, setCalendarExceptionsByYear] = useState<Record<number, CalendarYearSnapshot | null>>({});
   const splitRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -54,6 +59,48 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
     }
     return makeTimeline(tree, targets, zoom, today, previewBounds);
   }, [tree, targets, zoom, today, bounds, calendarImpacts]);
+  const calendarYears = useMemo(() => {
+    const first = parseCivilDate(civilFromDay(scale.startDay))?.year;
+    const last = parseCivilDate(civilFromDay(scale.endDay))?.year;
+    if (first === undefined || last === undefined) return [];
+    return Array.from({ length: last - first + 1 }, (_, index) => first + index)
+      .filter((year) => year >= 2026 && year <= 2100);
+  }, [scale.startDay, scale.endDay]);
+  const calendarYearKey = calendarYears.join(",");
+  useEffect(() => {
+    if (!workspaceId || !calendarYearKey) return;
+    const years = calendarYearKey.split(",").map(Number).filter((year) => !(year in calendarExceptionsByYear));
+    if (years.length === 0) return;
+    let active = true;
+    void Promise.all(years.map(async (year): Promise<[number, CalendarYearSnapshot | null]> => {
+      try {
+        const response = await authenticatedFetch(`/api/workspaces/${workspaceId}/calendar?year=${year}`);
+        if (!response.ok) return [year, null];
+        const payload = await response.json() as { calendar?: { version?: unknown; exceptions?: unknown } };
+        if (!Number.isSafeInteger(payload.calendar?.version) || !Array.isArray(payload.calendar?.exceptions)) return [year, null];
+        const exceptions = payload.calendar.exceptions.filter((item): item is CalendarExceptionDates => {
+          if (!item || typeof item !== "object") return false;
+          const candidate = item as Partial<CalendarExceptionDates>;
+          return ["municipal_holiday", "collective_vacation", "company_shutdown"].includes(candidate.kind ?? "") &&
+            typeof candidate.startDate === "string" && !!parseCivilDate(candidate.startDate) &&
+            typeof candidate.endDate === "string" && !!parseCivilDate(candidate.endDate) &&
+            candidate.startDate <= candidate.endDate;
+        });
+        return [year, { version: Number(payload.calendar?.version), exceptions }];
+      } catch { return [year, null]; }
+    })).then((results) => {
+      if (active) setCalendarExceptionsByYear((current) => ({ ...current, ...Object.fromEntries(results) }));
+    });
+    return () => { active = false; };
+  }, [workspaceId, calendarYearKey, calendarExceptionsByYear]);
+  const calendarExceptions = useMemo(() => calendarYears.flatMap((year) => calendarExceptionsByYear[year]?.exceptions ?? []),
+    [calendarYears, calendarExceptionsByYear]);
+  const calendarLoading = !!workspaceId && calendarYears.some((year) => !(year in calendarExceptionsByYear));
+  const calendarVersions = new Set(calendarYears.map((year) => calendarExceptionsByYear[year]?.version)
+    .filter((version): version is number => version !== undefined));
+  const calendarFailed = !!workspaceId && (calendarYears.some((year) => calendarExceptionsByYear[year] === null) || calendarVersions.size > 1);
+  const nonWorkingRanges = useMemo(() => nonWorkingDayRanges(scale.startDay, scale.endDay, calendarExceptions),
+    [scale.startDay, scale.endDay, calendarExceptions]);
   const impactByActivity = useMemo(() => new Map(calendarImpacts.filter((impact) =>
     impact.impact === "date_change").map((impact) => [impact.activityId, impact])), [calendarImpacts]);
   const milestoneLabels = useMemo(() => layoutMilestoneLabels(targets,
@@ -171,7 +218,7 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
     <div className="workspace-controls">
       <div className="workspace-toolbar-actions">
         {canEdit && <button type="button" onClick={onAddDiscipline}>{messages.addDiscipline}</button>}
-        <button type="button" onClick={onRefresh}>{messages.refreshHierarchy}</button>
+        <button type="button" onClick={() => { setCalendarExceptionsByYear({}); onRefresh(); }}>{messages.refreshHierarchy}</button>
       </div>
       <div className="workspace-zoom" role="group" aria-label={messages.scheduleZoom}>
         {([ ["day", messages.zoomDay], ["week", messages.zoomWeek], ["month", messages.zoomMonth] ] as const).map(([value, label]) =>
@@ -184,6 +231,15 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
         <button type="button" className="timeline-navigation" aria-label={messages.goToToday}
           title={messages.goToToday} onClick={goToToday}>{messages.today}</button>
       </div>
+      {calendarLoading && <span className="calendar-highlight-status" role="status">{messages.calendarHighlightLoading}</span>}
+      {calendarFailed && <span className="calendar-highlight-status" role="status">
+        {messages.calendarHighlightError}{" "}
+        <button type="button" onClick={() => setCalendarExceptionsByYear((current) => {
+          const next = { ...current };
+          for (const year of calendarYears) delete next[year];
+          return next;
+        })}>{messages.calendarHighlightRetry}</button>
+      </span>}
       {selectedDate && <span role="status" className="workspace-selected-date">
         {messages.selectedDate(formatCivilDate(selectedDate))}
         <button type="button" onClick={() => setSelectedDate(null)}>{messages.clearSelectedDate}</button>
@@ -296,6 +352,12 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
           onClick={(event) => { if (!(event.target as Element).closest(".timeline-bar")) selectDate(event); }}
           aria-label={messages.scheduleGantt}>
           <div className="workspace-chart-content" style={{ width: scale.width, backgroundSize: `${scale.dayWidth}px 100%` }}>
+            <div className="timeline-nonworking-days" aria-hidden="true">
+              {nonWorkingRanges.map((range) => <span key={`${range.startDay}:${range.dayCount}`}
+                data-start-date={civilFromDay(range.startDay)}
+                data-end-date={civilFromDay(range.startDay + range.dayCount - 1)}
+                style={{ left: (range.startDay - scale.startDay) * scale.dayWidth, width: range.dayCount * scale.dayWidth }} />)}
+            </div>
             {selectedDate && <div className="timeline-selected-column" data-date={selectedDate}
               style={{ left: timelinePosition(scale, selectedDate), width: scale.dayWidth }} />}
             {targets.map((target) => <button type="button" key={target.id} className="timeline-target-line"
