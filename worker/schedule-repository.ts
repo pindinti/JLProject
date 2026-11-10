@@ -253,11 +253,16 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     productExists, disciplineExists, stageExists, activityExists,
     listDisciplines,
     async createDiscipline(ws, productId, actorId, input) {
-      const rows = await sql`INSERT INTO public.product_disciplines
+      const rows = await sql`WITH locked_product AS MATERIALIZED (
+        SELECT workspace_id, id FROM public.products
+        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+        FOR UPDATE
+      )
+      INSERT INTO public.product_disciplines
         (workspace_id, product_id, name, short_code, color, display_order, description, created_by, updated_by)
         SELECT p.workspace_id, p.id, ${input.name}, ${input.shortCode}, ${input.color},
           ${input.displayOrder}, ${input.description}, ${actorId}::uuid, ${actorId}::uuid
-        FROM public.products AS p WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid AND p.active = true
+        FROM locked_product AS p
         ON CONFLICT DO NOTHING RETURNING id::text AS id`;
       if (!rows[0]) return { status: await productExists(ws, productId, true) ? "duplicate" : "not_found" };
       const value = await findDiscipline(ws, productId, text(rows[0]["id"]));
@@ -265,13 +270,18 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     async updateDiscipline(ws, productId, disciplineId, actorId, input, version) {
       try {
-        const rows = await sql`UPDATE public.product_disciplines AS d
+        const rows = await sql`WITH locked_product AS MATERIALIZED (
+          SELECT id FROM public.products
+          WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+          FOR UPDATE
+        )
+        UPDATE public.product_disciplines AS d
           SET name = ${input.name}, short_code = ${input.shortCode}, color = ${input.color},
             display_order = ${input.displayOrder}, description = ${input.description},
             updated_by = ${actorId}::uuid, updated_at = now(), version = d.version + 1
           WHERE d.workspace_id = ${ws}::uuid AND d.product_id = ${productId}::uuid
             AND d.id = ${disciplineId}::uuid AND d.version = ${version}
-            AND EXISTS (SELECT 1 FROM public.products AS p WHERE p.id = d.product_id AND p.active = true)
+            AND EXISTS (SELECT 1 FROM locked_product)
           RETURNING d.id::text AS id`;
         if (!rows[0]) return { status: await findDiscipline(ws, productId, disciplineId) ? "stale" : "not_found" };
         const value = await findDiscipline(ws, productId, disciplineId);
@@ -300,30 +310,41 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     listActivities,
     async createActivity(ws, productId, disciplineId, stageId, actorId, input) {
-      const rows = await sql`INSERT INTO public.stage_activities
+      const rows = await sql`WITH locked_product AS MATERIALIZED (
+        SELECT workspace_id, id FROM public.products
+        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+        FOR UPDATE
+      )
+      INSERT INTO public.stage_activities
         (workspace_id, product_id, discipline_id, stage_id, name, activity_type,
          planned_start, planned_end, display_order, notes, created_by, updated_by)
         SELECT s.workspace_id, s.product_id, s.discipline_id, s.id,
           ${input.name}, ${input.activityType}, ${input.plannedStart}::date,
           ${input.plannedEnd}::date, ${input.displayOrder}, ${input.notes},
           ${actorId}::uuid, ${actorId}::uuid
-        FROM public.discipline_stages AS s JOIN public.products AS p ON p.id = s.product_id
+        FROM public.discipline_stages AS s JOIN locked_product AS p
+          ON p.workspace_id = s.workspace_id AND p.id = s.product_id
         WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
-          AND s.discipline_id = ${disciplineId}::uuid AND s.id = ${stageId}::uuid AND p.active = true
+          AND s.discipline_id = ${disciplineId}::uuid AND s.id = ${stageId}::uuid
         RETURNING id::text AS id`;
       if (!rows[0]) return { status: "not_found" };
       const value = await findActivity(ws, productId, disciplineId, stageId, text(rows[0]["id"]));
       return value ? { status: "ok", value } : { status: "not_found" };
     },
     async updateActivity(ws, productId, disciplineId, stageId, activityId, actorId, input, version) {
-      const rows = await sql`UPDATE public.stage_activities AS a
+      const rows = await sql`WITH locked_product AS MATERIALIZED (
+        SELECT id FROM public.products
+        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+        FOR UPDATE
+      )
+      UPDATE public.stage_activities AS a
         SET name = ${input.name}, activity_type = ${input.activityType},
           display_order = ${input.displayOrder}, notes = ${input.notes},
           updated_by = ${actorId}::uuid, updated_at = now(), version = a.version + 1
         WHERE a.workspace_id = ${ws}::uuid AND a.product_id = ${productId}::uuid
           AND a.discipline_id = ${disciplineId}::uuid AND a.stage_id = ${stageId}::uuid
           AND a.id = ${activityId}::uuid AND a.version = ${version}
-          AND EXISTS (SELECT 1 FROM public.products AS p WHERE p.id = a.product_id AND p.active = true)
+          AND EXISTS (SELECT 1 FROM locked_product)
         RETURNING a.id::text AS id`;
       if (!rows[0]) return { status: await findActivity(ws, productId, disciplineId, stageId, activityId) ? "stale" : "not_found" };
       const value = await findActivity(ws, productId, disciplineId, stageId, activityId);
@@ -331,10 +352,17 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     async changeActivityDates(ws, productId, disciplineId, stageId, activityId, actorId,
       start, end, reason, version, operationId) {
-      const rows = await sql`SELECT public.change_activity_dates(
+      const rows = await sql`WITH locked_product AS MATERIALIZED (
+        SELECT id FROM public.products
+        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+        FOR UPDATE
+      )
+      SELECT public.change_activity_dates(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${activityId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
-        ${start}::date, ${end}::date, ${reason}, ${version}::bigint) AS result`;
+        ${start}::date, ${end}::date, ${reason}, ${version}::bigint) AS result
+      FROM locked_product`;
+      if (!rows[0]) return { status: "not_found" };
       const result = rows[0]?.["result"] as { status?: string } | undefined;
       if (!result || !["updated", "unchanged", "not_found", "stale", "invalid", "forbidden"].includes(result.status ?? ""))
         throw new Error("Unexpected date change result.");
@@ -398,14 +426,19 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     async createTarget(ws, productId, actorId, input) {
       try {
-        const rows = await sql`INSERT INTO public.business_targets
+        const rows = await sql`WITH locked_product AS MATERIALIZED (
+          SELECT workspace_id, id FROM public.products
+          WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+          FOR UPDATE
+        )
+        INSERT INTO public.business_targets
           (workspace_id, product_id, name, description, color, target_date, source_external_id,
            source_row, display_order, created_by)
           SELECT p.workspace_id, p.id, ${input.name}, ${input.description}, ${input.color},
             ${input.targetDate}::date, NULL, NULL,
             (SELECT COALESCE(max(display_order) + 1, 0) FROM public.business_targets
               WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid), ${actorId}::uuid
-          FROM public.products AS p WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid AND p.active
+          FROM locked_product AS p
           RETURNING id::text AS id`;
         if (!rows[0]) return { status: "not_found" };
         const value = (await this.listTargets(ws, productId)).find((target) => target.id === text(rows[0]["id"]));
@@ -415,20 +448,34 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     async updateTarget(ws, productId, targetId, actorId, input, version, reason, operationId) {
       let rows;
       try {
-        rows = await sql`SELECT public.update_business_target(
+        rows = await sql`WITH locked_product AS MATERIALIZED (
+          SELECT id FROM public.products
+          WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+          FOR UPDATE
+        )
+        SELECT public.update_business_target(
           ${ws}::uuid, ${productId}::uuid, ${targetId}::uuid, ${actorId}::uuid,
           ${operationId}::uuid, ${input.name}, ${input.description}, ${input.color},
-          ${input.targetDate}::date, ${version}::bigint, ${reason}) AS result`;
+          ${input.targetDate}::date, ${version}::bigint, ${reason}) AS result
+        FROM locked_product`;
       } catch (error) { if (duplicate(error)) return { status: "duplicate" }; throw error; }
+      if (!rows[0]) return { status: "not_found" };
       const result = text(rows[0]?.["result"]);
       if (result !== "updated") return { status: result as "not_found" | "stale" | "duplicate" };
       const value = (await this.listTargets(ws, productId)).find((target) => target.id === targetId);
       return value ? { status: "ok", value } : { status: "not_found" };
     },
     async deleteTarget(ws, productId, targetId, actorId, version, operationId) {
-      const rows = await sql`SELECT public.delete_business_target(
+      const rows = await sql`WITH locked_product AS MATERIALIZED (
+        SELECT id FROM public.products
+        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+        FOR UPDATE
+      )
+      SELECT public.delete_business_target(
         ${ws}::uuid, ${productId}::uuid, ${targetId}::uuid, ${actorId}::uuid,
-        ${operationId}::uuid, ${version}::bigint) AS result`;
+        ${operationId}::uuid, ${version}::bigint) AS result
+      FROM locked_product`;
+      if (!rows[0]) return { status: "not_found" };
       const result = text(rows[0]?.["result"]);
       return result === "deleted" ? { status: "ok", value: { id: targetId } as BusinessTarget }
         : { status: result as "not_found" | "stale" };

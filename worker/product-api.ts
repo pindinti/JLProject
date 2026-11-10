@@ -1,9 +1,9 @@
 import { authorizeWorkspace, type MembershipRepository } from "./authorization";
 import type { Identity } from "./auth";
-import { createProductRepository, type ProductInput, type ProductMutation, type ProductRepository } from "./products";
+import { createProductRepository, type ProductCloneMutation, type ProductInput, type ProductMutation, type ProductRepository } from "./products";
 import type { WorkerEnvironment } from "./database";
 
-const productPath = /^\/api\/workspaces\/([^/]+)\/products(?:\/([^/]+)(?:\/(archive))?)?$/;
+const productPath = /^\/api\/workspaces\/([^/]+)\/products(?:\/([^/]+)(?:\/(archive|clone))?)?$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ProductRepositoryFactory = (environment: WorkerEnvironment) => ProductRepository;
@@ -44,6 +44,12 @@ function parseArchiveBody(body: Record<string, unknown>): number | null {
     ? Number(body["version"]) : null;
 }
 
+function parseCloneBody(body: Record<string, unknown>): string | null {
+  if (Object.keys(body).length !== 1 || typeof body["name"] !== "string") return null;
+  const name = body["name"].trim();
+  return name.length >= 1 && name.length <= 200 ? name : null;
+}
+
 function mutationResponse(result: ProductMutation, workspaceId: string, created = false): Response {
   if (result.status === "ok") return result.product.workspaceId === workspaceId
     ? response({ product: result.product }, created ? 201 : 200)
@@ -51,6 +57,16 @@ function mutationResponse(result: ProductMutation, workspaceId: string, created 
   if (result.status === "duplicate") return response({ code: "duplicate", error: "Já existe um produto com esse nome neste espaço de trabalho." }, 409);
   if (result.status === "not_found") return response({ error: "Produto não encontrado." }, 404);
   return response({ code: "stale", error: "O produto foi alterado. Atualize a página e tente novamente." }, 409);
+}
+
+function cloneResponse(result: ProductCloneMutation, workspaceId: string): Response {
+  if (result.status === "ok") return result.product.workspaceId === workspaceId
+    ? response({ product: result.product, revisionId: result.revisionId, revisionLabel: "R00" }, 201)
+    : response({ error: "Serviço indisponível." }, 503);
+  if (result.status === "duplicate") return response({ code: "duplicate", error: "Já existe um produto com esse nome neste espaço de trabalho." }, 409);
+  if (result.status === "not_found") return response({ error: "Produto não encontrado." }, 404);
+  if (result.status === "denied") return response({ error: "Acesso não autorizado." }, 403);
+  return response({ error: "Dados do produto inválidos." }, 400);
 }
 
 export function isProductRoute(pathname: string): boolean {
@@ -66,7 +82,7 @@ export async function handleProductRequest(
 ): Promise<Response> {
   const match = new URL(request.url).pathname.match(productPath);
   if (!match) return response({ error: "Não encontrado." }, 404);
-  const [, workspaceId, productId, archiveAction] = match;
+  const [, workspaceId, productId, action] = match;
   if (!uuidPattern.test(workspaceId) || (productId && !uuidPattern.test(productId))) {
     return response({ error: "Identificador inválido." }, 400);
   }
@@ -82,7 +98,7 @@ export async function handleProductRequest(
     return products.every((product) => product.workspaceId === scope)
       ? response({ products }, 200) : response({ error: "Serviço indisponível." }, 503);
   }
-  if (request.method === "GET" && target && !archiveAction) {
+  if (request.method === "GET" && target && !action) {
     const product = await repository.find(scope, target);
     return product && product.workspaceId === scope
       ? response({ product }, 200) : response({ error: "Produto não encontrado." }, 404);
@@ -93,17 +109,23 @@ export async function handleProductRequest(
     if (!parsed) return response({ error: "Dados do produto inválidos." }, 400);
     return mutationResponse(await repository.create(scope, identity.subject, parsed.input), scope, true);
   }
-  if (request.method === "PATCH" && target && !archiveAction) {
+  if (request.method === "PATCH" && target && !action) {
     const body = await readBody(request);
     const parsed = body && parseProductInput(body, true);
     if (!parsed || parsed.version === undefined) return response({ error: "Dados do produto inválidos." }, 400);
     return mutationResponse(await repository.update(scope, target, identity.subject, parsed.input, parsed.version), scope);
   }
-  if (request.method === "POST" && target && archiveAction) {
+  if (request.method === "POST" && target && action === "archive") {
     const body = await readBody(request);
     const version = body && parseArchiveBody(body);
     if (version === null) return response({ error: "Dados do produto inválidos." }, 400);
     return mutationResponse(await repository.archive(scope, target, identity.subject, version), scope);
+  }
+  if (request.method === "POST" && target && action === "clone") {
+    const body = await readBody(request);
+    const name = body && parseCloneBody(body);
+    if (!name) return response({ error: "Informe um nome de produto válido, com até 200 caracteres." }, 400);
+    return cloneResponse(await repository.clone(scope, target, identity.subject, name), scope);
   }
   return response({ error: "Método não permitido." }, 405);
 }

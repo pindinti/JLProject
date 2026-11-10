@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 
@@ -201,6 +201,7 @@ describe("products UI", () => {
     expect(screen.queryByRole("button", { name: "Salvar" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Arquivar produto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Importar planilha" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clonar produto" })).not.toBeInTheDocument();
   });
 
   it("opens the preview-only import entry for editors", async () => {
@@ -209,6 +210,50 @@ describe("products UI", () => {
     expect(await screen.findByRole("heading", { name: "Importar planilha" })).toBeInTheDocument();
     expect(screen.getByText("As predecessoras da planilha serão ignoradas.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirmar importação" })).not.toBeInTheDocument();
+  });
+
+  it("clones a product from its card menu and refreshes the product cards", async () => {
+    const cloned = { ...product, id: "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", name: "Synthetic product (cópia)" };
+    let cloneComplete = false;
+    auth.authenticatedFetch.mockImplementation((path: string) => {
+      if (path.endsWith("/clone")) {
+        cloneComplete = true;
+        return Promise.resolve(new Response(JSON.stringify({ product: cloned, revisionLabel: "R00" }), { status: 201 }));
+      }
+      const body = path.endsWith("/hierarchy") ? { hierarchy: { disciplines: [] } }
+        : { products: cloneComplete ? [product, cloned] : [product] };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
+    fireEvent.click(screen.getByRole("button", { name: "Clonar produto" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("Nome do novo produto")).toHaveValue("Synthetic product (cópia)");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clonar produto" }));
+    await waitFor(() => expect(auth.authenticatedFetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/products/${product.id}/clone`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Synthetic product (cópia)" }) })
+    ));
+    expect(await screen.findByRole("link", { name: /Synthetic product \(cópia\)/ })).toBeInTheDocument();
+    expect(await screen.findByText("Produto clonado com sucesso.")).toBeInTheDocument();
+  });
+
+  it("does not submit on cancel and keeps duplicate-name feedback in the clone dialog", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
+    fireEvent.click(screen.getByRole("button", { name: "Clonar produto" }));
+    const dialog = screen.getByRole("dialog");
+    const requestCount = auth.authenticatedFetch.mock.calls.length;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(auth.authenticatedFetch).toHaveBeenCalledTimes(requestCount);
+
+    fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
+    fireEvent.click(screen.getByRole("button", { name: "Clonar produto" }));
+    auth.authenticatedFetch.mockResolvedValueOnce(new Response(JSON.stringify({ code: "duplicate" }), { status: 409 }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Clonar produto" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Já existe um produto com esse nome");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("keeps the import picker mounted when the window regains focus and restores its route", async () => {
@@ -399,6 +444,23 @@ describe("authentication UI", () => {
 
     resolveSession({ data: null, error: null });
     expect(await screen.findByRole("heading", { name: "Entrar" })).toBeInTheDocument();
+  });
+
+  it("shows a retry state when session restoration never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      auth.getSession.mockReturnValue(new Promise(() => {}));
+      render(<App />);
+      expect(screen.getByRole("status")).toHaveTextContent("Verificando sessão");
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+
+      expect(screen.getByRole("heading", { name: "Verificação de sessão" })).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível verificar sua sessão");
+      expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows a retry state when restoration temporarily fails", async () => {

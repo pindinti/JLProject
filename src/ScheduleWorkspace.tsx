@@ -37,6 +37,7 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   const headerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<HTMLDivElement>(null);
   const scrollbarRef = useRef<HTMLDivElement>(null);
+  const centerDateAfterScale = useRef<string | null>(null);
   const dragging = useRef(false);
   const rows = useMemo(() => visibleScheduleRows(product, tree, openDisciplines, openStages, productExpanded),
     [product, tree, openDisciplines, openStages, productExpanded]);
@@ -65,10 +66,19 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
   }, []);
 
   useLayoutEffect(() => {
-    const position = scrollbarRef.current?.scrollLeft ?? 0;
+    const date = centerDateAfterScale.current;
+    const scrollbar = scrollbarRef.current;
+    const chart = chartRef.current;
+    if (date && scrollbar && chart) {
+      const viewportWidth = chart.clientWidth || scrollbar.clientWidth;
+      const desiredPosition = timelinePosition(scale, date) + scale.dayWidth / 2 - viewportWidth / 2;
+      scrollbar.scrollLeft = Math.max(0, Math.min(scrollbar.scrollWidth - scrollbar.clientWidth, desiredPosition));
+      centerDateAfterScale.current = null;
+    }
+    const position = scrollbar?.scrollLeft ?? 0;
     if (headerRef.current) headerRef.current.scrollLeft = position;
-    if (chartRef.current) chartRef.current.scrollLeft = position;
-  }, [scale.width, tableWidth]);
+    if (chart) chart.scrollLeft = position;
+  }, [scale, tableWidth]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -97,6 +107,40 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
     syncScroll("scrollbar");
   }
 
+  function scrollTimelineToDate(date: string, timeline: typeof scale) {
+    const scrollbar = scrollbarRef.current;
+    const chart = chartRef.current;
+    if (!scrollbar || !chart) return;
+    const viewportWidth = chart.clientWidth || scrollbar.clientWidth;
+    const desiredPosition = timelinePosition(timeline, date) + timeline.dayWidth / 2 - viewportWidth / 2;
+    scrollbar.scrollLeft = Math.max(0, Math.min(scrollbar.scrollWidth - scrollbar.clientWidth, desiredPosition));
+    syncScroll("scrollbar");
+  }
+
+  function goToToday() {
+    const date = saoPauloCivilDate(new Date());
+    setToday(date);
+    setSelectedDate(date);
+    const chart = chartRef.current;
+    const scrollbar = scrollbarRef.current;
+    if (!chart || !scrollbar) return;
+    const viewportWidth = chart.clientWidth || scrollbar.clientWidth;
+    if (viewportWidth > 0) {
+      const halfVisibleDays = Math.ceil(viewportWidth / (2 * scale.dayWidth));
+      const todayDay = dayNumber(date);
+      const nextBounds = {
+        startDay: Math.min(bounds.startDay, todayDay - halfVisibleDays),
+        endDay: Math.max(bounds.endDay, todayDay + halfVisibleDays)
+      };
+      if (nextBounds.startDay !== bounds.startDay || nextBounds.endDay !== bounds.endDay) {
+        centerDateAfterScale.current = date;
+        setBounds(nextBounds);
+        return;
+      }
+    }
+    scrollTimelineToDate(date, scale);
+  }
+
   function selectDate(event: MouseEvent<HTMLDivElement>) {
     const element = event.currentTarget;
     const position = event.clientX - element.getBoundingClientRect().left + element.scrollLeft;
@@ -123,6 +167,8 @@ export function ScheduleWorkspace({ product, tree, targets, openDisciplines, ope
       <div className="workspace-timeline-navigation" role="group" aria-label={messages.scheduleTimeline}>
         <button type="button" className="timeline-navigation" onClick={() => shiftTimeline(-1)}>{messages.timelineEarlier}</button>
         <button type="button" className="timeline-navigation" onClick={() => shiftTimeline(1)}>{messages.timelineLater}</button>
+        <button type="button" className="timeline-navigation" aria-label={messages.goToToday}
+          title={messages.goToToday} onClick={goToToday}>{messages.today}</button>
       </div>
       {selectedDate && <span role="status" className="workspace-selected-date">
         {messages.selectedDate(formatCivilDate(selectedDate))}

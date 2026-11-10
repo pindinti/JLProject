@@ -94,6 +94,41 @@ describe("schedule workspace refinements", () => {
     expect(container.querySelector(".timeline-target-line")).toBeInTheDocument();
   });
 
+  it("centers and selects the São Paulo date without changing schedule view state", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-07T02:00:00Z"));
+      const { container } = mount();
+      const chart = container.querySelector<HTMLElement>(".workspace-chart-scroll")!;
+      const scrollbar = container.querySelector<HTMLElement>(".workspace-horizontal-scroll")!;
+      const body = container.querySelector<HTMLElement>(".workspace-body")!;
+      Object.defineProperty(chart, "clientWidth", { configurable: true, value: 400 });
+      Object.defineProperty(scrollbar, "clientWidth", { configurable: true, value: 400 });
+      Object.defineProperty(scrollbar, "scrollWidth", { configurable: true, value: 3000 });
+
+      fireEvent.click(screen.getByRole("button", { name: "Synthetic activity" }));
+      body.scrollTop = 63;
+      fireEvent.click(screen.getByRole("button", { name: "Mês" }));
+      fireEvent.click(screen.getByRole("button", { name: "Ir para hoje" }));
+
+      expect(screen.getByRole("status")).toHaveTextContent("Data selecionada: 06/11/2026");
+      expect(container.querySelector<HTMLElement>(".timeline-selected-column")?.dataset.date).toBe("2026-11-06");
+      expect(container.querySelector<HTMLElement>(".timeline-today-line")?.dataset.date).toBe("2026-11-06");
+      expect(screen.getByRole("button", { name: "Mês" })).toHaveAttribute("aria-pressed", "true");
+      expect(body.scrollTop).toBe(63);
+      expect(container.querySelector('.workspace-table-row[data-row-key="activity:activity"]')).toHaveClass("selected");
+      expect(container.querySelectorAll(".workspace-table-row")).toHaveLength(4);
+      expect(container.querySelectorAll('.workspace-expand[aria-expanded="true"]')).toHaveLength(3);
+
+      const selectedColumn = container.querySelector<HTMLElement>(".timeline-selected-column")!;
+      const todayLine = container.querySelector<HTMLElement>(".timeline-today-line")!;
+      const selectedCenter = Number.parseFloat(todayLine.style.left) + Number.parseFloat(selectedColumn.style.width) / 2;
+      expect(Math.abs(scrollbar.scrollLeft + chart.clientWidth / 2 - selectedCenter)).toBeLessThanOrEqual(1);
+      expect(container.querySelector<HTMLElement>(".workspace-timeline-header")!.scrollLeft).toBe(scrollbar.scrollLeft);
+      expect(chart.scrollLeft).toBe(scrollbar.scrollLeft);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("keeps row selection on single click and opens the contextual editor on double click", () => {
     const onEdit = vi.fn();
     const onAdd = vi.fn();

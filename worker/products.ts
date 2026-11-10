@@ -15,11 +15,14 @@ export interface Product {
 export interface ProductInput { name: string; description: string | null }
 export type ProductMutation = { status: "ok"; product: Product } |
   { status: "duplicate" | "not_found" | "stale" };
+export type ProductCloneMutation = { status: "ok"; product: Product; revisionId: string } |
+  { status: "duplicate" | "not_found" | "denied" | "invalid" };
 
 export interface ProductRepository {
   list(workspaceId: string): Promise<Product[]>;
   find(workspaceId: string, productId: string): Promise<Product | null>;
   create(workspaceId: string, actorId: string, input: ProductInput): Promise<ProductMutation>;
+  clone(workspaceId: string, sourceProductId: string, actorId: string, name: string): Promise<ProductCloneMutation>;
   update(workspaceId: string, productId: string, actorId: string, input: ProductInput, version: number): Promise<ProductMutation>;
   archive(workspaceId: string, productId: string, actorId: string, version: number): Promise<ProductMutation>;
 }
@@ -78,6 +81,24 @@ export function createProductRepository(environment: WorkerEnvironment): Product
                   active, version, created_at AS "createdAt", updated_at AS "updatedAt"
       `;
       return rows[0] ? { status: "ok", product: mapProduct(rows[0]) } : { status: "duplicate" };
+    },
+    async clone(workspaceId, sourceProductId, actorId, name) {
+      const rows = await sql`
+        SELECT public.clone_product(
+          ${workspaceId}::uuid, ${sourceProductId}::uuid, ${actorId}::uuid, ${name}
+        ) AS result
+      `;
+      const result = rows[0]?.["result"] as {
+        status?: string;
+        product?: Record<string, unknown>;
+        revisionId?: string;
+      } | undefined;
+      if (result?.status === "cloned" && result.product && result.revisionId) {
+        return { status: "ok", product: mapProduct(result.product), revisionId: result.revisionId };
+      }
+      if (result?.status === "duplicate" || result?.status === "not_found" ||
+          result?.status === "denied" || result?.status === "invalid") return { status: result.status };
+      throw new Error("Unexpected product clone result.");
     },
     async update(workspaceId, productId, actorId, input, version) {
       try {

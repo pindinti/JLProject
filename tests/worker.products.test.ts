@@ -28,6 +28,7 @@ function products(): ProductRepository {
     list: vi.fn(async () => [product]),
     find: vi.fn(async (_scope, id) => id === productId ? product : null),
     create: vi.fn(async () => ({ status: "ok" as const, product })),
+    clone: vi.fn(async () => ({ status: "ok" as const, product: { ...product, id: "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", name: "Cloned product" }, revisionId: "c3aa998a-a2c3-4376-9105-90af0d1dbfe3" })),
     update: vi.fn(async () => ({ status: "ok" as const, product: { ...product, version: 2 } })),
     archive: vi.fn(async () => ({ status: "ok" as const, product: { ...product, active: false, version: 2 } }))
   };
@@ -67,6 +68,45 @@ describe("product API", () => {
     expect(repository.update).toHaveBeenCalledWith(workspace, productId, actor, input, 1);
     expect((await call(request(`${base}/${productId}/archive`, "POST", { version: 1 }), "editor", repository)).status).toBe(200);
     expect(repository.archive).toHaveBeenCalledWith(workspace, productId, actor, 1);
+  });
+
+  it("clones for active editors and admins using the verified identity and workspace", async () => {
+    const repository = products();
+    const response = await call(request(`${base}/${productId}/clone`, "POST", { name: " Cloned product " }), "editor", repository);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    await expect(response.json()).resolves.toMatchObject({ product: { workspaceId: workspace }, revisionLabel: "R00" });
+    expect(repository.clone).toHaveBeenCalledWith(workspace, productId, actor, "Cloned product");
+    expect((await call(request(`${base}/${productId}/clone`, "POST", { name: "Admin clone" }), "admin", repository)).status).toBe(201);
+  });
+
+  it("denies clone to viewers, inactive or unauthenticated members and foreign workspaces", async () => {
+    const repository = products();
+    expect((await call(request(`${base}/${productId}/clone`, "POST", { name: "Denied" }), "viewer", repository)).status).toBe(403);
+    expect((await call(request(`${base}/${productId}/clone`, "POST", { name: "Denied" }), "editor", repository, false)).status).toBe(403);
+    expect((await call(request(`${base.replace(workspace, otherWorkspace)}/${productId}/clone`, "POST", { name: "Denied" }), "admin", repository)).status).toBe(403);
+    const unauthenticated = await handleRequest(request(`${base}/${productId}/clone`, "POST", { name: "Denied" }), environment,
+      async () => null, () => membership("admin"), undefined, () => repository);
+    expect(unauthenticated.status).toBe(401);
+    expect(repository.clone).not.toHaveBeenCalled();
+  });
+
+  it("validates clone identifiers and names, and maps conflicts and missing sources safely", async () => {
+    const repository = products();
+    for (const body of [{ name: "" }, { name: "  " }, { name: "x", actorId: actor }, { name: 42 }, { name: "x".repeat(201) }]) {
+      expect((await call(request(`${base}/${productId}/clone`, "POST", body), "admin", repository)).status).toBe(400);
+    }
+    expect((await call(request(`${base}/invalid/clone`, "POST", { name: "Valid" }), "admin", repository)).status).toBe(400);
+    const duplicate = await call(request(`${base}/${productId}/clone`, "POST", { name: "Existing" }), "admin", {
+      ...repository, clone: async () => ({ status: "duplicate" })
+    });
+    expect(duplicate.status).toBe(409);
+    await expect(duplicate.json()).resolves.toMatchObject({ code: "duplicate" });
+    const missing = await call(request(`${base}/${productId}/clone`, "POST", { name: "Missing source" }), "admin", {
+      ...repository, clone: async () => ({ status: "not_found" })
+    });
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).not.toContain("database");
   });
 
   it("denies unauthenticated, pending, inactive, viewer writes, and cross-workspace requests", async () => {

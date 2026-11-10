@@ -38,6 +38,9 @@ export function Products({ workspace, onAccessLost }: {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [cloneSource, setCloneSource] = useState<Product | null>(null);
+  const [cloneName, setCloneName] = useState("");
+  const [cloneError, setCloneError] = useState("");
   const [openMenuProductId, setOpenMenuProductId] = useState<string | null>(null);
   const [scheduleProductId, setScheduleProductId] = useState<string | null>(() =>
     window.location.pathname.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null
@@ -167,6 +170,44 @@ export function Products({ workspace, onAccessLost }: {
     finally { setBusy(false); }
   }
 
+  function startClone(product: Product) {
+    const suffix = " (cópia)";
+    setCloneSource(product);
+    setCloneName(`${product.name.slice(0, 200 - suffix.length)}${suffix}`);
+    setCloneError("");
+    setFeedback("");
+    setOpenMenuProductId(null);
+  }
+
+  async function cloneProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canEdit || !cloneSource || busy) return;
+    const requestedName = cloneName.trim();
+    if (!requestedName || requestedName.length > 200) {
+      setCloneError(messages.cloneProductInvalidName);
+      return;
+    }
+    setBusy(true);
+    setCloneError("");
+    try {
+      const response = await authenticatedFetch(`${endpoint}/${cloneSource.id}/clone`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: requestedName })
+      });
+      if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
+      if (!response.ok) {
+        const data = await response.json() as { code?: string };
+        setCloneError(data.code === "duplicate" ? messages.productDuplicate
+          : response.status === 404 ? messages.cloneProductSourceMissing : messages.cloneProductError);
+        return;
+      }
+      setCloneSource(null);
+      await load();
+      setFeedback(messages.cloneProductSuccess);
+    } catch { setCloneError(messages.cloneProductError); }
+    finally { setBusy(false); }
+  }
+
   if (showImport && canEdit) return <Suspense fallback={<p role="status">{messages.importLoading}</p>}>
     <ImportPreview workspaceId={workspace.id} onAccessLost={onAccessLost}
       onImported={(productId) => {
@@ -253,6 +294,7 @@ export function Products({ workspace, onAccessLost }: {
                       selectProduct(product);
                       setOpenMenuProductId(null);
                     }}>{messages.editProduct}</button>
+                    <button type="button" onClick={() => startClone(product)}>{messages.cloneProduct}</button>
                     <button type="button" onClick={() => void archive(product)}>{messages.archiveProduct}</button>
                   </div>}
                 </div>}
@@ -294,6 +336,24 @@ export function Products({ workspace, onAccessLost }: {
           </div>}
         </section>
       )}
+      {cloneSource && canEdit && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) setCloneSource(null);
+      }}><form className="milestone-dialog" role="dialog" aria-modal="true"
+        aria-labelledby="clone-product-title" onSubmit={(event) => void cloneProduct(event)}>
+        <h3 id="clone-product-title">{messages.cloneProductTitle}</h3>
+        <label htmlFor="clone-product-name">{messages.cloneProductName}</label>
+        <input id="clone-product-name" autoFocus required maxLength={200} value={cloneName}
+          onChange={(event) => setCloneName(event.target.value)} aria-invalid={!!cloneError}
+          aria-describedby={cloneError ? "clone-product-error" : undefined} />
+        {cloneError && <p id="clone-product-error" role="alert">{cloneError}</p>}
+        <div className="product-form__actions">
+          <button type="submit" disabled={busy || !cloneName.trim()}>
+            {busy ? messages.cloningProduct : messages.cloneProductSubmit}
+          </button>
+          <button type="button" className="back-button" disabled={busy}
+            onClick={() => setCloneSource(null)}>{messages.cancel}</button>
+        </div>
+      </form></div>}
       {feedback && <p role="alert" className="feedback">{feedback}</p>}
     </section>
   );

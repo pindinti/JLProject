@@ -13,6 +13,17 @@ import { Settings } from "./Settings";
 import { getFirstName, getGreeting } from "./design/header";
 
 type View = "loading" | "login" | "recovery" | "reset" | "verify" | "pending" | "restorationError" | "adminDenied" | "products" | "settings";
+const sessionRestoreTimeoutMs = 15_000;
+
+function withSessionRestoreTimeout<T>(operation: Promise<T>): Promise<T> {
+  let timer = 0;
+  return Promise.race([
+    operation,
+    new Promise<T>((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error("Session restoration timed out.")), sessionRestoreTimeoutMs);
+    })
+  ]).finally(() => window.clearTimeout(timer));
+}
 
 export function App() {
   const [view, setView] = useState<View>(() => window.location.pathname === "/reset-password" ? "reset" : "loading");
@@ -49,7 +60,7 @@ export function App() {
     }
 
     try {
-      const result = await authClient.getSession();
+      const result = await withSessionRestoreTimeout(authClient.getSession());
       if (requestNumber !== sessionRequest.current) return;
       const token = result.data?.session?.token;
       if (result.error) {
@@ -72,14 +83,14 @@ export function App() {
         return;
       }
 
-      const access = await checkWorkspaceAccess(token);
+      const access = await withSessionRestoreTimeout(checkWorkspaceAccess(token));
       if (requestNumber !== sessionRequest.current) return;
       if (access === "pending") {
         setAdminWorkspace(null);
         setCurrentWorkspace(null);
         setView("pending");
       } else if (access === "authorized") {
-        const workspaces = await listMyWorkspaces(token);
+        const workspaces = await withSessionRestoreTimeout(listMyWorkspaces(token));
         if (requestNumber !== sessionRequest.current) return;
         const admin = workspaces.find((workspace) => workspace.role === "admin") ?? null;
         setAdminWorkspace(admin);
@@ -104,6 +115,7 @@ export function App() {
       }
     } catch {
       if (requestNumber !== sessionRequest.current) return;
+      sessionRequest.current++;
       setMessage(messages.networkError);
       setView("restorationError");
     }
