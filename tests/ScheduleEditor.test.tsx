@@ -25,6 +25,10 @@ const workingActivity = { ...activity, plannedStart: "2026-11-09", plannedEnd: "
   version: 3, planningMode: "working_days" as const, workingDayDuration: 2, planningCalendarVersion: 1 };
 const workingTree = { productId: product.id, disciplines: [{ ...discipline, stages: [{ ...stage,
   derivedStart: "2026-11-09", derivedEnd: "2026-11-10", activities: [workingActivity] }] }] };
+const rootActivity = { ...activity, id: "7e1a1a51-e9ef-4d70-8f57-4e12f045ab6f", stageId: null,
+  name: "Synthetic root activity", plannedStart: "2026-11-11", plannedEnd: "2026-11-13",
+  colorOverride: "#AA5577", version: 4 };
+const rootTree = { productId: product.id, disciplines: [discipline], rootActivities: [rootActivity] };
 const dateImpact: ActivityCalendarImpact = { activityId: activity.id, disciplineId: discipline.id,
   stageId: stage.id, activityVersion: 3, workingDays: 2, savedCalendarVersion: 1,
   currentCalendarVersion: 2, currentStartDate: "2026-11-09", currentEndDate: "2026-11-10",
@@ -33,7 +37,8 @@ const dateImpact: ActivityCalendarImpact = { activityId: activity.id, discipline
   optionalDaysVerified: false, unverifiedOptionalYears: [2026] };
 
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }); }
-function setup(tree: { productId: string; disciplines: unknown[] } = { productId: product.id, disciplines: [discipline] },
+type EditorTree = { productId: string; disciplines: unknown[]; rootActivities?: unknown[] };
+function setup(tree: EditorTree = { productId: product.id, disciplines: [discipline] },
   targets: unknown[] = []) {
   api.fetch.mockImplementation((path: string) => Promise.resolve(path.endsWith("/hierarchy")
     ? json({ hierarchy: tree }) : path.endsWith("/targets")
@@ -53,7 +58,7 @@ function mount(role: "admin" | "editor" | "viewer" = "admin", onSummaryRefresh?:
 
 beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); setup(); });
 
-function setupImpacts(impacts: ActivityCalendarImpact[], tree: { productId: string; disciplines: unknown[] } = workingTree) {
+function setupImpacts(impacts: ActivityCalendarImpact[], tree: EditorTree = workingTree) {
   setup(tree);
   const fallback = api.fetch.getMockImplementation()!;
   api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith("/calendar-impact")
@@ -602,7 +607,7 @@ describe("schedule editor", () => {
 
   it("validates activity dates and sends ISO civil dates only on creation", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Adicionar atividade" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Adicionar atividade" })).at(-1)!);
     fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Nova atividade" } });
     fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "31/02/2026" } });
     fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "08/11/2026" } });
@@ -624,7 +629,7 @@ describe("schedule editor", () => {
     api.fetch.mockImplementation((path: string, options?: RequestInit) => path.includes("working-day-preview")
       ? Promise.resolve(json({ preview })) : original!(path, options));
     mount("editor");
-    fireEvent.click(await screen.findByRole("button", { name: "Adicionar atividade" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Adicionar atividade" })).at(-1)!);
     fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Synthetic working activity" } });
     fireEvent.change(screen.getByLabelText("Modo de planejamento"), { target: { value: "working_days" } });
     fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "06/11/2026" } });
@@ -897,6 +902,147 @@ describe("schedule editor", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Este item foi alterado");
     expect(screen.getByRole("alert")).not.toHaveTextContent("private detail");
     expect(screen.getAllByRole("button", { name: "Atualizar dados" })).toHaveLength(2);
+  });
+
+  it("creates root activities with the default color, custom colors, and manual dates through the product route", async () => {
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product} userId={userId}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(`[data-row-key="product:${product.id}"]`)).toBeInTheDocument());
+    const productRow = container.querySelector<HTMLElement>(`[data-row-key="product:${product.id}"]`)!;
+    fireEvent.click(within(productRow).getByRole("button", { name: "Adicionar atividade" }));
+    expect(screen.getByText(/cor padr.*atividade de produto \(#8D9A89\)/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cor da etapa/i)).not.toBeInTheDocument();
+    fireEvent.change(container.querySelector("#activity-color")!, { target: { value: "#123ABC" } });
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar cor padrão/ }));
+    expect(container.querySelector<HTMLInputElement>("#activity-color")).toHaveValue("#8D9A89");
+    expect(screen.queryByRole("button", { name: /Restaurar cor padrão/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(api.fetch.mock.calls.some(([path, options]) => String(path).endsWith("/root-activities") && options?.method === "POST"))
+      .toBe(false);
+    expect(readRecentCustomColors(userId)).toEqual([]);
+
+    fireEvent.click(within(productRow).getByRole("button", { name: "Adicionar atividade" }));
+    fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "New root activity" } });
+    fireEvent.change(container.querySelector("#activity-start")!, { target: { value: "11/11/2026" } });
+    fireEvent.change(container.querySelector("#activity-end")!, { target: { value: "13/11/2026" } });
+    fireEvent.change(container.querySelector("#activity-color")!, { target: { value: "#123ABC" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/products/${product.id}/root-activities`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "New root activity", activityType: null,
+        displayOrder: 0, notes: null, colorOverride: "#123ABC", planningMode: "manual",
+        plannedStart: "2026-11-11", plannedEnd: "2026-11-13" }) })
+    ));
+    expect(readRecentCustomColors(userId)).toEqual(["#123ABC"]);
+  });
+
+  it("edits root overrides, saves root dates through the parentless route, and opens activity history", async () => {
+    const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let current: Omit<typeof rootActivity, "colorOverride"> & { colorOverride: string | null } = rootActivity;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { ...rootTree, rootActivities: [current] } }));
+      if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
+      if (path.endsWith(`/root-activities/${rootActivity.id}/dates`) && options?.method === "PATCH") {
+        current = { ...current, plannedStart: "2026-11-12", plannedEnd: "2026-11-14", version: current.version + 1 };
+        return Promise.resolve(json({ activity: current, changed: true }));
+      }
+      if (path.endsWith(`/root-activities/${rootActivity.id}`) && options?.method === "PATCH") {
+        const input = JSON.parse(String(options.body)) as { colorOverride: string | null };
+        current = { ...current, colorOverride: input.colorOverride, version: current.version + 1 };
+        return Promise.resolve(json({ activity: current }));
+      }
+      if (path.includes("/change-history")) return Promise.resolve(json({ events: [], nextCursor: null }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.includes("/calendar?year=")) return Promise.resolve(json({ calendar: { version: 0, exceptions: [] } }));
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(`[data-row-key="activity:${rootActivity.id}"]`)).toBeInTheDocument());
+    const row = container.querySelector<HTMLElement>(`[data-row-key="activity:${rootActivity.id}"]`)!;
+    fireEvent.click(within(row).getByRole("button", { name: "Editar atividade" }));
+    expect(container.querySelector<HTMLInputElement>("#activity-color")).toHaveValue("#AA5577");
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar cor padrão/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar dados" }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/products/${product.id}/root-activities/${rootActivity.id}`,
+      expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"colorOverride":null') })
+    ));
+    await waitFor(() => expect(container.querySelector(".timeline-bar.bar-activity")).toHaveStyle({ backgroundColor: "#8D9A89" }));
+
+    const refreshedRow = container.querySelector<HTMLElement>(`[data-row-key="activity:${rootActivity.id}"]`)!;
+    fireEvent.click(within(refreshedRow).getByRole("button", { name: "Editar atividade" }));
+    fireEvent.change(container.querySelector("#date-start")!, { target: { value: "12/11/2026" } });
+    fireEvent.change(container.querySelector("#date-end")!, { target: { value: "14/11/2026" } });
+    fireEvent.change(container.querySelector("#date-reason")!, { target: { value: "Synthetic root date correction" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas" }));
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path, options]) =>
+      String(path).endsWith(`/root-activities/${rootActivity.id}/dates`) && options?.method === "PATCH")).toBe(true));
+    const rootDateCall = api.fetch.mock.calls.find(([path, options]) =>
+      String(path).endsWith(`/root-activities/${rootActivity.id}/dates`) && options?.method === "PATCH");
+    expect(JSON.parse(String(rootDateCall?.[1]?.body))).toMatchObject({ plannedStart: "2026-11-12",
+      plannedEnd: "2026-11-14", reason: "Synthetic root date correction", version: 5 });
+
+    const currentRow = container.querySelector<HTMLElement>(`[data-row-key="activity:${rootActivity.id}"]`)!;
+    fireEvent.click(currentRow.querySelectorAll<HTMLButtonElement>(".workspace-inline-actions button").item(2));
+    expect(await screen.findByRole("heading", { name: /Synthetic root activity/ })).toBeInTheDocument();
+    expect(api.fetch).toHaveBeenCalledWith(expect.stringContaining("/change-history?"), expect.anything());
+    confirmation.mockRestore();
+  });
+
+  it("creates a root activity with a reviewed working-day plan", async () => {
+    const original = api.fetch.getMockImplementation()!;
+    const preview = { startDate: "2026-11-06", endDate: "2026-11-10", workingDays: 2,
+      calendarVersion: 7, optionalDaysVerified: true, unverifiedOptionalYears: [], skippedDates: [] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.includes("working-day-preview")
+      ? Promise.resolve(json({ preview })) : original(path, options));
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(`[data-row-key="product:${product.id}"]`)).toBeInTheDocument());
+    fireEvent.click(within(container.querySelector(`[data-row-key="product:${product.id}"]`)!)
+      .getByRole("button", { name: "Adicionar atividade" }));
+    fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Root working activity" } });
+    fireEvent.change(screen.getByLabelText("Modo de planejamento"), { target: { value: "working_days" } });
+    fireEvent.change(container.querySelector("#activity-start")!, { target: { value: "06/11/2026" } });
+    fireEvent.change(container.querySelector("#activity-working-days")!, { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: /Calcular/ }));
+    expect(await screen.findByText("10/11/2026")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/products/${product.id}/root-activities`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Root working activity", activityType: null,
+        displayOrder: 0, notes: null, colorOverride: null, planningMode: "working_days",
+        plannedStart: "2026-11-06", workingDays: 2, calendarVersion: 7 }) })
+    ));
+  });
+
+  it("includes root working plans in the existing calendar impact preview", async () => {
+    const plannedRoot = { ...rootActivity, plannedStart: "2026-11-09", plannedEnd: "2026-11-10",
+      version: 3, planningMode: "working_days" as const, workingDayDuration: 2, planningCalendarVersion: 1 };
+    const rootImpact: ActivityCalendarImpact = { ...dateImpact, activityId: plannedRoot.id,
+      disciplineId: null, stageId: null, activityVersion: 3, workingDays: 2,
+      savedCalendarVersion: 1, currentCalendarVersion: 2,
+      currentStartDate: plannedRoot.plannedStart, currentEndDate: plannedRoot.plannedEnd };
+    setupImpacts([rootImpact], { ...rootTree, rootActivities: [plannedRoot] });
+    const fallback = api.fetch.getMockImplementation()!;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith("/calendar-impact/apply")
+      ? Promise.resolve(json({ changedCount: 1 })) : fallback(path, options));
+    mount("editor");
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar impactos" }));
+    const panel = screen.getByRole("dialog", { name: /impactos do calend/i });
+    const rootSelection = within(panel).getByRole("checkbox", { name: plannedRoot.name });
+    expect(rootSelection).toBeInTheDocument();
+    expect(within(panel).queryByText(/desatualizada/)).not.toBeInTheDocument();
+    fireEvent.click(rootSelection);
+    fireEvent.change(within(panel).getByLabelText(/justificativa/i), { target: { value: "Synthetic root reschedule" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Reprogramar selecionadas" }));
+    const confirmation = await screen.findByRole("alertdialog", { name: /Confirmar reprograma/i });
+    fireEvent.click(within(confirmation).getByRole("button", { name: /Confirmar reprograma/i }));
+    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
+      `/api/workspaces/${workspace.id}/products/${product.id}/calendar-impact/apply`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ calendarVersion: 2,
+        reason: "Synthetic root reschedule", selections: [{ activityId: plannedRoot.id, version: 3 }] }) })
+    ));
   });
 
   it("reports missing hierarchy and rechecks access loss", async () => {

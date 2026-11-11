@@ -61,6 +61,31 @@ describe("schedule workspace model", () => {
     expect(rows.find((row) => row.key === "activity:b")?.color).toBe("#AABBCC");
   });
 
+  it("places root activities before disciplines and includes their dates once", () => {
+    const withRoots: ScheduleTree = { ...tree, rootActivities: [
+      { id: "root-2", name: "Later root", plannedStart: "2026-12-01", plannedEnd: "2026-12-03",
+        displayOrder: 1, colorOverride: "#AA5577" },
+      { id: "root-1", name: "Earlier root", plannedStart: "2026-10-20", plannedEnd: "2026-10-22",
+        displayOrder: 0, colorOverride: null }
+    ] };
+    const rows = visibleScheduleRows({ id: "p", name: "Product" }, withRoots, new Set(["d"]), new Set(["s"]));
+    expect(rows.slice(0, 3).map((row) => row.key)).toEqual([
+      "product:p", "activity:root-1", "activity:root-2"
+    ]);
+    expect(rows[1]?.color).toBe("#8D9A89");
+    expect(rows[2]?.color).toBe("#AA5577");
+    expect(rows[0]).toMatchObject({ start: "2026-10-20", end: "2026-12-03", hasChildren: true });
+    const scale = makeTimeline(withRoots, targets, "day", "2026-11-07");
+    expect(scale.startDay).toBe(dayNumber("2026-10-06"));
+    expect(scale.endDay).toBe(dayNumber("2026-12-17"));
+  });
+
+  it("treats an omitted root collection in older schedule payloads as empty", () => {
+    expect(visibleScheduleRows({ id: "p", name: "Product" }, { disciplines: [] }, new Set(), new Set()))
+      .toEqual([{ key: "product:p", kind: "product", id: "p", label: "Product", start: null,
+        end: null, hasChildren: false, expanded: true }]);
+  });
+
   it("uses the São Paulo calendar date across the UTC midnight boundary", () => {
     expect(saoPauloCivilDate(new Date("2026-11-07T02:59:59Z"))).toBe("2026-11-06");
     expect(saoPauloCivilDate(new Date("2026-11-07T03:00:00Z"))).toBe("2026-11-07");

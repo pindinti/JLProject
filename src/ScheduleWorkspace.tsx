@@ -19,6 +19,7 @@ type DeletionTarget = { kind: "discipline" | "stage" | "activity"; id: string; l
 
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
+  onAddRootActivity,
   onRefresh, onHistory, onProductHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
   userId, onAccessLost = () => undefined }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
@@ -27,7 +28,8 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
   onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
-  onAddDiscipline: () => void; onRefresh: () => void | Promise<void>; onProductHistory: () => void;
+  onAddDiscipline: () => void; onAddRootActivity?: () => void;
+  onRefresh: () => void | Promise<void>; onProductHistory: () => void;
   onRescheduleHistory: () => void;
   onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
@@ -436,7 +438,10 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
         <div className="workspace-table-rows" role="table" aria-label={messages.scheduleTable} tabIndex={-1}>
           {rows.map((row) => <div key={row.key} className={`workspace-table-row row-${row.kind}${selected === row.key ? " selected" : ""}`}
             data-row-key={row.key} role="row" aria-selected={selected === row.key}>
-            <div role="cell" className="workspace-name-cell" style={{ paddingLeft: `${({ product: 0, discipline: 12, stage: 27, activity: 42 })[row.kind]}px` }}>
+            <div role="cell" className="workspace-name-cell" style={{ paddingLeft: `${
+              row.kind === "activity" && !row.disciplineId ? 12
+                : ({ product: 0, discipline: 12, stage: 27, activity: 42 })[row.kind]
+            }px` }}>
               {row.hasChildren && <button type="button" className="workspace-expand" aria-expanded={row.expanded}
                 aria-label={messages.toggleScheduleRow(row.label)} onClick={() => {
                   if (row.kind === "product") setProductExpanded((value) => !value);
@@ -448,6 +453,11 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
               {row.color && <span className="color-chip" style={{ backgroundColor: row.color }}
                 aria-label={messages.scheduleColor(row.color)} />}
               <span className="workspace-inline-actions">
+                {canEdit && row.kind === "product" && onAddRootActivity && <button type="button" className="workspace-icon-action"
+                  aria-label={messages.addActivity} title={messages.addActivity}
+                  onClick={() => { setSelected(row.key); onAddRootActivity(); }}>
+                  <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M10 3v14M3 10h14" /></svg>
+                </button>}
                 {canEdit && row.kind !== "product" && <button type="button" className="workspace-icon-action"
                   aria-label={row.kind === "discipline" ? messages.editDiscipline : row.kind === "stage" ? messages.editStage : messages.editActivity}
                   title={row.kind === "discipline" ? messages.editDiscipline : row.kind === "stage" ? messages.editStage : messages.editActivity}

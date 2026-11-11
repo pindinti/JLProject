@@ -9,6 +9,7 @@ export interface StageInput { code: string; color: string; displayName: string; 
 export interface ActivityInput {
   name: string; activityType: string | null; plannedStart: string | null;
   plannedEnd: string | null; displayOrder: number; notes: string | null;
+  colorOverride?: string | null;
 }
 export interface WorkingActivityInput extends ActivityInput {
   workingDays: number;
@@ -23,7 +24,7 @@ export interface Stage extends StageInput {
   derivedStart: string | null; derivedEnd: string | null;
 }
 export interface Activity extends ActivityInput {
-  id: string; stageId: string; version: number;
+  id: string; stageId: string | null; version: number;
   colorOverride: string | null;
   planningMode: "manual" | "working_days";
   workingDayDuration: number | null;
@@ -31,6 +32,7 @@ export interface Activity extends ActivityInput {
 }
 export interface ScheduleHierarchy {
   productId: string;
+  rootActivities: Activity[];
   disciplines: (Discipline & { stages: (Stage & { activities: Activity[] })[] })[];
 }
 export interface StageDefinition { id: string; code: string; color: string }
@@ -47,7 +49,7 @@ export type DateChangeResult = { status: "updated" | "unchanged"; activity: Acti
 export type WorkingPlanResult = { status: "updated" | "unchanged"; activity: Activity } |
   { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
 export interface CalendarRescheduleProposal {
-  activityId: string; disciplineId: string; stageId: string; expectedVersion: number;
+  activityId: string; disciplineId: string | null; stageId: string | null; expectedVersion: number;
   startDate: string; currentEndDate: string; proposedEndDate: string;
   workingDays: number; savedCalendarVersion: number;
 }
@@ -106,7 +108,7 @@ export interface ScheduleRepository {
   productExists(workspaceId: string, productId: string, activeOnly: boolean): Promise<boolean>;
   disciplineExists(workspaceId: string, productId: string, disciplineId: string, activeOnly: boolean): Promise<boolean>;
   stageExists(workspaceId: string, productId: string, disciplineId: string, stageId: string, activeOnly: boolean): Promise<boolean>;
-  activityExists(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+  activityExists(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
     activityId: string, activeOnly: boolean): Promise<boolean>;
   listDisciplines(workspaceId: string, productId: string): Promise<Discipline[]>;
   createDiscipline(workspaceId: string, productId: string, actorId: string, input: DisciplineInput): Promise<Mutation<Discipline>>;
@@ -115,6 +117,7 @@ export interface ScheduleRepository {
   createStage(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: StageInput): Promise<Mutation<Stage>>;
   updateStage(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: StageInput, version: number): Promise<Mutation<Stage>>;
   listActivities(workspaceId: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]>;
+  listRootActivities(workspaceId: string, productId: string): Promise<Activity[]>;
   listWorkingPlans(workspaceId: string, productId: string): Promise<CalendarImpactCandidate[]>;
   applyCalendarReschedule(workspaceId: string, productId: string, actorId: string,
     operationId: string, calendarVersion: number, reason: string,
@@ -125,19 +128,19 @@ export interface ScheduleRepository {
     Promise<CalendarRescheduleHistoryResult>;
   listProductChangeHistory(workspaceId: string, productId: string, actorId: string, limit: number,
     cursor: ProductChangeHistoryCursor | null): Promise<ProductChangeHistoryResult>;
-  createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
-  createWorkingActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+  createActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
+  createWorkingActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
     actorId: string, input: WorkingActivityInput): Promise<Mutation<Activity>>;
-  updateActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, activityId: string, actorId: string, input: ActivityMetadataInput, version: number): Promise<Mutation<Activity>>;
-  changeActivityDates(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+  updateActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null, activityId: string, actorId: string, input: ActivityMetadataInput, version: number): Promise<Mutation<Activity>>;
+  changeActivityDates(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
     activityId: string, actorId: string, start: string, end: string, reason: string | null,
     version: number, operationId: string): Promise<DateChangeResult>;
-  changeActivityWorkingPlan(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+  changeActivityWorkingPlan(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
     activityId: string, actorId: string, start: string, end: string, workingDays: number,
     calendarVersion: number, reason: string | null, version: number,
     operationId: string): Promise<WorkingPlanResult>;
-  listActivityDateHistory(workspaceId: string, productId: string, disciplineId: string,
-    stageId: string, activityId: string): Promise<DateChange[]>;
+  listActivityDateHistory(workspaceId: string, productId: string, disciplineId: string | null,
+    stageId: string | null, activityId: string): Promise<DateChange[]>;
   getHierarchy(workspaceId: string, productId: string): Promise<ScheduleHierarchy | null>;
   listTargets(workspaceId: string, productId: string): Promise<BusinessTarget[]>;
   createTarget(workspaceId: string, productId: string, actorId: string, input: TargetInput): Promise<Mutation<BusinessTarget>>;
@@ -211,7 +214,7 @@ function stage(row: Record<string, unknown>): Stage {
     derivedStart: nullable(row["derivedStart"]), derivedEnd: nullable(row["derivedEnd"]) };
 }
 function activity(row: Record<string, unknown>): Activity {
-  return { id: text(row["id"]), stageId: text(row["stageId"]), name: text(row["name"]),
+  return { id: text(row["id"]), stageId: nullable(row["stageId"]), name: text(row["name"]),
     activityType: nullable(row["activityType"]), plannedStart: nullable(row["plannedStart"]),
     plannedEnd: nullable(row["plannedEnd"]), displayOrder: Number(row["displayOrder"]),
     notes: nullable(row["notes"]), colorOverride: nullable(row["colorOverride"]), version: Number(row["version"]),
@@ -224,9 +227,10 @@ function duplicate(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
 
-export function assembleHierarchy(productId: string, rows: Record<string, unknown>[]): ScheduleHierarchy | null {
+export function assembleHierarchy(productId: string, rows: Record<string, unknown>[],
+  rootRows: Record<string, unknown>[] = []): ScheduleHierarchy | null {
   if (!rows[0]) return null;
-  const hierarchy: ScheduleHierarchy = { productId, disciplines: [] };
+  const hierarchy: ScheduleHierarchy = { productId, rootActivities: rootRows.map(activity), disciplines: [] };
   type HierarchyDiscipline = ScheduleHierarchy["disciplines"][number];
   type HierarchyStage = HierarchyDiscipline["stages"][number];
   const disciplines = new Map<string, HierarchyDiscipline>();
@@ -301,15 +305,21 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
     return rows.length > 0;
   }
-  async function activityExists(ws: string, productId: string, disciplineId: string,
-    stageId: string, activityId: string, activeOnly: boolean) {
+  async function activityExists(ws: string, productId: string, disciplineId: string | null,
+    stageId: string | null, activityId: string, activeOnly: boolean) {
     const rows = await sql`SELECT 1 FROM public.stage_activities AS a
       JOIN public.products AS p ON p.id = a.product_id AND p.workspace_id = a.workspace_id
-      JOIN public.discipline_stages AS s ON s.id = a.stage_id AND s.deleted_at IS NULL
-      JOIN public.product_disciplines AS d ON d.id = a.discipline_id AND d.deleted_at IS NULL
       WHERE a.workspace_id = ${ws}::uuid AND a.product_id = ${productId}::uuid
-        AND a.discipline_id = ${disciplineId}::uuid AND a.stage_id = ${stageId}::uuid
+        AND a.discipline_id IS NOT DISTINCT FROM ${disciplineId}::uuid
+        AND a.stage_id IS NOT DISTINCT FROM ${stageId}::uuid
         AND a.id = ${activityId}::uuid AND a.deleted_at IS NULL
+        AND ((a.discipline_id IS NULL AND a.stage_id IS NULL) OR EXISTS (
+          SELECT 1 FROM public.discipline_stages AS s
+          JOIN public.product_disciplines AS d ON d.id = s.discipline_id
+            AND d.workspace_id = s.workspace_id AND d.product_id = s.product_id
+          WHERE s.id = a.stage_id AND s.discipline_id = a.discipline_id
+            AND s.workspace_id = a.workspace_id AND s.product_id = a.product_id
+            AND s.deleted_at IS NULL AND d.deleted_at IS NULL))
         AND (${activeOnly} = false OR p.active = true) LIMIT 1`;
     return rows.length > 0;
   }
@@ -370,7 +380,21 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       ORDER BY display_order, id`;
     return rows.map(activity);
   }
-  async function findActivity(ws: string, productId: string, disciplineId: string, stageId: string, activityId: string) {
+  async function listRootActivities(ws: string, productId: string): Promise<Activity[]> {
+    const rows = await sql`SELECT id::text AS id, NULL::text AS "stageId", name,
+      activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
+      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes,
+      color_override AS "colorOverride", version, planning_mode AS "planningMode",
+      working_day_duration AS "workingDayDuration",
+      planning_calendar_version AS "planningCalendarVersion"
+      FROM public.stage_activities
+      WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+        AND discipline_id IS NULL AND stage_id IS NULL AND deleted_at IS NULL
+      ORDER BY display_order, id`;
+    return rows.map(activity);
+  }
+  async function findActivity(ws: string, productId: string, disciplineId: string | null,
+    stageId: string | null, activityId: string) {
     const rows = await sql`SELECT id::text AS id, stage_id::text AS "stageId", name,
       activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
       to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes,
@@ -379,7 +403,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       planning_calendar_version AS "planningCalendarVersion"
       FROM public.stage_activities
       WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
-        AND discipline_id = ${disciplineId}::uuid AND stage_id = ${stageId}::uuid
+        AND discipline_id IS NOT DISTINCT FROM ${disciplineId}::uuid
+        AND stage_id IS NOT DISTINCT FROM ${stageId}::uuid
         AND id = ${activityId}::uuid AND deleted_at IS NULL LIMIT 1`;
     return rows[0] ? activity(rows[0]) : null;
   }
@@ -482,6 +507,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       return value ? { status: "ok", value } : { status: "not_found" };
     },
     listActivities,
+    listRootActivities,
     async listWorkingPlans(ws, productId) {
       const rows = await sql`SELECT id::text AS id, discipline_id::text AS "disciplineId",
         stage_id::text AS "stageId", version,
@@ -494,8 +520,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           AND planning_mode = 'working_days' AND deleted_at IS NULL
         ORDER BY id`;
       return rows.map((row): CalendarImpactCandidate => ({
-        id: text(row["id"]), disciplineId: text(row["disciplineId"]),
-        stageId: text(row["stageId"]), version: Number(row["version"]),
+        id: text(row["id"]), disciplineId: nullable(row["disciplineId"]),
+        stageId: nullable(row["stageId"]), version: Number(row["version"]),
         planningMode: "working_days", plannedStart: nullable(row["plannedStart"]),
         plannedEnd: nullable(row["plannedEnd"]),
         workingDayDuration: row["workingDayDuration"] == null ? null : Number(row["workingDayDuration"]),
@@ -653,26 +679,37 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       )
       INSERT INTO public.stage_activities
         (workspace_id, product_id, discipline_id, stage_id, name, activity_type,
-         planned_start, planned_end, display_order, notes, created_by, updated_by)
-        SELECT s.workspace_id, s.product_id, s.discipline_id, s.id,
+         planned_start, planned_end, display_order, notes, color_override, created_by, updated_by)
+        SELECT p.workspace_id, p.id, s.discipline_id, s.id,
           ${input.name}, ${input.activityType}, ${input.plannedStart}::date,
-          ${input.plannedEnd}::date, ${input.displayOrder}, ${input.notes},
+          ${input.plannedEnd}::date, ${input.displayOrder}, ${input.notes}, ${input.colorOverride ?? null},
           ${actorId}::uuid, ${actorId}::uuid
-        FROM public.discipline_stages AS s JOIN locked_product AS p
-          ON p.workspace_id = s.workspace_id AND p.id = s.product_id
-        WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
-          AND s.discipline_id = ${disciplineId}::uuid AND s.id = ${stageId}::uuid
+        FROM locked_product AS p
+        LEFT JOIN public.discipline_stages AS s ON s.workspace_id = p.workspace_id
+          AND s.product_id = p.id AND s.discipline_id = ${disciplineId}::uuid
+          AND s.id = ${stageId}::uuid AND s.deleted_at IS NULL
+        WHERE (${disciplineId}::uuid IS NULL AND ${stageId}::uuid IS NULL) OR
+          (s.id IS NOT NULL AND ${disciplineId}::uuid IS NOT NULL AND ${stageId}::uuid IS NOT NULL)
         RETURNING id::text AS id`;
       if (!rows[0]) return { status: "not_found" };
       const value = await findActivity(ws, productId, disciplineId, stageId, text(rows[0]["id"]));
       return value ? { status: "ok", value } : { status: "not_found" };
     },
     async createWorkingActivity(ws, productId, disciplineId, stageId, actorId, input) {
-      const rows = await sql`SELECT public.create_activity_with_working_plan(
+      const rows = await sql`WITH created AS MATERIALIZED (SELECT public.create_activity_with_working_plan(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${actorId}::uuid, ${input.name}, ${input.activityType}, ${input.plannedStart}::date,
         ${input.plannedEnd}::date, ${input.displayOrder}, ${input.notes},
-        ${input.workingDays}, ${input.calendarVersion}::bigint) AS result`;
+        ${input.workingDays}, ${input.calendarVersion}::bigint) AS result),
+      colored AS (
+        UPDATE public.stage_activities AS a SET color_override = ${input.colorOverride ?? null}
+        FROM created AS c
+        WHERE ${input.colorOverride != null} AND c.result->>'status' = 'created'
+          AND a.id = (c.result->>'id')::uuid AND a.workspace_id = ${ws}::uuid
+          AND a.product_id = ${productId}::uuid
+        RETURNING a.id
+      )
+      SELECT c.result AS result, (SELECT count(*) FROM colored) AS color_updates FROM created AS c`;
       const result = rows[0]?.["result"] as { status?: string; id?: string } | undefined;
       if (!result || !["created", "not_found", "forbidden", "stale_calendar", "invalid"].includes(result.status ?? ""))
         throw new Error("Unexpected working-day activity creation result.");
@@ -694,7 +731,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
             ELSE ${input.colorOverride ?? null} END,
           updated_by = ${actorId}::uuid, updated_at = now(), version = a.version + 1
         WHERE a.workspace_id = ${ws}::uuid AND a.product_id = ${productId}::uuid
-          AND a.discipline_id = ${disciplineId}::uuid AND a.stage_id = ${stageId}::uuid
+          AND a.discipline_id IS NOT DISTINCT FROM ${disciplineId}::uuid
+          AND a.stage_id IS NOT DISTINCT FROM ${stageId}::uuid
           AND a.id = ${activityId}::uuid AND a.version = ${version}
           AND EXISTS (SELECT 1 FROM locked_product)
         RETURNING a.id::text AS id`;
@@ -754,7 +792,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         to_char(new_end, 'YYYY-MM-DD') AS "newEnd", reason
         FROM public.activity_date_changes
         WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
-          AND discipline_id = ${disciplineId}::uuid AND stage_id = ${stageId}::uuid
+          AND discipline_id IS NOT DISTINCT FROM ${disciplineId}::uuid
+          AND stage_id IS NOT DISTINCT FROM ${stageId}::uuid
           AND activity_id = ${activityId}::uuid
         ORDER BY changed_at DESC, operation_id DESC`;
       return rows.map((row) => ({ operationId: text(row["operationId"]),
@@ -787,7 +826,18 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           AND a.deleted_at IS NULL
         WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid
         ORDER BY d.display_order, d.id, s.display_order, s.id, a.display_order, a.id`;
-      return assembleHierarchy(productId, rows);
+      if (!rows[0]) return null;
+      const rootRows = await sql`SELECT id::text AS id, NULL::text AS "stageId", name,
+        activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
+        to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes,
+        color_override AS "colorOverride", version, planning_mode AS "planningMode",
+        working_day_duration AS "workingDayDuration",
+        planning_calendar_version AS "planningCalendarVersion"
+        FROM public.stage_activities
+        WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+          AND discipline_id IS NULL AND stage_id IS NULL AND deleted_at IS NULL
+        ORDER BY display_order, id`;
+      return assembleHierarchy(productId, rows, rootRows);
     },
     async listTargets(ws, productId) {
       const rows = await sql`SELECT id::text AS id, name,

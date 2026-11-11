@@ -8,12 +8,13 @@ import { createScheduleRepository, type ActivityInput, type ActivityMetadataInpu
   type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type Mutation,
   type ProductChangeHistoryCursor, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
-const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|change-history|targets|disciplines)(?:\/(.*))?$/;
+const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|change-history|targets|disciplines|root-activities)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const eventCursorId = /^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "product_change_history" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
-  disciplineId?: string; stageId?: string; activityId?: string; targetId?: string; operationId?: string };
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "product_change_history" | "targets" | "target" | "disciplines" | "stages" | "activities" | "root_activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+  disciplineId?: string; stageId?: string; activityId?: string; targetId?: string; operationId?: string;
+  rootActivity?: true };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
 function response(body: Record<string, unknown>, status: number) {
@@ -41,6 +42,17 @@ function parseRoute(pathname: string): Route | null {
     ? null : { workspaceId, productId, kind: "product_change_history" };
   if (root === "targets") return !remainder ? { workspaceId, productId, kind: "targets" }
     : /^[^/]+$/.test(remainder) ? { workspaceId, productId, kind: "target", targetId: remainder } : null;
+  if (root === "root-activities") {
+    const parts = remainder?.split("/") ?? [];
+    if (parts.length === 0) return { workspaceId, productId, kind: "root_activities" };
+    if (parts.length === 1) return { workspaceId, productId, kind: "activities",
+      activityId: parts[0], rootActivity: true };
+    if (parts.length === 2 && ["dates", "date-history", "working-plan"].includes(parts[1]!))
+      return { workspaceId, productId, kind: parts[1] === "dates" ? "activity_dates"
+        : parts[1] === "date-history" ? "activity_history" : "activity_working_plan",
+      activityId: parts[0], rootActivity: true };
+    return null;
+  }
   const parts = remainder?.split("/") ?? [];
   if (parts.length === 0) return { workspaceId, productId, kind: "disciplines" };
   if (parts.length === 1) return { workspaceId, productId, disciplineId: parts[0], kind: "disciplines" };
@@ -161,10 +173,10 @@ function dateChangeInput(value: Record<string, unknown>):
   return { start: value["plannedStart"], end: value["plannedEnd"], reason,
     version: value["version"] as number };
 }
-function activityInput(value: Record<string, unknown>, editing: boolean):
+function activityInput(value: Record<string, unknown>, editing: boolean, allowColorOnCreate = false):
   { input: ActivityInput | ActivityMetadataInput; version?: number;
     workingPlan?: { start: string; duration: number; calendarVersion: number } } | null {
-  const keys = ["name", "activityType", "displayOrder", "notes", ...(editing ? ["colorOverride"] : []),
+  const keys = ["name", "activityType", "displayOrder", "notes", ...(editing || allowColorOnCreate ? ["colorOverride"] : []),
     ...(editing ? ["version"] : ["plannedStart", "plannedEnd", "planningMode", "workingDays", "calendarVersion"])];
   if (!only(value, keys)) return null;
   const name = label(value["name"], 300);
@@ -173,9 +185,10 @@ function activityInput(value: Record<string, unknown>, editing: boolean):
   if (!name || activityType === undefined || notes === undefined || !order(value["displayOrder"]) ||
       (editing && !version(value["version"]))) return null;
   const colorOverride = value["colorOverride"];
-  if (editing && colorOverride !== undefined && colorOverride !== null && !color.test(String(colorOverride))) return null;
+  if ((editing || allowColorOnCreate) && colorOverride !== undefined && colorOverride !== null &&
+      !color.test(String(colorOverride))) return null;
   const metadata = { name, activityType, displayOrder: value["displayOrder"] as number, notes,
-    ...(editing && colorOverride !== undefined
+    ...( (editing || allowColorOnCreate) && colorOverride !== undefined
       ? { colorOverride: colorOverride === null ? null : String(colorOverride).toUpperCase() } : {}) };
   if (editing) return { input: metadata, version: value["version"] as number };
   const planningMode = value["planningMode"] ?? "manual";
@@ -290,6 +303,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   const disciplineId = route.disciplineId?.toLowerCase();
   const stageId = route.stageId?.toLowerCase();
   const activityId = route.activityId?.toLowerCase();
+  const activityDisciplineId = route.rootActivity ? null : disciplineId!;
+  const activityStageId = route.rootActivity ? null : stageId!;
   const repository = factory(environment);
   if (!(await repository.productExists(ws, productId, write))) return response({ error: "Não encontrado." }, 404);
   if (disciplineId && !(await repository.disciplineExists(ws, productId, disciplineId, write)))
@@ -298,7 +313,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     return response({ error: "Não encontrado." }, 404);
   if ((route.kind === "activity_dates" || route.kind === "activity_history" ||
       route.kind === "activity_working_plan") && activityId &&
-      !(await repository.activityExists(ws, productId, disciplineId!, stageId!, activityId, write)))
+      !(await repository.activityExists(ws, productId, activityDisciplineId, activityStageId, activityId, write)))
     return response({ error: "Não encontrado." }, 404);
 
   if (route.kind === "hierarchy" && request.method === "GET") {
@@ -473,12 +488,14 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     } catch { return response({ error: "Não foi possível excluir a meta. Tente novamente." }, 503); }
   }
   if (route.kind === "activity_history" && request.method === "GET" && activityId) {
-    return response({ changes: await repository.listActivityDateHistory(ws, productId, disciplineId!, stageId!, activityId) }, 200);
+    return response({ changes: await repository.listActivityDateHistory(ws, productId,
+      activityDisciplineId, activityStageId, activityId) }, 200);
   }
   if (route.kind === "activity_dates" && request.method === "PATCH" && activityId) {
     const value = await body(request); const parsed = value && dateChangeInput(value);
     if (!parsed) return response({ error: "Datas ou justificativa inválidas." }, 400);
-    const result = await repository.changeActivityDates(ws, productId, disciplineId!, stageId!, activityId,
+    const result = await repository.changeActivityDates(ws, productId, activityDisciplineId,
+      activityStageId, activityId,
       identity.subject, parsed.start, parsed.end, parsed.reason, parsed.version, crypto.randomUUID());
     if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
     if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
@@ -498,7 +515,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       let calculation;
       try { calculation = calculateWorkingDayEndDate(parsed.start, parsed.duration, calendar.exceptions); }
       catch { return response({ error: "A data e a duração excedem o período de calendário disponível." }, 400); }
-      const result = await repository.changeActivityWorkingPlan(ws, productId, disciplineId!, stageId!, activityId,
+      const result = await repository.changeActivityWorkingPlan(ws, productId, activityDisciplineId,
+        activityStageId, activityId,
         identity.subject, parsed.start, calculation.endDate, parsed.duration, calendar.version,
         parsed.reason, parsed.version, crypto.randomUUID());
       if (result.status === "forbidden") return response({ error: "Acesso nÃ£o autorizado." }, 403);
@@ -523,6 +541,39 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       if (!parsed || !parsed.version) return response({ error: "Dados inválidos." }, 400);
       return mutation(await repository.updateDiscipline(ws, productId, disciplineId, identity.subject, parsed.input, parsed.version), "discipline");
     }
+  }
+  if (route.kind === "root_activities") {
+    if (request.method === "GET")
+      return response({ rootActivities: await repository.listRootActivities(ws, productId) }, 200);
+    if (request.method === "POST") {
+      const value = await body(request); const parsed = value && activityInput(value, false, true);
+      if (!parsed) return response({ error: "Dados invÃ¡lidos." }, 400);
+      if (!parsed.workingPlan)
+        return mutation(await repository.createActivity(ws, productId, null, null, identity.subject,
+          parsed.input as ActivityInput), "activity", true);
+      try {
+        const calendar = await calendarFactory(environment).readForCalculation(ws);
+        if (parsed.workingPlan.calendarVersion !== calendar.version)
+          return response({ error: "O calendÃ¡rio mudou. Recalcule a previsÃ£o e tente novamente.", code: "calendar_conflict" }, 409);
+        let calculation;
+        try { calculation = calculateWorkingDayEndDate(parsed.workingPlan.start,
+          parsed.workingPlan.duration, calendar.exceptions); }
+        catch { return response({ error: "A data e a duraÃ§Ã£o excedem o perÃ­odo de calendÃ¡rio disponÃ­vel." }, 400); }
+        const workingInput: WorkingActivityInput = {
+          ...(parsed.input as ActivityInput), plannedStart: parsed.workingPlan.start,
+          plannedEnd: calculation.endDate, workingDays: parsed.workingPlan.duration,
+          calendarVersion: calendar.version
+        };
+        return mutation(await repository.createWorkingActivity(ws, productId, null, null,
+          identity.subject, workingInput), "activity", true);
+      } catch { return response({ error: "NÃ£o foi possÃ­vel calcular ou salvar a atividade. Tente novamente." }, 503); }
+    }
+  }
+  if (route.kind === "activities" && route.rootActivity && activityId && request.method === "PATCH") {
+    const value = await body(request); const parsed = value && activityInput(value, true);
+    if (!parsed || !parsed.version) return response({ error: "Dados invÃ¡lidos." }, 400);
+    return mutation(await repository.updateActivity(ws, productId, null, null, activityId,
+      identity.subject, parsed.input as ActivityMetadataInput, parsed.version), "activity");
   }
   if (route.kind === "stages" && disciplineId) {
     if (request.method === "GET" && !stageId) return response({ stages: await repository.listStages(ws, productId, disciplineId) }, 200);

@@ -259,6 +259,7 @@ describe("schedule workspace refinements", () => {
     const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
       targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
       onToggle={vi.fn()} onEdit={onEdit} onAdd={onAdd} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()}
+      onAddRootActivity={vi.fn()}
       onCreateTarget={vi.fn()} onUpdateTarget={vi.fn()} onDeleteTarget={vi.fn()} />);
     const name = screen.getByRole("button", { name: "Synthetic activity" });
 
@@ -273,10 +274,11 @@ describe("schedule workspace refinements", () => {
 
     expect(screen.getByRole("button", { name: "Editar atividade" }).querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("button", { name: "Adicionar etapa" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Adicionar atividade" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Adicionar atividade" })).toHaveLength(2);
     const productRow = container.querySelector<HTMLElement>('[data-row-key="product:product"]')!;
     const activityRow = container.querySelector<HTMLElement>('[data-row-key="activity:activity"]')!;
-    expect(within(productRow).queryByRole("button", { name: /Editar|Adicionar/ })).not.toBeInTheDocument();
+    expect(within(productRow).queryByRole("button", { name: /Editar/ })).not.toBeInTheDocument();
+    expect(within(productRow).getByRole("button", { name: "Adicionar atividade" })).toBeInTheDocument();
     expect(within(activityRow).queryByRole("button", { name: /Adicionar/ })).not.toBeInTheDocument();
     const disciplineNameCell = container.querySelector('[data-row-key="discipline:discipline"] .workspace-name-cell')!;
     const childOrder = [...disciplineNameCell.children].map((child) => (child as HTMLElement).className);
@@ -343,6 +345,79 @@ describe("schedule workspace refinements", () => {
     expect(screen.getByLabelText("Nome")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Salvar meta" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Excluir meta" })).not.toBeInTheDocument();
+  });
+
+  it("renders ordered root activities before disciplines and exposes a root add action only to editors", () => {
+    const rootTree: ScheduleTree = { ...tree, rootActivities: [
+      { id: "root-later", name: "Root activity later", plannedStart: "2026-11-12", plannedEnd: "2026-11-14",
+        displayOrder: 2, colorOverride: "#AA5577" },
+      { id: "root-first", name: "Root activity first", plannedStart: "2026-11-05", plannedEnd: "2026-11-08",
+        displayOrder: 0, colorOverride: null }
+    ] };
+    const onAddRootActivity = vi.fn();
+    const { container, rerender } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }}
+      tree={rootTree} targets={targets} openDisciplines={new Set(["discipline"])}
+      openStages={new Set(["stage"])} canEdit onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()}
+      onHistory={vi.fn()} onAddDiscipline={vi.fn()} onAddRootActivity={onAddRootActivity}
+      onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()}
+      onCreateTarget={vi.fn()} onUpdateTarget={vi.fn()} onDeleteTarget={vi.fn()} />);
+
+    const rowKeys = [...container.querySelectorAll<HTMLElement>(".workspace-table-row")]
+      .map((row) => row.dataset.rowKey);
+    expect(rowKeys.indexOf("activity:root-first")).toBeLessThan(rowKeys.indexOf("activity:root-later"));
+    expect(rowKeys.indexOf("activity:root-later")).toBeLessThan(rowKeys.indexOf("discipline:discipline"));
+    expect(container.querySelector<HTMLElement>('[data-row-key="activity:root-first"] .workspace-name-cell')?.style.paddingLeft)
+      .toBe("12px");
+    expect(container.querySelector<HTMLElement>('[data-row-key="activity:activity"] .workspace-name-cell')?.style.paddingLeft)
+      .toBe("42px");
+    expect(container.querySelector('.workspace-chart-row[data-row-key="activity:root-first"] .timeline-bar'))
+      .toHaveStyle({ backgroundColor: "#8D9A89" });
+    expect(container.querySelector('.workspace-chart-row[data-row-key="activity:root-later"] .timeline-bar'))
+      .toHaveStyle({ backgroundColor: "#AA5577" });
+
+    const productRow = container.querySelector<HTMLElement>('[data-row-key="product:product"]')!;
+    fireEvent.click(within(productRow).getByRole("button", { name: "Adicionar atividade" }));
+    expect(onAddRootActivity).toHaveBeenCalledOnce();
+    expect(productRow).toHaveClass("selected");
+
+    rerender(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={rootTree}
+      targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit={false}
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()}
+      onAddRootActivity={onAddRootActivity} onRefresh={vi.fn()} onProductHistory={vi.fn()}
+      onRescheduleHistory={vi.fn()} onCreateTarget={vi.fn()} onUpdateTarget={vi.fn()} onDeleteTarget={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Adicionar atividade" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar atividade" })).not.toBeInTheDocument();
+  });
+
+  it("uses the existing soft-delete preview and confirmation for a root activity", async () => {
+    const root = { id: "root-delete", name: "Synthetic root to delete", plannedStart: "2026-11-12",
+      plannedEnd: "2026-11-14", displayOrder: 0, colorOverride: null };
+    const rootTree: ScheduleTree = { disciplines: [], rootActivities: [root] };
+    const onRefresh = vi.fn();
+    auth.fetch.mockImplementation(async (path: string) => {
+      if (path.includes("/deletion-preview")) return new Response(JSON.stringify({ fingerprint: "a".repeat(32),
+        counts: { disciplines: 0, stages: 0, activities: 1 } }), { status: 200 });
+      if (path.endsWith("/hierarchy/deletions")) return new Response(JSON.stringify({ operationId: "synthetic-operation",
+        counts: { disciplines: 0, stages: 0, activities: 1 } }), { status: 200 });
+      return new Response(JSON.stringify({ calendar: { version: 0, exceptions: [] } }), { status: 200 });
+    });
+    const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }}
+      tree={rootTree} targets={[]} workspaceId="workspace" openDisciplines={new Set()} openStages={new Set()}
+      canEdit onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()}
+      onAddDiscipline={vi.fn()} onAddRootActivity={vi.fn()} onRefresh={onRefresh}
+      onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={vi.fn()}
+      onUpdateTarget={vi.fn()} onDeleteTarget={vi.fn()} />);
+    const rootRow = container.querySelector<HTMLElement>('[data-row-key="activity:root-delete"]')!;
+    fireEvent.click(within(rootRow).getByRole("button", { name: "Excluir atividade: Synthetic root to delete" }));
+    const dialog = await screen.findByRole("alertdialog", { name: /exclus/ });
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Synthetic root deletion reason" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Excluir do cronograma" }));
+    await waitFor(() => expect(auth.fetch).toHaveBeenCalledWith(
+      "/api/workspaces/workspace/products/product/hierarchy/deletions",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ kind: "activity", targetId: "root-delete",
+        fingerprint: "a".repeat(32), reason: "Synthetic root deletion reason" }) })
+    ));
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 
   it("requires an audit reason for date edits and confirms synthetic target deletion", async () => {

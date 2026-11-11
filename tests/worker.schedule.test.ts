@@ -13,11 +13,13 @@ const product = "e3aa998a-a2c3-4376-9105-90af0d1dbfe3";
 const discipline = "d4444444-4444-4444-8444-444444444444";
 const stage = "a5555555-5555-4555-8555-555555555555";
 const activity = "a6666666-6666-4666-8666-666666666666";
+const rootActivity = "a7777777-7777-4777-8777-777777777777";
 const targetId = "f7777777-7777-4777-8777-777777777777";
 const base = `https://app.test/api/workspaces/${ws}/products/${product}`;
 const disciplines = `${base}/disciplines`;
 const stages = `${disciplines}/${discipline}/stages`;
 const activities = `${stages}/${stage}/activities`;
+const rootActivities = `${base}/root-activities`;
 const environment = { NEON_AUTH_BASE_URL: "https://auth.example.neon.tech/neondb/auth" };
 const d = { id: discipline, productId: product, name: "Arquitetura", shortCode: "ARQ",
   color: "#112233", displayOrder: 0, description: null, version: 1 };
@@ -26,6 +28,9 @@ const s = { id: stage, disciplineId: discipline, code: "EC", color: "#445566",
 const a = { id: activity, stageId: stage, name: "Tarefa sintética", activityType: null,
   plannedStart: "2026-11-01", plannedEnd: "2026-11-05", displayOrder: 0, notes: null, version: 1,
   colorOverride: null, planningMode: "manual" as const, workingDayDuration: null, planningCalendarVersion: null };
+
+const rootA = { ...a, id: rootActivity, stageId: null, name: "Root activity",
+  plannedStart: "2026-11-03", plannedEnd: "2026-11-07", colorOverride: null };
 
 function repository(): ScheduleRepository {
   return {
@@ -43,7 +48,8 @@ function repository(): ScheduleRepository {
     updateDiscipline: vi.fn(async () => ({ status: "ok" as const, value: { ...d, version: 2 } })),
     listStages: vi.fn(async () => [s]), createStage: vi.fn(async () => ({ status: "ok" as const, value: s })),
     updateStage: vi.fn(async () => ({ status: "ok" as const, value: { ...s, version: 2 } })),
-    listActivities: vi.fn(async () => [a]), createActivity: vi.fn(async () => ({ status: "ok" as const, value: a })),
+    listActivities: vi.fn(async () => [a]), listRootActivities: vi.fn(async () => []),
+    createActivity: vi.fn(async () => ({ status: "ok" as const, value: a })),
     listWorkingPlans: vi.fn(async () => []),
     applyCalendarReschedule: vi.fn(async (_ws, _product, _actor, operationId, _calendarVersion,
       _reason, proposals) => ({ status: "updated" as const, count: proposals.length, operationId })),
@@ -78,7 +84,8 @@ function repository(): ScheduleRepository {
         workingDayDuration: workingDays, planningCalendarVersion: calendarVersion, version: 2
       } })),
     listActivityDateHistory: vi.fn(async () => []),
-    getHierarchy: vi.fn(async () => ({ productId: product, disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] })),
+    getHierarchy: vi.fn(async () => ({ productId: product, rootActivities: [],
+      disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] })),
     listTargets: vi.fn(async () => [{ id: "f7777777-7777-4777-8777-777777777777", name: "Meta sintética",
       description: null, color: "#AA4557", targetDate: "2026-11-08", operationalDate: null, displayOrder: 0, version: 1 }]),
     createTarget: vi.fn(async (_ws, _product, _actor, input) => ({ status: "ok" as const,
@@ -129,6 +136,33 @@ describe("schedule hierarchy API", () => {
       counts: { disciplines: 1, stages: 2, activities: 3 } });
     expect(repo.previewDeletion).toHaveBeenCalledWith(ws, product, actor, "discipline", discipline);
     expect(repo.deleteSubtree).not.toHaveBeenCalled();
+  });
+
+  it("returns root activities as a top-level hierarchy collection", async () => {
+    const repo = repository();
+    vi.mocked(repo.getHierarchy).mockResolvedValue({ productId: product, rootActivities: [rootA],
+      disciplines: [{ ...d, stages: [{ ...s, activities: [a] }] }] });
+    const response = await call(request(`${base}/hierarchy`), "viewer", repo);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ hierarchy: {
+      rootActivities: [{ id: rootActivity, stageId: null }],
+      disciplines: [{ stages: [{ activities: [{ id: activity, stageId: stage }] }] }]
+    } });
+  });
+
+  it("uses the existing deletion operation for a root activity without inventing parents", async () => {
+    const repo = repository();
+    const path = `${base}/hierarchy/deletion-preview?kind=activity&targetId=${rootActivity}`;
+    const response = await call(request(path), "editor", repo);
+    expect(response.status).toBe(200);
+    expect(repo.previewDeletion).toHaveBeenCalledWith(ws, product, actor, "activity", rootActivity);
+    const deletion = await call(request(`${base}/hierarchy/deletions`, "POST", {
+      kind: "activity", targetId: rootActivity, fingerprint: "a".repeat(32),
+      reason: "Synthetic root activity deletion"
+    }), "editor", repo);
+    expect(deletion.status).toBe(200);
+    expect(repo.deleteSubtree).toHaveBeenCalledWith(ws, product, actor, expect.any(String),
+      "activity", rootActivity, "a".repeat(32), "Synthetic root activity deletion");
   });
 
   it("requires an authenticated active editor or admin for preview and deletion", async () => {
@@ -418,6 +452,30 @@ describe("schedule hierarchy API", () => {
     expect(repo.changeActivityWorkingPlan).not.toHaveBeenCalled();
   });
 
+  it("includes root working plans in impacts and passes null parent pairs to rescheduling", async () => {
+    const repo = repository();
+    const rootPlan = { id: rootActivity, disciplineId: null, stageId: null, version: 3,
+      planningMode: "working_days" as const, plannedStart: "2026-11-09", plannedEnd: "2026-11-10",
+      workingDayDuration: 2, planningCalendarVersion: 1 };
+    vi.mocked(repo.listWorkingPlans).mockResolvedValue([rootPlan]);
+    const calendar = calculationCalendar(2, [{ id: "e1111111-1111-4111-8111-111111111111",
+      kind: "company_shutdown", name: null, municipality: null, description: "Synthetic closure",
+      startDate: "2026-11-10", endDate: "2026-11-10", version: 1 }]);
+    const impact = await call(request(`${base}/calendar-impact`), "viewer", repo, true, calendar);
+    expect(impact.status).toBe(200);
+    await expect(impact.json()).resolves.toMatchObject({ impacts: [{ activityId: rootActivity,
+      disciplineId: null, stageId: null, proposedEndDate: "2026-11-11" }] });
+
+    const applied = await call(request(`${base}/calendar-impact/apply`, "POST", {
+      calendarVersion: 2, reason: "Synthetic root calendar reschedule",
+      selections: [{ activityId: rootActivity, version: 3 }]
+    }), "editor", repo, true, calendar);
+    expect(applied.status).toBe(200);
+    expect(repo.applyCalendarReschedule).toHaveBeenCalledWith(ws, product, actor, expect.any(String), 2,
+      "Synthetic root calendar reschedule", [expect.objectContaining({ activityId: rootActivity,
+        disciplineId: null, stageId: null, proposedEndDate: "2026-11-11" })]);
+  });
+
   it("denies unauthenticated, inactive, foreign, invalid, and unknown-product impact reads", async () => {
     const path = `${base}/calendar-impact`;
     const repo = repository();
@@ -585,6 +643,90 @@ describe("schedule hierarchy API", () => {
     expect((await call(request(activities, "POST", activityInput), "editor", repo)).status).toBe(201);
     expect(repo.createActivity).toHaveBeenCalledWith(ws, product, discipline, stage, actor,
       { ...activityInput, activityType: null, notes: null });
+  });
+
+  it("lists and creates product-scoped root activities with optional color overrides", async () => {
+    const repo = repository();
+    vi.mocked(repo.listRootActivities).mockResolvedValue([rootA]);
+    const listed = await call(request(rootActivities), "viewer", repo);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ rootActivities: [{ id: rootActivity,
+      stageId: null, colorOverride: null }] });
+
+    const input = { name: "Root activity", plannedStart: "2026-11-03", plannedEnd: "2026-11-07",
+      displayOrder: 0, colorOverride: "#aa5577" };
+    const created = await call(request(rootActivities, "POST", input), "editor", repo);
+    expect(created.status).toBe(201);
+    expect(repo.createActivity).toHaveBeenCalledWith(ws, product, null, null, actor,
+      { ...input, colorOverride: "#AA5577", activityType: null, notes: null });
+    expect((await call(request(rootActivities, "POST", { ...input, colorOverride: "red" }),
+      "editor", repo)).status).toBe(400);
+    expect((await call(request(rootActivities, "POST", input), "viewer", repo)).status).toBe(403);
+    expect((await call(request(rootActivities, "POST", input), "editor", {
+      ...repo, productExists: async () => false
+    })).status).toBe(404);
+  });
+
+  it("creates working-day root activities through the controlled function with null parents", async () => {
+    const repo = repository();
+    const calendarRepo = calculationCalendar(3, [{ id: "b7777777-7777-4777-8777-777777777777",
+      kind: "company_shutdown", name: null, municipality: null, description: "Synthetic closure",
+      startDate: "2026-11-06", endDate: "2026-11-06", version: 1 }]);
+    const input = { name: "Root working activity", displayOrder: 0, planningMode: "working_days",
+      plannedStart: "2026-11-05", workingDays: 2, calendarVersion: 3, colorOverride: "#aa5577" };
+    const response = await call(request(rootActivities, "POST", input), "editor", repo, true, calendarRepo);
+    expect(response.status).toBe(201);
+    expect(repo.createWorkingActivity).toHaveBeenCalledWith(ws, product, null, null, actor,
+      expect.objectContaining({ plannedEnd: "2026-11-09", workingDays: 2,
+        calendarVersion: 3, colorOverride: "#AA5577" }));
+  });
+
+  it("edits root metadata and colors with optimistic concurrency and workspace isolation", async () => {
+    const repo = repository();
+    const path = `${rootActivities}/${rootActivity}`;
+    const input = { name: "Renamed root activity", displayOrder: 1, colorOverride: null, version: 4 };
+    expect((await call(request(path, "PATCH", input), "editor", repo)).status).toBe(200);
+    expect(repo.updateActivity).toHaveBeenCalledWith(ws, product, null, null, rootActivity, actor,
+      { name: input.name, activityType: null, displayOrder: 1, notes: null, colorOverride: null }, 4);
+    expect((await call(request(path, "PATCH", input), "viewer", repo)).status).toBe(403);
+    expect((await call(request(path.replace(ws, otherWs), "PATCH", input), "editor", repo)).status).toBe(403);
+    const stale = await call(request(path, "PATCH", input), "editor", {
+      ...repo, updateActivity: async () => ({ status: "stale" })
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.text()).not.toContain("database");
+  });
+
+  it("routes root date edits and history through audited, workspace-scoped operations", async () => {
+    const repo = repository();
+    const path = `${rootActivities}/${rootActivity}/dates`;
+    const input = { plannedStart: "2026-11-04", plannedEnd: "2026-11-08",
+      reason: "Synthetic root date adjustment", version: 1 };
+    const changed = await call(request(path, "PATCH", input), "editor", repo);
+    expect(changed.status).toBe(200);
+    expect(repo.activityExists).toHaveBeenCalledWith(ws, product, null, null, rootActivity, true);
+    expect(repo.changeActivityDates).toHaveBeenCalledWith(ws, product, null, null, rootActivity, actor,
+      input.plannedStart, input.plannedEnd, input.reason, 1, expect.any(String));
+    expect((await call(request(`${rootActivities}/${rootActivity}/date-history`), "viewer", repo)).status).toBe(200);
+    expect(repo.listActivityDateHistory).toHaveBeenCalledWith(ws, product, null, null, rootActivity);
+    expect((await call(request(path, "PATCH", input), "editor", {
+      ...repo, activityExists: async () => false
+    })).status).toBe(404);
+  });
+
+  it("edits a root working-day plan with current calendar and activity versions", async () => {
+    const repo = repository();
+    const calendarRepo = calculationCalendar(3);
+    const input = { startDate: "2026-11-05", workingDays: 3, calendarVersion: 3,
+      reason: "Synthetic root plan change", version: 1 };
+    const response = await call(request(`${rootActivities}/${rootActivity}/working-plan`, "PATCH", input),
+      "editor", repo, true, calendarRepo);
+    expect(response.status).toBe(200);
+    expect(repo.activityExists).toHaveBeenCalledWith(ws, product, null, null, rootActivity, true);
+    expect(repo.changeActivityWorkingPlan).toHaveBeenCalledWith(ws, product, null, null, rootActivity,
+      actor, "2026-11-05", "2026-11-09", 3, 3, input.reason, 1, expect.any(String));
+    expect((await call(request(`${rootActivities}/${rootActivity}/working-plan`, "PATCH", input), "viewer",
+      repo, true, calendarRepo)).status).toBe(403);
   });
 
   it("rejects unauthenticated, inactive, viewer writes, and cross-workspace access", async () => {
@@ -822,6 +964,19 @@ describe("hierarchy assembly", () => {
     expect(tree?.disciplines[0].stages[0].activities.map((item) => item.colorOverride)).toEqual([null, "#AA5577"]);
     expect(tree?.disciplines[0].stages[0]).toMatchObject({ derivedStart: "2026-11-01", derivedEnd: "2026-11-12" });
     expect(tree?.disciplines[0].stages[1]).toMatchObject({ derivedStart: null, derivedEnd: null, activities: [] });
-    expect(assembleHierarchy(product, [{ disciplineId: null }])).toEqual({ productId: product, disciplines: [] });
+    expect(assembleHierarchy(product, [{ disciplineId: null }])).toEqual({
+      productId: product, rootActivities: [], disciplines: []
+    });
+  });
+
+  it("keeps root activities in a separate collection with no stage parent", () => {
+    const rootRows = [{ id: rootActivity, stageId: null, name: "Root activity", activityType: null,
+      plannedStart: "2026-11-03", plannedEnd: "2026-11-07", displayOrder: 0, notes: null,
+      colorOverride: null, version: 1, planningMode: "manual", workingDayDuration: null,
+      planningCalendarVersion: null }];
+    const hierarchy = assembleHierarchy(product, [{ disciplineId: null }], rootRows);
+    expect(hierarchy?.rootActivities).toEqual([expect.objectContaining({ id: rootActivity,
+      stageId: null, colorOverride: null, plannedStart: "2026-11-03" })]);
+    expect(hierarchy?.disciplines).toEqual([]);
   });
 });

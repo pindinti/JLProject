@@ -375,6 +375,8 @@ export const messages = {
   activityColor: "Cor da atividade",
   activityColorSelection: "Selecionar cor da atividade",
   restoreStageColor: "Restaurar cor da etapa",
+  restoreDefaultActivityColor: "Restaurar cor padrão",
+  defaultActivityColor: (color: string) => `Usando cor padrão da atividade de produto (${color}).`,
   inheritedStageColor: (color: string) => `Herdando cor da etapa (${color}).`,
   overriddenActivityColor: (color: string) => `Cor personalizada ativa (${color}).`,
   plannedStart: "Início planejado",

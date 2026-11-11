@@ -2,6 +2,7 @@ export interface ScheduleActivity {
   id: string; name: string; plannedStart: string | null; plannedEnd: string | null;
   displayOrder: number; colorOverride: string | null;
 }
+export const rootActivityDefaultColor = "#8D9A89";
 export interface ScheduleStage {
   id: string; displayName: string; code: string; color: string; displayOrder: number;
   derivedStart: string | null; derivedEnd: string | null; activities: ScheduleActivity[];
@@ -9,7 +10,10 @@ export interface ScheduleStage {
 export interface ScheduleDiscipline {
   id: string; name: string; shortCode: string; color: string; displayOrder: number; stages: ScheduleStage[];
 }
-export interface ScheduleTree { disciplines: ScheduleDiscipline[] }
+export interface ScheduleTree {
+  disciplines: ScheduleDiscipline[];
+  rootActivities?: ScheduleActivity[];
+}
 export interface ScheduleTarget { id: string; name: string; description: string | null; color: string;
   targetDate: string; operationalDate: string | null; displayOrder: number; version: number }
 export type VisibleRow = { key: string; kind: "product" | "discipline" | "stage" | "activity";
@@ -36,12 +40,21 @@ function extent(values: (string | null)[]): { start: string | null; end: string 
 
 export function visibleScheduleRows(product: { id: string; name: string }, tree: ScheduleTree,
   openDisciplines: ReadonlySet<string>, openStages: ReadonlySet<string>, productExpanded = true): VisibleRow[] {
-  const allActivities = tree.disciplines.flatMap((discipline) => discipline.stages.flatMap((stage) => stage.activities));
+  const rootActivities = [...(tree.rootActivities ?? [])]
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id));
+  const stageActivities = tree.disciplines.flatMap((discipline) =>
+    discipline.stages.flatMap((stage) => stage.activities));
+  const allActivities = [...rootActivities, ...stageActivities];
   const productDates = extent(allActivities.flatMap((activity) => [activity.plannedStart, activity.plannedEnd]));
   const rows: VisibleRow[] = [{ key: `product:${product.id}`, kind: "product", id: product.id,
     label: product.name, start: productDates.start, end: productDates.end,
-    hasChildren: tree.disciplines.length > 0, expanded: productExpanded }];
+    hasChildren: rootActivities.length > 0 || tree.disciplines.length > 0, expanded: productExpanded }];
   if (!productExpanded) return rows;
+  for (const activity of rootActivities) {
+    rows.push({ key: `activity:${activity.id}`, kind: "activity", id: activity.id,
+      label: activity.name, color: activity.colorOverride ?? rootActivityDefaultColor,
+      start: activity.plannedStart, end: activity.plannedEnd, hasChildren: false, expanded: false });
+  }
   for (const discipline of tree.disciplines) {
     const dates = extent(discipline.stages.flatMap((stage) => stage.activities.flatMap((activity) =>
       [activity.plannedStart, activity.plannedEnd])));
@@ -77,7 +90,8 @@ export interface TimelineScale {
 
 export function makeTimeline(tree: ScheduleTree, targets: ScheduleTarget[], zoom: Zoom,
   today = saoPauloCivilDate(new Date()), previous?: Pick<TimelineScale, "startDay" | "endDay">): TimelineScale {
-  const activities = tree.disciplines.flatMap((discipline) => discipline.stages.flatMap((stage) => stage.activities));
+  const activities = [...(tree.rootActivities ?? []), ...tree.disciplines.flatMap((discipline) =>
+    discipline.stages.flatMap((stage) => stage.activities))];
   const dates = [...activities.flatMap((activity) => [activity.plannedStart, activity.plannedEnd]),
     ...targets.map((target) => target.targetDate), today].filter((date): date is string => date !== null);
   const startDay = Math.min(Math.min(...dates.map(dayNumber)) - 14, previous?.startDay ?? Infinity);

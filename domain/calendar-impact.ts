@@ -4,8 +4,8 @@ import { parseCivilDate } from "./working-calendar";
 
 export interface CalendarImpactCandidate {
   id: string;
-  disciplineId: string;
-  stageId: string;
+  disciplineId: string | null;
+  stageId: string | null;
   version: number;
   planningMode: "manual" | "working_days";
   plannedStart: string | null;
@@ -16,8 +16,8 @@ export interface CalendarImpactCandidate {
 
 export interface ActivityCalendarImpact {
   activityId: string;
-  disciplineId: string;
-  stageId: string;
+  disciplineId: string | null;
+  stageId: string | null;
   activityVersion: number;
   workingDays: number;
   savedCalendarVersion: number;

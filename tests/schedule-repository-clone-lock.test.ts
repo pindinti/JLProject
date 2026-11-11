@@ -40,13 +40,24 @@ describe("product row locks for clone consistency", () => {
         name: "Synthetic activity", activityType: null, plannedStart: "2026-11-10", plannedEnd: "2026-11-11",
         displayOrder: 0, notes: null
       });
+    await schedules.createActivity(workspaceId, productId, null, null, actorId, {
+      name: "Synthetic root activity", activityType: null, plannedStart: "2026-11-10", plannedEnd: "2026-11-11",
+      displayOrder: 1, notes: null, colorOverride: "#AA5577"
+    });
     await schedules.updateActivity(workspaceId, productId, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3",
       "a3aa998a-a2c3-4376-9105-90af0d1dbfe3", "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, {
         name: "Synthetic activity", activityType: null, displayOrder: 0, notes: null
       }, 1);
+    await schedules.updateActivity(workspaceId, productId, null, null,
+      "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, {
+        name: "Synthetic root activity", activityType: null, displayOrder: 1, notes: null, colorOverride: "#AA5577"
+      }, 1);
     await schedules.changeActivityDates(workspaceId, productId, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3",
       "a3aa998a-a2c3-4376-9105-90af0d1dbfe3", "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId,
       "2026-11-10", "2026-11-11", "Synthetic schedule lock test", 1, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+    await schedules.changeActivityDates(workspaceId, productId, null, null,
+      "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, "2026-11-10", "2026-11-11",
+      "Synthetic root date lock test", 1, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
     await schedules.createTarget(workspaceId, productId, actorId, {
       name: "Synthetic target", description: null, color: "#336699", targetDate: "2026-11-10"
     });
@@ -58,7 +69,7 @@ describe("product row locks for clone consistency", () => {
 
     expect(database.query).toHaveBeenCalled();
     const writes = database.calls.filter((query) => query.includes("locked_product"));
-    expect(writes).toHaveLength(8);
+    expect(writes).toHaveLength(11);
     for (const query of writes) {
       expect(query).toContain("FROM public.products");
       expect(query).toContain("AND active = true");
@@ -82,5 +93,19 @@ describe("product row locks for clone consistency", () => {
     expect(database.calls[4]).toContain("d.deleted_at IS NULL");
     expect(database.calls[4]).toContain("s.deleted_at IS NULL");
     expect(database.calls[4]).toContain("a.deleted_at IS NULL");
+  });
+
+  it("lists active root activities in display order and matches root activity parents as null", async () => {
+    const schedules = repository();
+    await schedules.listRootActivities(workspaceId, productId);
+    expect(database.calls[0]).toContain("discipline_id IS NULL AND stage_id IS NULL");
+    expect(database.calls[0]).toContain("deleted_at IS NULL");
+    expect(database.calls[0]).toContain("ORDER BY display_order, id");
+
+    database.calls.length = 0;
+    await schedules.listActivityDateHistory(workspaceId, productId, null, null,
+      "b3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+    expect(database.calls[0]).toContain("discipline_id IS NOT DISTINCT FROM");
+    expect(database.calls[0]).toContain("stage_id IS NOT DISTINCT FROM");
   });
 });
