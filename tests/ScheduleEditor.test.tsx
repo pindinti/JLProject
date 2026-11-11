@@ -35,6 +35,8 @@ const emptyStage = { ...stage, id: "f419b025-91db-4f0d-9720-45732e88a9c2", code:
   displayName: "Empty stage", displayOrder: 1, derivedStart: null, derivedEnd: null, activities: [] };
 const moveTree = { productId: product.id, rootActivities: [rootActivity], disciplines: [{ ...discipline,
   stages: [{ ...stage, activities: [activity, secondActivity] }, emptyStage] }] };
+const destinationDiscipline = { ...discipline, id: "c4ed7846-d610-4b96-b146-6dc58b19a27e",
+  name: "Empty destination", shortCode: "OPS", displayOrder: 1, version: 5, stages: [] };
 const dateImpact: ActivityCalendarImpact = { activityId: activity.id, disciplineId: discipline.id,
   stageId: stage.id, activityVersion: 3, workingDays: 2, savedCalendarVersion: 1,
   currentCalendarVersion: 2, currentStartDate: "2026-11-09", currentEndDate: "2026-11-10",
@@ -120,6 +122,8 @@ describe("schedule editor", () => {
     await screen.findByText("Synthetic activity");
     expect(screen.queryByRole("button", { name: /Excluir atividade/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Mover atividade:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Mover etapa:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Mover disciplina:/ })).not.toBeInTheDocument();
   });
 
   it.each(["admin", "editor"] as const)("shows the activity move control to %s members", async (role) => {
@@ -264,6 +268,154 @@ describe("schedule editor", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Mover atividade" }));
     await waitFor(() => expect(onAccessLost).toHaveBeenCalled());
     expect(await screen.findByRole("alert")).toHaveTextContent("Você não tem permissão para mover esta atividade.");
+  });
+
+  it("reorders stages within their discipline using the stage version and full sibling order", async () => {
+    setup(moveTree);
+    const fallback = api.fetch.getMockImplementation()!;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith("/hierarchy/moves")
+      ? Promise.resolve(json({ changed: true, operationId: "synthetic-stage-reorder", version: 4 })) : fallback(path, options));
+    const { container } = render(<ScheduleEditor workspace={{ ...workspace, role: "editor" }} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    const firstRow = container.querySelector<HTMLElement>(`[data-row-key="stage:${stage.id}"]`)!;
+    const secondRow = container.querySelector<HTMLElement>(`[data-row-key="stage:${emptyStage.id}"]`)!;
+    fireEvent.dragStart(within(secondRow).getByRole("button", { name: /Mover etapa: Empty stage/ }),
+      { dataTransfer: { setData: vi.fn(), effectAllowed: "", dropEffect: "" } });
+    fireEvent.dragOver(firstRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
+    expect(firstRow).toHaveClass("drop-before");
+    fireEvent.drop(firstRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/hierarchy/moves"))).toBe(true));
+    const moveCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
+    expect(JSON.parse(moveCall[1]?.body as string)).toEqual({ kind: "stage", targetId: emptyStage.id,
+      expectedVersion: emptyStage.version, destinationDisciplineId: discipline.id, destinationStageId: null,
+      destinationIndex: 0, expectedSourceOrder: [stage.id, emptyStage.id],
+      expectedDestinationOrder: [stage.id, emptyStage.id] });
+    expect(Array.from(container.querySelectorAll(".workspace-table-row.row-stage")).map((row) => row.getAttribute("data-row-key")))
+      .toEqual([`stage:${stage.id}`, `stage:${emptyStage.id}`]);
+  });
+
+  it("moves a stage with descendants to an empty discipline only after confirmation", async () => {
+    const preservedActivity = { ...activity, colorOverride: "#AA5577" };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [
+      { ...discipline, stages: [{ ...stage, activities: [preservedActivity] }, emptyStage] }, destinationDiscipline
+    ] };
+    let resolveMove: ((response: Response) => void) | undefined;
+    api.fetch.mockImplementation((path: string) => path.endsWith("/hierarchy")
+      ? Promise.resolve(json({ hierarchy: currentTree })) : path.endsWith("/hierarchy/moves")
+        ? new Promise<Response>((resolve) => { resolveMove = resolve; }) : path.endsWith("/targets")
+          ? Promise.resolve(json({ targets: [] })) : path.endsWith("/calendar-impact")
+            ? Promise.resolve(json({ calendarVersion: 0, impacts: [] })) : path.includes("/calendar?year=")
+              ? Promise.resolve(json({ calendar: { version: 0, exceptions: [] } }))
+              : Promise.resolve(json({ stageDefinitions: definitions })));
+    const { container } = render(<ScheduleEditor workspace={{ ...workspace, role: "editor" }} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    const sourceRow = container.querySelector<HTMLElement>(`[data-row-key="stage:${stage.id}"]`)!;
+    const destinationRow = container.querySelector<HTMLElement>(`[data-row-key="discipline:${destinationDiscipline.id}"]`)!;
+    const handle = within(sourceRow).getByRole("button", { name: /Mover etapa: Synthetic stage/ });
+    fireEvent.dragStart(handle, { dataTransfer: { setData: vi.fn(), effectAllowed: "", dropEffect: "" } });
+    fireEvent.dragOver(destinationRow, { clientY: 0, dataTransfer: { dropEffect: "" } });
+    expect(destinationRow).toHaveClass("drop-append");
+    expect(within(destinationRow).getByText("Solte aqui para mover a etapa para esta disciplina")).toBeInTheDocument();
+    fireEvent.drop(destinationRow, { clientY: 0, dataTransfer: { dropEffect: "" } });
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(1));
+    const moveCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
+    expect(JSON.parse(moveCall[1]?.body as string)).toEqual({ kind: "stage", targetId: stage.id,
+      expectedVersion: stage.version, destinationDisciplineId: destinationDiscipline.id, destinationStageId: null,
+      destinationIndex: 0, expectedSourceOrder: [stage.id, emptyStage.id], expectedDestinationOrder: [] });
+    expect(container.querySelector(`[data-row-key="stage:${stage.id}"]`)).toBeInTheDocument();
+    expect(container.querySelector(`[data-row-key="activity:${activity.id}"]`)).toBeInTheDocument();
+    expect(Array.from(container.querySelectorAll(".workspace-table-row")).map((row) => row.getAttribute("data-row-key")))
+      .toEqual(Array.from(container.querySelectorAll(".workspace-chart-row")).map((row) => row.getAttribute("data-row-key")));
+
+    currentTree = { productId: product.id, disciplines: [
+      { ...discipline, stages: [emptyStage] },
+      { ...destinationDiscipline, stages: [{ ...stage, disciplineId: destinationDiscipline.id, activities: [preservedActivity] }] }
+    ] };
+    await act(async () => { resolveMove?.(json({ changed: true, operationId: "synthetic-stage-move", version: 3 })); });
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy"))).toHaveLength(2));
+    expect(container.querySelector(`[data-row-key="activity:${activity.id}"]`)).toBeInTheDocument();
+    expect(container.querySelector(`.workspace-chart-row[data-row-key="activity:${activity.id}"] .timeline-bar`))
+      .toHaveStyle({ backgroundColor: "rgb(170, 85, 119)" });
+    expect(Array.from(container.querySelectorAll(".workspace-table-row")).map((row) => row.getAttribute("data-row-key")))
+      .toEqual(Array.from(container.querySelectorAll(".workspace-chart-row")).map((row) => row.getAttribute("data-row-key")));
+  });
+
+  it("supports keyboard stage moves and discipline reordering with versioned order metadata", async () => {
+    const tree = { productId: product.id, disciplines: [
+      { ...discipline, stages: [{ ...stage, activities: [activity, secondActivity] }, emptyStage] }, destinationDiscipline
+    ] };
+    setup(tree);
+    const fallback = api.fetch.getMockImplementation()!;
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith("/hierarchy/moves")
+      ? Promise.resolve(json({ changed: true, operationId: "synthetic-move", version: 4 })) : fallback(path, options));
+    mount("admin");
+    await screen.findByText("Synthetic activity");
+    fireEvent.click(screen.getByRole("button", { name: /Mover etapa: Empty stage/ }));
+    const stageDialog = screen.getByRole("dialog", { name: "Mover etapa" });
+    fireEvent.change(within(stageDialog).getByLabelText("Disciplina de destino"), { target: { value: destinationDiscipline.id } });
+    fireEvent.change(within(stageDialog).getByLabelText("Posição"), { target: { value: "start" } });
+    fireEvent.click(within(stageDialog).getByRole("button", { name: "Mover etapa" }));
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(1));
+    const stageMove = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
+    expect(JSON.parse(stageMove[1]?.body as string)).toEqual({ kind: "stage", targetId: emptyStage.id,
+      expectedVersion: emptyStage.version, destinationDisciplineId: destinationDiscipline.id, destinationStageId: null,
+      destinationIndex: 0, expectedSourceOrder: [stage.id, emptyStage.id], expectedDestinationOrder: [] });
+
+    fireEvent.click(screen.getByRole("button", { name: /Mover disciplina: Synthetic discipline/ }));
+    const disciplineDialog = screen.getByRole("dialog", { name: "Mover disciplina" });
+    fireEvent.change(within(disciplineDialog).getByLabelText("Posição"), { target: { value: "end" } });
+    fireEvent.click(within(disciplineDialog).getByRole("button", { name: "Mover disciplina" }));
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(2));
+    const disciplineMove = api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))[1]!;
+    expect(JSON.parse(disciplineMove[1]?.body as string)).toEqual({ kind: "discipline", targetId: discipline.id,
+      expectedVersion: discipline.version, destinationDisciplineId: null, destinationStageId: null,
+      destinationIndex: 1, expectedSourceOrder: [discipline.id, destinationDiscipline.id],
+      expectedDestinationOrder: [discipline.id, destinationDiscipline.id] });
+  });
+
+  it("shows discipline insertion and requests the new product order", async () => {
+    setup({ productId: product.id, disciplines: [discipline, destinationDiscipline] });
+    const { container } = render(<ScheduleEditor workspace={{ ...workspace, role: "editor" }} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    const draggedRow = container.querySelector<HTMLElement>(`[data-row-key="discipline:${destinationDiscipline.id}"]`)!;
+    const targetRow = container.querySelector<HTMLElement>(`[data-row-key="discipline:${discipline.id}"]`)!;
+    fireEvent.dragStart(within(draggedRow).getByRole("button", { name: /Mover disciplina: Empty destination/ }),
+      { dataTransfer: { setData: vi.fn(), effectAllowed: "", dropEffect: "" } });
+    fireEvent.dragOver(targetRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
+    expect(targetRow).toHaveClass("drop-before");
+    expect(screen.getByText("Soltar disciplina antes de Synthetic discipline.")).toBeInTheDocument();
+    fireEvent.drop(targetRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/hierarchy/moves"))).toBe(true));
+    const moveCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
+    expect(JSON.parse(moveCall[1]?.body as string)).toEqual({ kind: "discipline", targetId: destinationDiscipline.id,
+      expectedVersion: destinationDiscipline.version, destinationDisciplineId: null, destinationStageId: null,
+      destinationIndex: 0, expectedSourceOrder: [discipline.id, destinationDiscipline.id],
+      expectedDestinationOrder: [discipline.id, destinationDiscipline.id] });
+  });
+
+  it("shows structural stale conflicts without changing the loaded order", async () => {
+    const tree = { productId: product.id, disciplines: [discipline, destinationDiscipline] };
+    api.fetch.mockImplementation((path: string) => path.endsWith("/hierarchy/moves")
+      ? Promise.resolve(json({ error: "stale" }, 409)) : path.endsWith("/hierarchy")
+        ? Promise.resolve(json({ hierarchy: tree })) : path.endsWith("/targets")
+          ? Promise.resolve(json({ targets: [] })) : path.endsWith("/calendar-impact")
+            ? Promise.resolve(json({ calendarVersion: 0, impacts: [] })) : path.includes("/calendar?year=")
+              ? Promise.resolve(json({ calendar: { version: 0, exceptions: [] } }))
+              : Promise.resolve(json({ stageDefinitions: definitions })));
+    const { container } = render(<ScheduleEditor workspace={{ ...workspace, role: "editor" }} product={product}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    const before = Array.from(container.querySelectorAll(".workspace-table-row.row-discipline"))
+      .map((row) => row.getAttribute("data-row-key"));
+    fireEvent.click(screen.getByRole("button", { name: /Mover disciplina: Synthetic discipline/ }));
+    const dialog = screen.getByRole("dialog", { name: "Mover disciplina" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mover disciplina" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("A ordem do cronograma mudou. Atualize os dados e tente novamente.");
+    expect(Array.from(container.querySelectorAll(".workspace-table-row.row-discipline"))
+      .map((row) => row.getAttribute("data-row-key"))).toEqual(before);
   });
 
   it("blocks a stale deletion fingerprint and fetches a new preview before allowing retry", async () => {

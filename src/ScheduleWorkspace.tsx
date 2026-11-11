@@ -2,6 +2,8 @@ import { type CSSProperties, type DragEvent, type FormEvent, type MouseEvent,
   useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { activityParentStageId, activitySiblingIds, buildActivityMoveRequest,
   type ActivityMoveRequest } from "../domain/activity-movement";
+import { buildHierarchyMoveRequest, hierarchyParentId, hierarchySiblingIds,
+  type HierarchyMoveKind, type HierarchyMoveRequest } from "../domain/hierarchy-movement";
 import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateAtPosition,
   timelineInterval, timelinePosition, visibleScheduleRows,
   type ScheduleTarget, type ScheduleTree, type VisibleRow, type Zoom } from "../domain/schedule-workspace";
@@ -22,13 +24,17 @@ type DeletionTarget = { kind: "discipline" | "stage" | "activity"; id: string; l
 type ActivityMoveOutcome = "moved" | "unchanged" | "stale" | "invalid" | "forbidden" | "error";
 type MoveDialogActivity = { id: string; label: string; sourceStageId: string | null;
   destinationStageId: string | null; position: "start" | "end" };
-type DropTarget = { rowKey: string; stageId: string | null; index: number; position: "before" | "after" | "append" };
+type MoveDialogStructure = { kind: "stage" | "discipline"; id: string; label: string;
+  sourceDisciplineId: string | null; destinationDisciplineId: string | null; position: "start" | "end" };
+type DropTarget = { rowKey: string; kind: HierarchyMoveKind; parentId: string | null;
+  index: number; position: "before" | "after" | "append" };
 
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
   onAddRootActivity,
   onRefresh, onHistory, onProductHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
   onMoveActivity = async () => "error",
+  onMoveHierarchyItem = async () => "error",
   userId, onAccessLost = () => undefined }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
   userId?: string | null;
@@ -40,6 +46,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   onRefresh: () => void | Promise<void>; onProductHistory: () => void;
   onRescheduleHistory: () => void;
   onMoveActivity?: (request: ActivityMoveRequest) => Promise<ActivityMoveOutcome>;
+  onMoveHierarchyItem?: (request: HierarchyMoveRequest) => Promise<ActivityMoveOutcome>;
   onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
     targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
@@ -71,8 +78,10 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const deletionTrigger = useRef<HTMLButtonElement | null>(null);
   const deletionDialog = useRef<HTMLDivElement>(null);
   const [draggedActivityId, setDraggedActivityId] = useState<string | null>(null);
+  const [draggedStructureItem, setDraggedStructureItem] = useState<{ kind: "stage" | "discipline"; id: string } | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [moveDialog, setMoveDialog] = useState<MoveDialogActivity | null>(null);
+  const [structureMoveDialog, setStructureMoveDialog] = useState<MoveDialogStructure | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveFeedback, setMoveFeedback] = useState("");
   const [moveFeedbackIsError, setMoveFeedbackIsError] = useState(false);
@@ -89,13 +98,50 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const rows = useMemo(() => visibleScheduleRows(product, tree, openDisciplines, openStages, productExpanded),
     [product, tree, openDisciplines, openStages, productExpanded]);
   const dropRow = dropTarget ? rows.find((row) => row.key === dropTarget.rowKey) : undefined;
-  const dropAnnouncement = !dropTarget ? messages.activityMoveDragInstructions
-    : dropTarget.position === "before" ? messages.activityMoveDropBefore(dropRow?.label ?? "")
+  const dropAnnouncement = !dropTarget ? draggedStructureItem
+    ? messages.hierarchyMoveDragInstructions(draggedStructureItem.kind)
+    : messages.activityMoveDragInstructions
+    : dropTarget.kind === "activity" ? dropTarget.position === "before"
+      ? messages.activityMoveDropBefore(dropRow?.label ?? "")
       : dropTarget.position === "after" ? messages.activityMoveDropAfter(dropRow?.label ?? "")
-        : dropTarget.stageId === null ? messages.activityMoveDropAppendRoot
-          : messages.activityMoveDropAppendStage(dropRow?.label ?? "");
+        : dropTarget.parentId === null ? messages.activityMoveDropAppendRoot
+          : messages.activityMoveDropAppendStage(dropRow?.label ?? "")
+      : dropTarget.position === "before" ? messages.hierarchyMoveDropBefore(dropTarget.kind, dropRow?.label ?? "")
+        : dropTarget.position === "after" ? messages.hierarchyMoveDropAfter(dropTarget.kind, dropRow?.label ?? "")
+          : messages.stageMoveDropAppend(dropRow?.label ?? "");
   function dropTargetFor(row: VisibleRow, event?: DragEvent<HTMLDivElement>): DropTarget | null {
-    if (!canEdit || !draggedActivityId || moveBusy) return null;
+    if (!canEdit || moveBusy) return null;
+    if (draggedStructureItem) {
+      const { kind, id } = draggedStructureItem;
+      let parentId: string | null;
+      let position: DropTarget["position"] = "append";
+      if (kind === "discipline") {
+        if (row.kind !== "discipline" || row.id === id) return null;
+        parentId = null;
+        position = event && event.clientY > event.currentTarget.getBoundingClientRect().top +
+          event.currentTarget.getBoundingClientRect().height / 2 ? "after" : "before";
+      } else if (row.kind === "discipline") {
+        parentId = row.id;
+      } else if (row.kind === "stage") {
+        if (row.id === id) return null;
+        const parent = hierarchyParentId(tree, "stage", row.id);
+        if (parent === undefined) return null;
+        parentId = parent;
+        position = event && event.clientY > event.currentTarget.getBoundingClientRect().top +
+          event.currentTarget.getBoundingClientRect().height / 2 ? "after" : "before";
+      } else return null;
+      const siblingIds = hierarchySiblingIds(tree, kind, parentId);
+      if (!siblingIds) return null;
+      const remaining = siblingIds.filter((siblingId) => siblingId !== id);
+      if (row.kind === kind) {
+        const targetIndex = remaining.indexOf(row.id);
+        if (targetIndex < 0) return null;
+        return { rowKey: row.key, kind, parentId,
+          index: targetIndex + (position === "after" ? 1 : 0), position };
+      }
+      return { rowKey: row.key, kind, parentId, index: remaining.length, position };
+    }
+    if (!draggedActivityId) return null;
     let stageId: string | null;
     let position: DropTarget["position"] = "append";
     if (row.kind === "product") stageId = null;
@@ -112,9 +158,10 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     if (row.kind === "activity") {
       const targetIndex = remaining.indexOf(row.id);
       if (targetIndex < 0) return null;
-      return { rowKey: row.key, stageId, index: targetIndex + (position === "after" ? 1 : 0), position };
+      return { rowKey: row.key, kind: "activity", parentId: stageId,
+        index: targetIndex + (position === "after" ? 1 : 0), position };
     }
-    return { rowKey: row.key, stageId, index: remaining.length, position };
+    return { rowKey: row.key, kind: "activity", parentId: stageId, index: remaining.length, position };
   }
 
   async function submitActivityMove(activityId: string, stageId: string | null, index: number) {
@@ -150,6 +197,52 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       moveSubmitting.current = false;
       setMoveBusy(false);
       setDraggedActivityId(null);
+      setDraggedStructureItem(null);
+      setDropTarget(null);
+    }
+  }
+
+  function structureMoveMessage(kind: "stage" | "discipline", outcome: ActivityMoveOutcome): string {
+    if (outcome === "moved") return messages.hierarchyMoveSuccess(kind);
+    if (outcome === "unchanged") return messages.hierarchyMoveUnchanged(kind);
+    if (outcome === "stale") return messages.hierarchyMoveStale;
+    if (outcome === "invalid") return messages.hierarchyMoveInvalid(kind);
+    if (outcome === "forbidden") return messages.hierarchyMovePermissionError(kind);
+    return messages.hierarchyMoveError(kind);
+  }
+
+  async function submitStructureMove(kind: "stage" | "discipline", id: string,
+    destinationDisciplineId: string | null, index: number) {
+    if (!canEdit || moveSubmitting.current) return;
+    const request = buildHierarchyMoveRequest(tree, kind, id, destinationDisciplineId, index);
+    if (!request) {
+      setMoveFeedback(messages.hierarchyMoveInvalid(kind));
+      setMoveFeedbackIsError(true);
+      return;
+    }
+    moveSubmitting.current = true;
+    setMoveBusy(true);
+    setMoveFeedback(messages.hierarchyMoveSubmitting(kind));
+    setMoveFeedbackIsError(false);
+    try {
+      const outcome = await onMoveHierarchyItem(request);
+      if (outcome === "moved" || outcome === "unchanged") {
+        setStructureMoveDialog(null);
+        setMoveFeedback(structureMoveMessage(kind, outcome));
+        setMoveFeedbackIsError(false);
+        queueMicrotask(() => moveTrigger.current?.focus());
+      } else {
+        setMoveFeedback(structureMoveMessage(kind, outcome));
+        setMoveFeedbackIsError(true);
+      }
+    } catch {
+      setMoveFeedback(messages.hierarchyMoveError(kind));
+      setMoveFeedbackIsError(true);
+    } finally {
+      moveSubmitting.current = false;
+      setMoveBusy(false);
+      setDraggedActivityId(null);
+      setDraggedStructureItem(null);
       setDropTarget(null);
     }
   }
@@ -164,7 +257,24 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     event.dataTransfer.setData("text/plain", row.id);
     setMoveFeedback("");
     setMoveFeedbackIsError(false);
+    setDraggedStructureItem(null);
     setDraggedActivityId(row.id);
+    setDropTarget(null);
+  }
+
+  function startStructureDrag(event: DragEvent<HTMLButtonElement>, row: VisibleRow) {
+    if (!canEdit || moveBusy || (row.kind !== "stage" && row.kind !== "discipline") ||
+        hierarchyParentId(tree, row.kind, row.id) === undefined) {
+      event.preventDefault();
+      return;
+    }
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${row.kind}:${row.id}`);
+    setMoveFeedback("");
+    setMoveFeedbackIsError(false);
+    setDraggedActivityId(null);
+    setDraggedStructureItem({ kind: row.kind, id: row.id });
     setDropTarget(null);
   }
 
@@ -181,11 +291,29 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     setMoveFeedbackIsError(false);
     setMoveDialog({ id: row.id, label: row.label, sourceStageId,
       destinationStageId: sourceStageId, position: "end" });
+    setStructureMoveDialog(null);
   }
 
-  function closeActivityMoveDialog() {
+  function openStructureMoveDialog(row: VisibleRow, trigger: HTMLButtonElement) {
+    if (!canEdit || (row.kind !== "stage" && row.kind !== "discipline") || moveBusy) return;
+    const sourceDisciplineId = hierarchyParentId(tree, row.kind, row.id);
+    if (sourceDisciplineId === undefined) {
+      setMoveFeedback(messages.hierarchyMoveInvalid(row.kind));
+      setMoveFeedbackIsError(true);
+      return;
+    }
+    moveTrigger.current = trigger;
+    setMoveFeedback("");
+    setMoveFeedbackIsError(false);
+    setMoveDialog(null);
+    setStructureMoveDialog({ kind: row.kind, id: row.id, label: row.label, sourceDisciplineId,
+      destinationDisciplineId: sourceDisciplineId, position: "end" });
+  }
+
+  function closeMoveDialog() {
     if (moveBusy) return;
     setMoveDialog(null);
+    setStructureMoveDialog(null);
     queueMicrotask(() => moveTrigger.current?.focus());
   }
 
@@ -204,14 +332,32 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     void submitActivityMove(moveDialog.id, moveDialog.destinationStageId, index);
   }
 
+  function submitStructureMoveDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!structureMoveDialog || moveBusy) return;
+    const parentId = structureMoveDialog.kind === "stage" ? structureMoveDialog.destinationDisciplineId : null;
+    const siblings = hierarchySiblingIds(tree, structureMoveDialog.kind, parentId);
+    const sourceParentId = hierarchyParentId(tree, structureMoveDialog.kind, structureMoveDialog.id);
+    if (!siblings || sourceParentId === undefined ||
+        (structureMoveDialog.kind === "stage" && parentId === null)) {
+      setMoveFeedback(messages.hierarchyMoveInvalid(structureMoveDialog.kind));
+      setMoveFeedbackIsError(true);
+      return;
+    }
+    const maximumIndex = siblings.length - (sourceParentId === parentId ? 1 : 0);
+    const index = structureMoveDialog.position === "start" ? 0 : maximumIndex;
+    void submitStructureMove(structureMoveDialog.kind, structureMoveDialog.id, parentId, index);
+  }
+
   useEffect(() => {
-    if (!moveDialog) return;
+    if (!moveDialog && !structureMoveDialog) return;
     const dialog = moveDialogElement.current;
     queueMicrotask(() => dialog?.querySelector<HTMLElement>("select, button")?.focus());
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape" && !moveSubmitting.current) {
         event.preventDefault();
         setMoveDialog(null);
+        setStructureMoveDialog(null);
         queueMicrotask(() => moveTrigger.current?.focus());
         return;
       }
@@ -226,7 +372,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [moveDialog]);
+  }, [moveDialog, structureMoveDialog]);
 
   const scale = useMemo(() => {
     const previewBounds = { ...bounds };
@@ -515,7 +661,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   return <section className="schedule-workspace" data-density="compact" aria-label={messages.scheduleWorkspace}>
     {moveFeedback && <p className={moveFeedbackIsError ? "activity-move-feedback activity-move-feedback--error" : "activity-move-feedback"}
       role={moveFeedbackIsError ? "alert" : "status"}>{moveFeedback}</p>}
-    {draggedActivityId && <p className="activity-move-live" role="status" aria-live="polite">
+    {(draggedActivityId || draggedStructureItem) && <p className="activity-move-live" role="status" aria-live="polite">
       {dropAnnouncement}
     </p>}
     <div className="workspace-controls">
@@ -619,13 +765,17 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
                 event.preventDefault();
                 event.stopPropagation();
                 const candidate = dropTargetFor(row, event);
-                if (candidate && draggedActivityId)
-                  void submitActivityMove(draggedActivityId, candidate.stageId, candidate.index);
-                else if (draggedActivityId) {
-                  setMoveFeedback(messages.activityMoveInvalid);
+                if (candidate && draggedActivityId && candidate.kind === "activity")
+                  void submitActivityMove(draggedActivityId, candidate.parentId, candidate.index);
+                else if (candidate && draggedStructureItem && candidate.kind === draggedStructureItem.kind)
+                  void submitStructureMove(draggedStructureItem.kind, draggedStructureItem.id, candidate.parentId, candidate.index);
+                else if (draggedActivityId || draggedStructureItem) {
+                  setMoveFeedback(draggedStructureItem
+                    ? messages.hierarchyMoveInvalid(draggedStructureItem.kind) : messages.activityMoveInvalid);
                   setMoveFeedbackIsError(true);
                 }
                 setDraggedActivityId(null);
+                setDraggedStructureItem(null);
                 setDropTarget(null);
               }}>
             <div role="cell" className="workspace-name-cell" style={{ paddingLeft: `${
@@ -653,6 +803,18 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
                     <circle cx="13" cy="5" r="1" /><circle cx="7" cy="10" r="1" /><circle cx="13" cy="10" r="1" />
                     <circle cx="7" cy="15" r="1" /><circle cx="13" cy="15" r="1" /></svg>
                 </button>}
+                {canEdit && (row.kind === "stage" || row.kind === "discipline") &&
+                  <button type="button" className="workspace-icon-action workspace-icon-action--move"
+                    draggable={!moveBusy} disabled={moveBusy}
+                    aria-label={messages.hierarchyMoveHandle(row.kind, row.label)}
+                    title={messages.hierarchyMoveHandle(row.kind, row.label)}
+                    onClick={(event) => { event.stopPropagation(); openStructureMoveDialog(row, event.currentTarget); }}
+                    onDragStart={(event) => startStructureDrag(event, row)}
+                    onDragEnd={() => { setDraggedStructureItem(null); setDropTarget(null); }}>
+                    <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><circle cx="7" cy="5" r="1" />
+                      <circle cx="13" cy="5" r="1" /><circle cx="7" cy="10" r="1" /><circle cx="13" cy="10" r="1" />
+                      <circle cx="7" cy="15" r="1" /><circle cx="13" cy="15" r="1" /></svg>
+                  </button>}
                 {canEdit && row.kind === "product" && onAddRootActivity && <button type="button" className="workspace-icon-action"
                   aria-label={messages.addActivity} title={messages.addActivity}
                   onClick={() => { setSelected(row.key); onAddRootActivity(); }}>
@@ -689,6 +851,10 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
               </button>
               {draggedActivityId && row.kind === "product" && <span className="workspace-drop-hint">{messages.activityMoveRootTarget}</span>}
               {draggedActivityId && row.kind === "stage" && <span className="workspace-drop-hint">{messages.activityMoveStageTarget}</span>}
+              {draggedStructureItem?.kind === "stage" && row.kind === "discipline" &&
+                <span className="workspace-drop-hint">{messages.stageMoveDisciplineTarget}</span>}
+              {draggedStructureItem?.kind === "discipline" && row.kind === "discipline" && row.id !== draggedStructureItem.id &&
+                <span className="workspace-drop-hint">{messages.disciplineMoveTarget}</span>}
             </div>
             <span role="cell" className="workspace-date-cell" onDoubleClick={() => {
               if (canEdit) { setSelected(row.key); onEdit(row); }
@@ -762,7 +928,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       onClose={() => setTargetDialog(null)} onCreate={onCreateTarget} onUpdate={onUpdateTarget}
       onDelete={onDeleteTarget} />}
     {moveDialog && <div className="activity-move-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !moveBusy) closeActivityMoveDialog();
+      if (event.target === event.currentTarget && !moveBusy) closeMoveDialog();
     }}>
       <div ref={moveDialogElement} className="activity-move-dialog" role="dialog" aria-modal="true"
         aria-labelledby="activity-move-title" aria-describedby="activity-move-description">
@@ -787,8 +953,45 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
           </select>
           {moveBusy && <p role="status">{messages.activityMoveSubmitting}</p>}
           <div className="activity-move-dialog__actions">
-            <button type="button" disabled={moveBusy} onClick={closeActivityMoveDialog}>{messages.cancel}</button>
+            <button type="button" disabled={moveBusy} onClick={closeMoveDialog}>{messages.cancel}</button>
             <button type="submit" disabled={moveBusy}>{moveBusy ? messages.activityMoveSubmitting : messages.activityMoveConfirm}</button>
+          </div>
+        </form>
+      </div>
+    </div>}
+    {structureMoveDialog && <div className="activity-move-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !moveBusy) closeMoveDialog();
+    }}>
+      <div ref={moveDialogElement} className="activity-move-dialog" role="dialog" aria-modal="true"
+        aria-labelledby="hierarchy-move-title" aria-describedby="hierarchy-move-description">
+        <h2 id="hierarchy-move-title">{messages.hierarchyMoveDialogTitle(structureMoveDialog.kind)}</h2>
+        <p className="activity-move-dialog__target">{structureMoveDialog.label}</p>
+        <p id="hierarchy-move-description">{messages.hierarchyMoveDialogDescription(structureMoveDialog.kind)}</p>
+        <form onSubmit={submitStructureMoveDialog}>
+          {structureMoveDialog.kind === "stage" && <>
+            <label htmlFor="hierarchy-move-destination">{messages.hierarchyMoveDestination}</label>
+            <select id="hierarchy-move-destination" value={structureMoveDialog.destinationDisciplineId ?? ""}
+              disabled={moveBusy} onChange={(event) => setStructureMoveDialog((current) => current ? {
+                ...current, destinationDisciplineId: event.target.value || null
+              } : null)}>
+              <option value="">{messages.hierarchyMoveChooseDiscipline}</option>
+              {tree.disciplines.map((discipline) => <option key={discipline.id} value={discipline.id}>{discipline.name}</option>)}
+            </select>
+          </>}
+          <label htmlFor="hierarchy-move-position">{messages.activityMovePosition}</label>
+          <select id="hierarchy-move-position" value={structureMoveDialog.position} disabled={moveBusy}
+            onChange={(event) => setStructureMoveDialog((current) => current ? {
+              ...current, position: event.target.value as "start" | "end"
+            } : null)}>
+            <option value="start">{messages.activityMoveStart}</option>
+            <option value="end">{messages.activityMoveEnd}</option>
+          </select>
+          {moveBusy && <p role="status">{messages.hierarchyMoveSubmitting(structureMoveDialog.kind)}</p>}
+          <div className="activity-move-dialog__actions">
+            <button type="button" disabled={moveBusy} onClick={closeMoveDialog}>{messages.cancel}</button>
+            <button type="submit" disabled={moveBusy || (structureMoveDialog.kind === "stage" && !structureMoveDialog.destinationDisciplineId)}>
+              {moveBusy ? messages.hierarchyMoveSubmitting(structureMoveDialog.kind) : messages.hierarchyMoveConfirm(structureMoveDialog.kind)}
+            </button>
           </div>
         </form>
       </div>

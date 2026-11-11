@@ -5,10 +5,10 @@ export interface ScheduleActivity {
 export const rootActivityDefaultColor = "#8D9A89";
 export interface ScheduleStage {
   id: string; displayName: string; code: string; color: string; displayOrder: number;
-  derivedStart: string | null; derivedEnd: string | null; activities: ScheduleActivity[];
+  derivedStart: string | null; derivedEnd: string | null; version?: number; activities: ScheduleActivity[];
 }
 export interface ScheduleDiscipline {
-  id: string; name: string; shortCode: string; color: string; displayOrder: number; stages: ScheduleStage[];
+  id: string; name: string; shortCode: string; color: string; displayOrder: number; version?: number; stages: ScheduleStage[];
 }
 export interface ScheduleTree {
   disciplines: ScheduleDiscipline[];

@@ -8,7 +8,7 @@ import { CalendarRescheduleHistoryDialog } from "./CalendarRescheduleHistoryDial
 import { ProductChangeHistoryDialog } from "./ProductChangeHistoryDialog";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
 import { dayNumber, rootActivityDefaultColor } from "../domain/schedule-workspace";
-import type { ActivityMoveRequest } from "../domain/activity-movement";
+import type { HierarchyMoveRequest } from "../domain/hierarchy-movement";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import type { SkippedDateReason, SkippedWorkingDate } from "../domain/working-day-calculation";
 import { rememberRecentCustomColor } from "./recent-color-history";
@@ -533,7 +533,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     setTargets((current) => current.filter((item) => item.id !== target.id));
   }
 
-  async function moveActivity(request: ActivityMoveRequest): Promise<"moved" | "unchanged" | "stale" | "invalid" | "forbidden" | "error"> {
+  async function moveActivity(request: HierarchyMoveRequest): Promise<"moved" | "unchanged" | "stale" | "invalid" | "forbidden" | "error"> {
     if (!canEdit) return "forbidden";
     if (movementSubmitting.current) return "error";
     movementSubmitting.current = true;
@@ -761,6 +761,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
             }} onEdit={editRow} onAdd={addChild} onAddDiscipline={() => startDiscipline()}
             onAddRootActivity={addRootActivity}
             onMoveActivity={moveActivity}
+            onMoveHierarchyItem={moveActivity}
             onRefresh={async () => {
               closeDraft();
               await load(false);

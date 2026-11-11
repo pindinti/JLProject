@@ -81,6 +81,37 @@ describe("ProductChangeHistoryDialog", () => {
       .toEqual(["Atividade movida"]);
   });
 
+  it("renders stage moves and discipline reordering as single hierarchy events", async () => {
+    const stageMove = { ...movementEvent, id: "hierarchy-movement:stage", item: { kind: "stage", id: "stage-1",
+      name: "Synthetic stage", hierarchy: { discipline: "New discipline", stage: "Synthetic stage" } },
+      before: { parent: { scope: "stage", discipline: "Old discipline", stage: "Synthetic stage" }, position: 2 },
+      after: { parent: { scope: "stage", discipline: "New discipline", stage: "Synthetic stage" }, position: 1 } };
+    const disciplineMove = { ...movementEvent, id: "hierarchy-movement:discipline", item: { kind: "discipline",
+      id: "discipline-1", name: "Synthetic discipline", hierarchy: { discipline: "Synthetic discipline" } },
+      before: { parent: { scope: "product", discipline: null, stage: null }, position: 2 },
+      after: { parent: { scope: "product", discipline: null, stage: null }, position: 1 } };
+    auth.fetch.mockResolvedValue(json({ events: [stageMove, disciplineMove], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Etapa movida")).toBeInTheDocument();
+    expect(within(dialog).getByText("Disciplina reordenada")).toBeInTheDocument();
+    for (const label of ["Etapa movida", "Disciplina reordenada"]) {
+      const card = within(dialog).getByText(label).closest("li")!;
+      fireEvent.click(within(card).getByText("Ver antes e depois"));
+      const comparison = card.querySelector(".product-history__movement-comparison")!;
+      expect(comparison).toHaveTextContent("Posição anterior");
+      expect(comparison).toHaveTextContent("Nova posição");
+      expect(comparison).toHaveTextContent("2");
+      expect(comparison).toHaveTextContent("1");
+    }
+    const stageCard = within(dialog).getByText("Etapa movida").closest("li")!;
+    expect(stageCard.querySelector(".product-history__movement-comparison"))
+      .toHaveTextContent("Old discipline › Synthetic stage");
+    expect(stageCard.querySelector(".product-history__movement-comparison"))
+      .toHaveTextContent("New discipline › Synthetic stage");
+    expect(dialog.querySelectorAll(".product-history__event")).toHaveLength(2);
+  });
+
   it("loads additional events by the returned cursor", async () => {
     auth.fetch.mockResolvedValueOnce(json({ events: [productEvent], nextCursor: "opaque-next-cursor" }))
       .mockResolvedValueOnce(json({ events: [{ ...activityEvent, id: "activity-date:older" }], nextCursor: null }));

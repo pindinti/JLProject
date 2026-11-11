@@ -244,6 +244,12 @@ The schedule table reuses the existing hierarchy-movement endpoint for activity 
 
 Only activity rows are draggable. A dedicated handle is separate from row selection, expansion, editing, date-history controls, and Gantt bars. Activity rows accept before/after insertion; stage and product rows accept append drops, including empty stages and an empty root. The handle also opens an accessible keyboard move dialog for choosing any same-product stage or the product root. The table remains the sole drag surface, and table/Gantt rows continue to use the same flattened hierarchy order. Stage and discipline movement controls are not included. A Development browser smoke procedure using only a disposable synthetic product is documented in `docs/verification/phase3a7b-activity-drag-drop-smoke.md`.
 
+## Phase 3A.7c stage and discipline drag-and-drop
+
+Stage instances and product disciplines reuse the same `POST .../hierarchy/moves` contract and controlled backend operation. The client submits the loaded item version and complete source/destination sibling order snapshots. Stage drops on another stage place before or after it; drops on a discipline append, including an empty discipline. Discipline drops on another discipline place before or after it. The keyboard dialog offers stage destination discipline plus start/end position, and discipline start/end ordering.
+
+The client does not update visible order before server confirmation. Success reloads the hierarchy, leaving the existing expansion, zoom, scrolling, calendar bands, and table/Gantt row correspondence intact. Descendant activities stay attached to the moved stage; IDs, dates, planning metadata, colors, milestones, history, and R00 remain backend-preserved. Null activity color overrides are rendered from their current stage after reload. Only active admins/editors receive movement controls; the API remains authoritative for permission, product/workspace scope, stale versions, and atomic ordering/audit. The existing unified history modal presents each move as one event with actor/time and before/after hierarchy and positions. No API, database, migration, or formal revision changes are part of this UI phase. The synthetic Development browser procedure is in `docs/verification/phase3a7c-stage-discipline-drag-drop-smoke.md`.
+
 ## Access-control policy
 
 ### Phase 1E onboarding boundary

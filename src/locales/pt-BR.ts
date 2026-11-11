@@ -277,6 +277,32 @@ export const messages = {
   activityMoveStale: "A ordem do cronograma mudou. Atualize os dados e tente novamente.",
   activityMovePermissionError: "Você não tem permissão para mover esta atividade.",
   activityMoveError: "Não foi possível mover a atividade. O cronograma não foi alterado.",
+  hierarchyMoveHandle: (kind: "stage" | "discipline", name: string) =>
+    `Mover ${kind === "stage" ? "etapa" : "disciplina"}: ${name}. Arraste para reordenar ou use o teclado para escolher a posição.`,
+  hierarchyMoveDragInstructions: (kind: "stage" | "discipline") => kind === "stage"
+    ? "Arraste até outra etapa para inserir nessa posição ou até uma disciplina para mover a etapa."
+    : "Arraste até outra disciplina para escolher a nova posição.",
+  hierarchyMoveDropBefore: (kind: "stage" | "discipline", name: string) =>
+    `Soltar ${kind === "stage" ? "etapa" : "disciplina"} antes de ${name}.`,
+  hierarchyMoveDropAfter: (kind: "stage" | "discipline", name: string) =>
+    `Soltar ${kind === "stage" ? "etapa" : "disciplina"} depois de ${name}.`,
+  stageMoveDropAppend: (name: string) => `Soltar no fim da disciplina ${name}.`,
+  stageMoveDisciplineTarget: "Solte aqui para mover a etapa para esta disciplina",
+  disciplineMoveTarget: "Solte aqui para posicionar a disciplina antes ou depois desta linha",
+  hierarchyMoveDialogTitle: (kind: "stage" | "discipline") => `Mover ${kind === "stage" ? "etapa" : "disciplina"}`,
+  hierarchyMoveDialogDescription: (kind: "stage" | "discipline") => kind === "stage"
+    ? "Escolha a disciplina de destino e a posição. As atividades descendentes e seus dados serão preservados."
+    : "Escolha se a disciplina ficará no início ou no fim da lista.",
+  hierarchyMoveDestination: "Disciplina de destino",
+  hierarchyMoveChooseDiscipline: "Escolha uma disciplina",
+  hierarchyMoveConfirm: (kind: "stage" | "discipline") => `Mover ${kind === "stage" ? "etapa" : "disciplina"}`,
+  hierarchyMoveSubmitting: (kind: "stage" | "discipline") => `Movendo ${kind === "stage" ? "etapa" : "disciplina"}…`,
+  hierarchyMoveSuccess: (kind: "stage" | "discipline") => `${kind === "stage" ? "Etapa" : "Disciplina"} movida. O cronograma foi atualizado.`,
+  hierarchyMoveUnchanged: (kind: "stage" | "discipline") => `${kind === "stage" ? "A etapa" : "A disciplina"} já está nessa posição.`,
+  hierarchyMoveInvalid: (kind: "stage" | "discipline") => `Escolha ${kind === "stage" ? "uma etapa e uma disciplina" : "uma disciplina e uma posição"} válidas. O cronograma não foi alterado.`,
+  hierarchyMoveStale: "A ordem do cronograma mudou. Atualize os dados e tente novamente.",
+  hierarchyMovePermissionError: (kind: "stage" | "discipline") => `Você não tem permissão para mover ${kind === "stage" ? "esta etapa" : "esta disciplina"}.`,
+  hierarchyMoveError: (kind: "stage" | "discipline") => `Não foi possível mover ${kind === "stage" ? "a etapa" : "a disciplina"}. O cronograma não foi alterado.`,
   scheduleGantt: "Gráfico de Gantt",
   schedulePane: "Visualização do cronograma",
   scheduleItem: "Item",
