@@ -6,8 +6,8 @@ import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateA
 const tree: ScheduleTree = { disciplines: [{ id: "d", name: "Design", shortCode: "DS", color: "#123456", displayOrder: 0,
   stages: [{ id: "s", displayName: "Concept", code: "EC", color: "#334455", displayOrder: 0,
     derivedStart: "2026-11-01", derivedEnd: "2026-11-12", activities: [
-      { id: "a", name: "First", plannedStart: "2026-11-01", plannedEnd: "2026-11-08", displayOrder: 0 },
-      { id: "b", name: "Overlap", plannedStart: "2026-11-05", plannedEnd: "2026-11-12", displayOrder: 1 }
+      { id: "a", name: "First", plannedStart: "2026-11-01", plannedEnd: "2026-11-08", displayOrder: 0, colorOverride: null },
+      { id: "b", name: "Overlap", plannedStart: "2026-11-05", plannedEnd: "2026-11-12", displayOrder: 1, colorOverride: "#AABBCC" }
     ] }, { id: "empty", displayName: "Empty", code: "EP", color: "#445566", displayOrder: 1,
     derivedStart: null, derivedEnd: null, activities: [] }] }] };
 const targets: ScheduleTarget[] = [{ id: "t", name: "Target", description: null, color: "#AA4557",
@@ -19,6 +19,8 @@ describe("schedule workspace model", () => {
     expect(rows.map((row) => row.key)).toEqual(["product:p", "discipline:d", "stage:s", "activity:a", "activity:b", "stage:empty"]);
     expect(rows[2]).toMatchObject({ start: "2026-11-01", end: "2026-11-12" });
     expect(rows[5]).toMatchObject({ start: null, end: null });
+    expect(rows[3]?.color).toBe("#334455");
+    expect(rows[4]?.color).toBe("#AABBCC");
     expect(visibleScheduleRows({ id: "p", name: "Product" }, tree, new Set(), new Set(["s"]))
       .map((row) => row.key)).toEqual(["product:p", "discipline:d"]);
     expect(visibleScheduleRows({ id: "p", name: "Product" }, tree, new Set(["d"]), new Set(["s"]), false)
@@ -49,6 +51,14 @@ describe("schedule workspace model", () => {
     expect(day.ticks.length).toBeGreaterThan(week.ticks.length);
     expect(week.ticks.length).toBeGreaterThan(month.ticks.length);
     expect(timelineInterval(month, "2026-11-01", "2026-11-01")?.width).toBe(4);
+  });
+
+  it("updates inherited activity colors with the stage while retaining overrides", () => {
+    const changed = { disciplines: [{ ...tree.disciplines[0]!, stages: [{ ...tree.disciplines[0]!.stages[0]!,
+      color: "#778899" }, tree.disciplines[0]!.stages[1]!] }] };
+    const rows = visibleScheduleRows({ id: "p", name: "Product" }, changed, new Set(["d"]), new Set(["s"]));
+    expect(rows.find((row) => row.key === "activity:a")?.color).toBe("#778899");
+    expect(rows.find((row) => row.key === "activity:b")?.color).toBe("#AABBCC");
   });
 
   it("uses the São Paulo calendar date across the UTC midnight boundary", () => {

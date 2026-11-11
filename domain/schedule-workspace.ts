@@ -1,6 +1,6 @@
 export interface ScheduleActivity {
   id: string; name: string; plannedStart: string | null; plannedEnd: string | null;
-  displayOrder: number;
+  displayOrder: number; colorOverride: string | null;
 }
 export interface ScheduleStage {
   id: string; displayName: string; code: string; color: string; displayOrder: number;
@@ -61,7 +61,7 @@ export function visibleScheduleRows(product: { id: string; name: string }, tree:
       for (const activity of stage.activities) {
         rows.push({ key: `activity:${activity.id}`, kind: "activity", id: activity.id,
           disciplineId: discipline.id, stageId: stage.id, label: activity.name,
-          color: stage.color, start: activity.plannedStart, end: activity.plannedEnd,
+          color: activity.colorOverride ?? stage.color, start: activity.plannedStart, end: activity.plannedEnd,
           hasChildren: false, expanded: false });
       }
     }

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { makeTimeline, timelinePosition, type ScheduleTarget, type ScheduleTree } from "../domain/schedule-workspace";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import { ScheduleWorkspace } from "../src/ScheduleWorkspace";
+import { readRecentCustomColors } from "../src/recent-color-history";
 
 const auth = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../src/auth", () => ({ authenticatedFetch: auth.fetch }));
@@ -12,7 +13,7 @@ const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic 
   stages: [{ id: "stage", displayName: "Synthetic stage", code: "EC", color: "#336699",
     displayOrder: 0, derivedStart: "2026-11-01", derivedEnd: "2028-01-17",
     activities: [{ id: "activity", name: "Synthetic activity", plannedStart: "2026-11-01",
-      plannedEnd: "2028-01-17", displayOrder: 0 }] }] }] };
+      plannedEnd: "2028-01-17", displayOrder: 0, colorOverride: null }] }] }] };
 const targets = [{ id: "target", name: "Synthetic target", targetDate: "2026-11-07",
   description: null, color: "#AA4557", operationalDate: null, displayOrder: 0, version: 1 }];
 
@@ -305,6 +306,33 @@ describe("schedule workspace refinements", () => {
     expect(onCreate).toHaveBeenCalledWith({ name: "Marco sintético", description: null,
       targetDate: "2026-11-08", color: "#AA4557" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("records a milestone custom color only after the color edit is saved", async () => {
+    const userId = "milestone-user";
+    localStorage.clear();
+    const onCreate = vi.fn(async (value: { name: string; description: string | null; targetDate: string; color: string }) =>
+      ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }));
+    render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
+      targets={targets} userId={userId} openDisciplines={new Set(["discipline"])}
+      openStages={new Set(["stage"])} canEdit onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()}
+      onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()}
+      onRescheduleHistory={vi.fn()} onCreateTarget={onCreate}
+      onUpdateTarget={vi.fn(async (target, value) => ({ ...target, ...value, version: target.version + 1 }))}
+      onDeleteTarget={vi.fn(async () => undefined)} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar marco" }));
+    fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#12BC34" } });
+    expect(readRecentCustomColors(userId)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(readRecentCustomColors(userId)).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar marco" }));
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Synthetic milestone" } });
+    fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#12BC34" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta" }));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ color: "#12BC34" })));
+    expect(readRecentCustomColors(userId)).toEqual(["#12BC34"]);
   });
 
   it("opens existing targets for viewer inspection without mutation controls", () => {

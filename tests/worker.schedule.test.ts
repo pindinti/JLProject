@@ -25,7 +25,7 @@ const s = { id: stage, disciplineId: discipline, code: "EC", color: "#445566",
   displayName: "Estudo conceitual", displayOrder: 0, version: 1, derivedStart: null, derivedEnd: null };
 const a = { id: activity, stageId: stage, name: "Tarefa sintética", activityType: null,
   plannedStart: "2026-11-01", plannedEnd: "2026-11-05", displayOrder: 0, notes: null, version: 1,
-  planningMode: "manual" as const, workingDayDuration: null, planningCalendarVersion: null };
+  colorOverride: null, planningMode: "manual" as const, workingDayDuration: null, planningCalendarVersion: null };
 
 function repository(): ScheduleRepository {
   return {
@@ -778,6 +778,20 @@ describe("schedule hierarchy API", () => {
     expect(await stale.text()).not.toContain("database");
   });
 
+  it("validates, normalizes, and resets individual activity color overrides", async () => {
+    const repo = repository();
+    const path = `${activities}/${activity}`;
+    const baseInput = { name: "Nova tarefa", displayOrder: 1, version: 1 };
+    expect((await call(request(path, "PATCH", { ...baseInput, colorOverride: "#aa5577" }), "editor", repo)).status).toBe(200);
+    expect(repo.updateActivity).toHaveBeenLastCalledWith(ws, product, discipline, stage, activity, actor,
+      { name: "Nova tarefa", activityType: null, displayOrder: 1, notes: null, colorOverride: "#AA5577" }, 1);
+    expect((await call(request(path, "PATCH", { ...baseInput, colorOverride: null }), "admin", repo)).status).toBe(200);
+    expect(repo.updateActivity).toHaveBeenLastCalledWith(ws, product, discipline, stage, activity, actor,
+      { name: "Nova tarefa", activityType: null, displayOrder: 1, notes: null, colorOverride: null }, 1);
+    expect((await call(request(path, "PATCH", { ...baseInput, colorOverride: "red" }), "editor", repo)).status).toBe(400);
+    expect((await call(request(path, "PATCH", { ...baseInput, colorOverride: "#112233" }), "viewer", repo)).status).toBe(403);
+  });
+
   it("keeps errors generic and forbids unsupported or destructive methods", async () => {
     const repo = repository();
     const failed = await call(request(disciplines), "admin", {
@@ -794,17 +808,18 @@ describe("hierarchy assembly", () => {
     const baseRow = { disciplineId: discipline, disciplineName: "Arquitetura", disciplineCode: "ARQ",
       disciplineColor: "#112233", disciplineOrder: 0, disciplineDescription: null, disciplineVersion: 1,
       stageId: stage, stageCode: "EC", stageColor: "#445566", stageName: "Estudo", stageOrder: 0,
-      stageVersion: 1, activityType: null, activityNotes: null, activityVersion: 1 };
+      stageVersion: 1, activityType: null, activityNotes: null, activityColorOverride: null, activityVersion: 1 };
     const rows = [
       { ...baseRow, activityId: activity, activityName: "Primeira", activityOrder: 0,
         plannedStart: "2026-11-05", plannedEnd: "2026-11-12" },
       { ...baseRow, activityId: "a7777777-7777-4777-8777-777777777777", activityName: "Segunda",
-        activityOrder: 1, plannedStart: "2026-11-01", plannedEnd: "2026-11-08" },
+        activityOrder: 1, plannedStart: "2026-11-01", plannedEnd: "2026-11-08", activityColorOverride: "#AA5577" },
       { ...baseRow, stageId: "a8888888-8888-4888-8888-888888888888", stageCode: "EP",
         stageName: "Anteprojeto", stageOrder: 1, activityId: null }
     ];
     const tree = assembleHierarchy(product, rows);
     expect(tree?.disciplines[0].stages[0].activities.map((item) => item.name)).toEqual(["Primeira", "Segunda"]);
+    expect(tree?.disciplines[0].stages[0].activities.map((item) => item.colorOverride)).toEqual([null, "#AA5577"]);
     expect(tree?.disciplines[0].stages[0]).toMatchObject({ derivedStart: "2026-11-01", derivedEnd: "2026-11-12" });
     expect(tree?.disciplines[0].stages[1]).toMatchObject({ derivedStart: null, derivedEnd: null, activities: [] });
     expect(assembleHierarchy(product, [{ disciplineId: null }])).toEqual({ productId: product, disciplines: [] });

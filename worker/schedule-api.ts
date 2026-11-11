@@ -164,7 +164,7 @@ function dateChangeInput(value: Record<string, unknown>):
 function activityInput(value: Record<string, unknown>, editing: boolean):
   { input: ActivityInput | ActivityMetadataInput; version?: number;
     workingPlan?: { start: string; duration: number; calendarVersion: number } } | null {
-  const keys = ["name", "activityType", "displayOrder", "notes",
+  const keys = ["name", "activityType", "displayOrder", "notes", ...(editing ? ["colorOverride"] : []),
     ...(editing ? ["version"] : ["plannedStart", "plannedEnd", "planningMode", "workingDays", "calendarVersion"])];
   if (!only(value, keys)) return null;
   const name = label(value["name"], 300);
@@ -172,7 +172,11 @@ function activityInput(value: Record<string, unknown>, editing: boolean):
   const notes = optional(value["notes"], 4000);
   if (!name || activityType === undefined || notes === undefined || !order(value["displayOrder"]) ||
       (editing && !version(value["version"]))) return null;
-  const metadata = { name, activityType, displayOrder: value["displayOrder"] as number, notes };
+  const colorOverride = value["colorOverride"];
+  if (editing && colorOverride !== undefined && colorOverride !== null && !color.test(String(colorOverride))) return null;
+  const metadata = { name, activityType, displayOrder: value["displayOrder"] as number, notes,
+    ...(editing && colorOverride !== undefined
+      ? { colorOverride: colorOverride === null ? null : String(colorOverride).toUpperCase() } : {}) };
   if (editing) return { input: metadata, version: value["version"] as number };
   const planningMode = value["planningMode"] ?? "manual";
   if (planningMode === "working_days") {

@@ -216,6 +216,10 @@ The schedule toolbar opens a reusable read-only modal over the existing product 
 
 The modal labels this feed as audit history, separate from formal R00/R01 revisions, and displays the known coverage gaps. It does not claim that all product operations are recorded: metadata edits, ordinary hierarchy creation, target creation/non-date edits/deletion, shared-stage color changes, and product archive changes remain absent from this feed. The API and audit data were not changed in this UI phase.
 
+## Phase 3A.5a individual activity colors
+
+Migrations `0023_activity_color_overrides.sql` and `0024_activity_color_insert_permission.sql` were applied once to JLProject Development after explicit approval. They add a nullable, HEX-constrained `stage_activities.color_override` column and one narrow Worker `INSERT (color_override)` grant needed by the existing `SECURITY INVOKER` clone function. The limited Worker has column-level UPDATE and INSERT for `color_override` in addition to its existing activity metadata and manual-insert columns; table-wide activity INSERT/UPDATE/DELETE, date-column updates, and immutable R00 updates/deletes remain denied. The authenticated API enforces active editor/admin membership, full workspace/product/discipline/stage/activity scope, server-side HEX validation, and optimistic activity versions. `NULL` means inheritance, so no derived color is persisted and a later shared stage-color change is reflected automatically. The clone function copies the nullable override into the clone's working hierarchy and independent R00 snapshot. Rollback-only Worker checks passed for inheritance, override/reset, shared stage-color propagation, stale and foreign-workspace scopes, admin/editor clone permissions, clone/R00 preservation, and narrow grants. Read-only post-checks confirmed the original 133 activity date fingerprint, six audit counts, three R00 fingerprints, and no synthetic product residue. Existing color metadata changes have no immutable audit source and remain outside product change history; Phase 3A.5a does not claim otherwise. Production was not changed.
+
 ## Access-control policy
 
 ### Phase 1E onboarding boundary

@@ -1,9 +1,12 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ColorField } from "../src/ColorField";
 import { ganttPresetColors, layoutMilestoneLabels } from "../src/design/gantt-colors";
+import { rememberRecentCustomColor } from "../src/recent-color-history";
 
 describe("Gantt color controls", () => {
+  beforeEach(() => localStorage.clear());
+
   it("offers the documented 16 color presets and retains a saved custom value", () => {
     const onChange = vi.fn();
     render(<ColorField id="test-color" label="Cor" value="#AA4557" onChange={onChange} />);
@@ -31,6 +34,17 @@ describe("Gantt color controls", () => {
     fireEvent.change(hex, { target: { value: "#1234" } });
     expect(hex).toBeInvalid();
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows per-user recent colors and selects one through the regular color callback", () => {
+    const userId = "color-field-user";
+    rememberRecentCustomColor(userId, "#a1b2c3");
+    const onChange = vi.fn();
+    render(<ColorField id="test-color" label="Cor" value="#445566" userId={userId} onChange={onChange} />);
+
+    expect(screen.getByText("Últimas cores utilizadas")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar cor #A1B2C3" }));
+    expect(onChange).toHaveBeenCalledWith("#A1B2C3");
   });
 });
 

@@ -33,6 +33,8 @@ Phase 1D.1/1D.1.1 deliver the detailed table/Gantt workspace and date navigation
 
 **Acceptance:** overlaps remain visible; stage aggregations match child dates; Sunday target remains Sunday; imported source dates are unchanged.
 
+Phase 3A.5a adds optional individual activity color overrides with stage-color inheritance and secure scoped persistence. Migrations `0023` and `0024` were applied once to JLProject Development after explicit approval. Rollback-only Worker checks passed for inheritance, override/reset, shared stage-color changes, optimistic version and workspace scopes, admin/editor cloning, independent R00 preservation, and narrow Worker grants. Recent-color history is reserved for Phase 3A.5b. Color metadata changes are not yet included in immutable product audit history; this known coverage gap must not be presented as audited behavior.
+
 ## Phase 4 — Consolidated portfolio Gantt
 
 **Goal:** one logical product row with dynamic internal lanes for overlapping stages, color modes, and navigation to details.

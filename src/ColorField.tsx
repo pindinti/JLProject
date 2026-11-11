@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { ganttPresetColors } from "./design/gantt-colors";
 import { messages } from "./locales/pt-BR";
+import { readRecentCustomColors } from "./recent-color-history";
 
-export function ColorField({ id, label, value, disabled = false, onChange }: {
+export function ColorField({ id, label, value, disabled = false, userId, onChange }: {
   id: string;
   label: string;
   value: string;
   disabled?: boolean;
+  userId?: string | null;
   onChange: (color: string) => void;
 }) {
   const [hexDraft, setHexDraft] = useState<{ base: string; value: string } | null>(null);
   const hex = hexDraft?.base === value ? hexDraft.value : value;
+  const recentColors = readRecentCustomColors(userId);
 
   return (
     <fieldset className="color-field" disabled={disabled}>
@@ -21,6 +24,15 @@ export function ColorField({ id, label, value, disabled = false, onChange }: {
           aria-label={messages.colorPreset(color)} aria-pressed={value.toUpperCase() === color}
           title={color} onClick={() => onChange(color)} />)}
       </div>
+      {recentColors.length > 0 && <section className="color-field__recent" aria-label={messages.recentColors}>
+        <span>{messages.recentColors}</span>
+        <div className="color-field__swatches" role="group" aria-label={messages.recentColors}>
+          {recentColors.map((color) => <button key={color} type="button"
+            className="color-field__swatch color-field__swatch--recent" style={{ backgroundColor: color }}
+            aria-label={messages.colorPreset(color)} aria-pressed={value.toUpperCase() === color}
+            title={color} onClick={() => onChange(color)} />)}
+        </div>
+      </section>}
       <div className="color-field__custom">
         <div className="color-field__custom-row">
           <label htmlFor={`${id}-picker`}>{messages.customColor}</label>

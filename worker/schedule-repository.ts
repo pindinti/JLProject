@@ -14,7 +14,9 @@ export interface WorkingActivityInput extends ActivityInput {
   workingDays: number;
   calendarVersion: number;
 }
-export type ActivityMetadataInput = Omit<ActivityInput, "plannedStart" | "plannedEnd">;
+export type ActivityMetadataInput = Omit<ActivityInput, "plannedStart" | "plannedEnd"> & {
+  colorOverride?: string | null;
+};
 export interface Discipline extends DisciplineInput { id: string; productId: string; version: number }
 export interface Stage extends StageInput {
   id: string; disciplineId: string; version: number;
@@ -22,6 +24,7 @@ export interface Stage extends StageInput {
 }
 export interface Activity extends ActivityInput {
   id: string; stageId: string; version: number;
+  colorOverride: string | null;
   planningMode: "manual" | "working_days";
   workingDayDuration: number | null;
   planningCalendarVersion: number | null;
@@ -211,7 +214,7 @@ function activity(row: Record<string, unknown>): Activity {
   return { id: text(row["id"]), stageId: text(row["stageId"]), name: text(row["name"]),
     activityType: nullable(row["activityType"]), plannedStart: nullable(row["plannedStart"]),
     plannedEnd: nullable(row["plannedEnd"]), displayOrder: Number(row["displayOrder"]),
-    notes: nullable(row["notes"]), version: Number(row["version"]),
+    notes: nullable(row["notes"]), colorOverride: nullable(row["colorOverride"]), version: Number(row["version"]),
     planningMode: row["planningMode"] === "working_days" ? "working_days" : "manual",
     workingDayDuration: row["workingDayDuration"] == null ? null : Number(row["workingDayDuration"]),
     planningCalendarVersion: row["planningCalendarVersion"] == null
@@ -256,7 +259,7 @@ export function assembleHierarchy(productId: string, rows: Record<string, unknow
       name: text(row["activityName"]), activityType: nullable(row["activityType"]),
       plannedStart: nullable(row["plannedStart"]), plannedEnd: nullable(row["plannedEnd"]),
       displayOrder: Number(row["activityOrder"]), notes: nullable(row["activityNotes"]),
-      version: Number(row["activityVersion"]),
+      colorOverride: nullable(row["activityColorOverride"]), version: Number(row["activityVersion"]),
       planningMode: row["planningMode"] === "working_days" ? "working_days" : "manual",
       workingDayDuration: row["workingDayDuration"] == null ? null : Number(row["workingDayDuration"]),
       planningCalendarVersion: row["planningCalendarVersion"] == null
@@ -356,7 +359,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
   async function listActivities(ws: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]> {
     const rows = await sql`SELECT id::text AS id, stage_id::text AS "stageId", name,
       activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
-      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes, version,
+      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes,
+      color_override AS "colorOverride", version,
       planning_mode AS "planningMode", working_day_duration AS "workingDayDuration",
       planning_calendar_version AS "planningCalendarVersion"
       FROM public.stage_activities
@@ -369,7 +373,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
   async function findActivity(ws: string, productId: string, disciplineId: string, stageId: string, activityId: string) {
     const rows = await sql`SELECT id::text AS id, stage_id::text AS "stageId", name,
       activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
-      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes, version,
+      to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes,
+      color_override AS "colorOverride", version,
       planning_mode AS "planningMode", working_day_duration AS "workingDayDuration",
       planning_calendar_version AS "planningCalendarVersion"
       FROM public.stage_activities
@@ -685,6 +690,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       UPDATE public.stage_activities AS a
         SET name = ${input.name}, activity_type = ${input.activityType},
           display_order = ${input.displayOrder}, notes = ${input.notes},
+          color_override = CASE WHEN ${input.colorOverride === undefined} THEN a.color_override
+            ELSE ${input.colorOverride ?? null} END,
           updated_by = ${actorId}::uuid, updated_at = now(), version = a.version + 1
         WHERE a.workspace_id = ${ws}::uuid AND a.product_id = ${productId}::uuid
           AND a.discipline_id = ${disciplineId}::uuid AND a.stage_id = ${stageId}::uuid
@@ -766,7 +773,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         a.id::text AS "activityId", a.name AS "activityName", a.activity_type AS "activityType",
         to_char(a.planned_start, 'YYYY-MM-DD') AS "plannedStart",
         to_char(a.planned_end, 'YYYY-MM-DD') AS "plannedEnd",
-        a.display_order AS "activityOrder", a.notes AS "activityNotes", a.version AS "activityVersion",
+        a.display_order AS "activityOrder", a.notes AS "activityNotes",
+        a.color_override AS "activityColorOverride", a.version AS "activityVersion",
         a.planning_mode AS "planningMode", a.working_day_duration AS "workingDayDuration",
         a.planning_calendar_version AS "planningCalendarVersion"
         FROM public.products AS p

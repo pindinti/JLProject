@@ -862,12 +862,19 @@ form button {
 .color-field__swatches { display: grid; grid-template-columns: repeat(8, minmax(28px, 34px)); gap: 6px; }
 .color-field__swatch { width: 30px; height: 30px; min-height: 30px; padding: 0; border: 1px solid rgb(0 0 0 / 32%); border-radius: var(--jl-radius-sm); }
 .color-field__swatch[aria-pressed="true"] { outline: 2px solid var(--jl-focus); outline-offset: 2px; box-shadow: 0 0 0 4px var(--jl-surface); }
+.color-field__recent { display: grid; gap: 0.35rem; }
+.color-field__recent > span { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); font-weight: 600; }
 .color-field__custom { display: grid; gap: 0.35rem; }
 .color-field__custom-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.65rem; }
 .color-field__custom label { min-width: 0; font-size: var(--jl-font-size-xs); }
 .color-field__picker { width: 3rem; min-height: 2rem; height: 2rem; padding: 2px; cursor: pointer; }
 .color-field__hex { width: min(100%, 9rem); min-height: 2rem; height: 2rem; padding-block: 0.25rem; font-family: var(--jl-font-mono); text-transform: uppercase; }
 .color-field__custom small { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); }
+.activity-color-field { display: grid; gap: 0.5rem; margin: 0; padding: 0.75rem; border: 1px solid var(--jl-border, #cbd6de); border-radius: var(--jl-radius-md, 0.5rem); }
+.activity-color-field legend { padding-inline: 0.25rem; font-weight: 600; }
+.activity-color-field__status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 0.75rem; }
+.activity-color-field__status small { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); }
+.activity-color-field__restore { min-height: 2rem; padding: 0; border: 0; background: transparent; color: var(--jl-primary); font: inherit; font-size: var(--jl-font-size-xs); text-decoration: underline; text-underline-offset: 2px; }
 .schedule-drawer-backdrop { position: fixed; inset: 0; background: rgb(9 31 48 / 30%); z-index: 60; display: flex; justify-content: flex-end; }
 .schedule-drawer { width: min(100%, 28rem); height: 100%; overflow-y: auto; background: #fff; box-shadow: -0.5rem 0 1.5rem rgb(0 0 0 / 20%); padding: 1.25rem; }
 .schedule-drawer .hierarchy-form { border: 0; margin: 0; padding: 0; }

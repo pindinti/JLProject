@@ -10,12 +10,13 @@ import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
 import { dayNumber } from "../domain/schedule-workspace";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import type { SkippedDateReason, SkippedWorkingDate } from "../domain/working-day-calculation";
+import { rememberRecentCustomColor } from "./recent-color-history";
 
 export interface ScheduleProduct { id: string; name: string; active: boolean }
 interface Activity {
   id: string; stageId: string; name: string; activityType: string | null;
   plannedStart: string | null; plannedEnd: string | null;
-  displayOrder: number; notes: string | null; version: number;
+  displayOrder: number; notes: string | null; colorOverride: string | null; version: number;
   planningMode: "manual" | "working_days"; workingDayDuration: number | null;
   planningCalendarVersion: number | null;
 }
@@ -53,13 +54,15 @@ interface Draft {
   displayOrder: string; description: string; activityType: string;
   plannedStart: string; plannedEnd: string; notes: string; definitionId: string;
   planningMode: "manual" | "working_days"; workingDays: string;
+  colorOverride: string | null; stageColor: string; colorSelected: boolean;
 }
 const newDefinition = "new";
 
 function initialDraft(kind: DraftKind): Draft {
   return { kind, name: "", shortCode: "", code: "", color: "#336699", displayName: "",
     displayOrder: "0", description: "", activityType: "", plannedStart: "", plannedEnd: "",
-    notes: "", definitionId: newDefinition, planningMode: "manual", workingDays: "" };
+    notes: "", definitionId: newDefinition, planningMode: "manual", workingDays: "",
+    colorOverride: null, stageColor: "#336699", colorSelected: false };
 }
 
 function workingReason(reason: SkippedDateReason): string {
@@ -89,8 +92,9 @@ function WorkingPreviewDetails({ preview, loading }: { preview: WorkingPreview |
   </section>;
 }
 
-export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSummaryRefresh }: {
+export function ScheduleEditor({ workspace, product, userId = null, onBack, onAccessLost, onSummaryRefresh }: {
   workspace: WorkspaceSummary; product: ScheduleProduct;
+  userId?: string | null;
   onBack: () => void; onAccessLost: () => void;
   onSummaryRefresh?: () => Promise<void>;
 }) {
@@ -332,11 +336,13 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
       originalCalendarVersion: item.planningCalendarVersion } : null);
     if (item?.planningMode === "working_days" && item.plannedStart && item.workingDayDuration)
       void calculateWorkingPreview(formatCivilDate(item.plannedStart), String(item.workingDayDuration));
+    const stageColor = hierarchy?.disciplines.find((discipline) => discipline.id === disciplineId)
+      ?.stages.find((stage) => stage.id === stageId)?.color ?? "#336699";
     setDraft(item ? { ...initialDraft("activity"), id: item.id, version: item.version,
       disciplineId, stageId, name: item.name, activityType: item.activityType ?? "",
       plannedStart: formatCivilDate(item.plannedStart), plannedEnd: formatCivilDate(item.plannedEnd),
-      displayOrder: String(item.displayOrder), notes: item.notes ?? "" }
-      : { ...initialDraft("activity"), disciplineId, stageId });
+      displayOrder: String(item.displayOrder), notes: item.notes ?? "", colorOverride: item.colorOverride, stageColor }
+      : { ...initialDraft("activity"), disciplineId, stageId, stageColor });
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -384,6 +390,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
       path += `/${draft.disciplineId}/stages/${draft.stageId}/activities`;
       data = { name: draft.name, activityType: draft.activityType || null,
         displayOrder, notes: draft.notes || null };
+      if (draft.id) data.colorOverride = draft.colorOverride;
       if (!draft.id && draft.planningMode === "working_days" && previewMatches(workingPreview, draft.plannedStart, draft.workingDays)) {
         data = { ...data, planningMode: "working_days", plannedStart,
           workingDays: Number(draft.workingDays), calendarVersion: workingPreview.calendarVersion };
@@ -402,6 +409,8 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
       if (result.status === 409) { setFeedback(messages.scheduleConflict); return; }
       if (result.status === 404) { setFeedback(messages.scheduleNotFound); return; }
       if (!result.ok) { setFeedback(messages.scheduleSaveError); return; }
+      if (draft.colorSelected) rememberRecentCustomColor(userId,
+        draft.kind === "activity" ? draft.colorOverride : draft.color);
       closeDraft();
       setFeedback(messages.scheduleSaved);
       await load(false);
@@ -512,7 +521,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   function changeDefinition(id: string) {
     const selected = definitions.find((definition) => definition.id === id);
     setDraft((previous) => previous ? { ...previous, definitionId: id,
-      code: selected?.code ?? "", color: selected?.color ?? "#336699" } : null);
+      code: selected?.code ?? "", color: selected?.color ?? "#336699", colorSelected: false } : null);
   }
 
   async function saveSharedStageColor() {
@@ -534,9 +543,11 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
       if (response.status === 400) { setFeedback(messages.hexadecimalColorHint); return; }
       if (!response.ok) { setFeedback(messages.sharedStageColorSaveError); return; }
       const payload = await response.json() as { stageDefinition: StageDefinition };
+      if (draft.colorSelected) rememberRecentCustomColor(userId, draft.color);
       setDefinitions((current) => current.map((item) => item.id === payload.stageDefinition.id
         ? payload.stageDefinition : item));
-      setDraft((current) => current?.kind === "stage" ? { ...current, color: payload.stageDefinition.color } : current);
+      setDraft((current) => current?.kind === "stage" ? { ...current, color: payload.stageDefinition.color,
+        colorSelected: false } : current);
       await load(false);
       setFeedback(messages.sharedStageColorSaved);
     } catch { setFeedback(messages.sharedStageColorSaveError); }
@@ -691,7 +702,8 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
           </div>}
           {feedback && !draft && <div role="alert" className="feedback"><p>{feedback}</p></div>}
           {hierarchy.disciplines.length === 0 && <p>{messages.noDisciplines}</p>}
-          <ScheduleWorkspace key={`${workspace.id}:${product.id}`} workspaceId={workspace.id} product={product} tree={hierarchy} targets={targets}
+          <ScheduleWorkspace key={`${workspace.id}:${product.id}`} workspaceId={workspace.id} userId={userId}
+            product={product} tree={hierarchy} targets={targets}
             calendarImpacts={impactOpen ? visibleImpacts : undefined}
             openDisciplines={openDisciplines ?? new Set()} openStages={openStages ?? new Set()}
             canEdit={canEdit} onToggle={(row) => {
@@ -845,8 +857,8 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
           <label htmlFor="hierarchy-code">{messages.disciplineCode}</label>
           <input id="hierarchy-code" required maxLength={24} value={draft.shortCode}
             onChange={(event) => setDraft({ ...draft, shortCode: event.target.value })} />
-          <ColorField id="hierarchy-color" label={messages.color} value={draft.color}
-            onChange={(color) => setDraft({ ...draft, color })} />
+          <ColorField id="hierarchy-color" label={messages.color} value={draft.color} userId={userId}
+            onChange={(color) => setDraft({ ...draft, color, colorSelected: true })} />
           <label htmlFor="hierarchy-description">{messages.productDescription}</label>
           <textarea id="hierarchy-description" maxLength={2000} value={draft.description}
             onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
@@ -862,12 +874,12 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
             <label htmlFor="stage-code">{messages.stageCode}</label>
             <input id="stage-code" required maxLength={24} value={draft.code}
               onChange={(event) => setDraft({ ...draft, code: event.target.value })} />
-            <ColorField id="stage-color" label={messages.color} value={draft.color}
-              onChange={(color) => setDraft({ ...draft, color })} />
+            <ColorField id="stage-color" label={messages.color} value={draft.color} userId={userId}
+              onChange={(color) => setDraft({ ...draft, color, colorSelected: true })} />
           </>}
           {draft.definitionId !== newDefinition && <>
-            <ColorField id="shared-stage-color" label={messages.color} value={draft.color}
-              onChange={(color) => setDraft({ ...draft, color })} />
+            <ColorField id="shared-stage-color" label={messages.color} value={draft.color} userId={userId}
+              onChange={(color) => setDraft({ ...draft, color, colorSelected: true })} />
             <p>{messages.sharedStageColor(draft.code)}</p>
             {sharedStageColorChanged && <div className="schedule-toolbar">
               <button type="button" onClick={() => void saveSharedStageColor()} disabled={busy}>
@@ -886,6 +898,19 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
           <label htmlFor="activity-type">{messages.activityType}</label>
           <input id="activity-type" maxLength={80} value={draft.activityType}
             onChange={(event) => setDraft({ ...draft, activityType: event.target.value })} />
+          {draft.id && <fieldset className="activity-color-field">
+            <legend>{messages.activityColor}</legend>
+            <ColorField id="activity-color" label={messages.activityColorSelection}
+              value={draft.colorOverride ?? draft.stageColor} userId={userId}
+              onChange={(colorOverride) => setDraft({ ...draft, colorOverride, colorSelected: true })} />
+            <div className="activity-color-field__status">
+              <small>{draft.colorOverride === null
+                ? messages.inheritedStageColor(draft.stageColor)
+                : messages.overriddenActivityColor(draft.colorOverride)}</small>
+              {draft.colorOverride !== null && <button type="button" className="activity-color-field__restore"
+                onClick={() => setDraft({ ...draft, colorOverride: null, colorSelected: false })}>{messages.restoreStageColor}</button>}
+            </div>
+          </fieldset>}
           {draft.id ? <p>{messages.existingDates}: {messages.dateRange(draft.plannedStart, draft.plannedEnd)}</p>
             : <>
               <label htmlFor="activity-planning-mode">{messages.activityPlanningMode}</label>

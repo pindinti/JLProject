@@ -6,6 +6,7 @@ import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { messages } from "./locales/pt-BR";
 import { ColorField } from "./ColorField";
 import { layoutMilestoneLabels } from "./design/gantt-colors";
+import { rememberRecentCustomColor } from "./recent-color-history";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import { nonWorkingDayRanges } from "../domain/non-working-day-ranges";
 import { parseCivilDate, type CalendarExceptionDates } from "../domain/working-calendar";
@@ -19,8 +20,9 @@ type DeletionTarget = { kind: "discipline" | "stage" | "activity"; id: string; l
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
   onRefresh, onHistory, onProductHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
-  onAccessLost = () => undefined }: {
+  userId, onAccessLost = () => undefined }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
+  userId?: string | null;
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
@@ -543,7 +545,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       </div>
     </div>
     {targetDialog && <TargetDialog target={targetDialog === "new" ? null : targetDialog}
-      initialDate={selectedDate ?? today} canEdit={canEdit}
+      initialDate={selectedDate ?? today} canEdit={canEdit} userId={userId}
       onClose={() => setTargetDialog(null)} onCreate={onCreateTarget} onUpdate={onUpdateTarget}
       onDelete={onDeleteTarget} />}
     {deletionTarget && <div className="schedule-deletion-backdrop" onMouseDown={(event) => {
@@ -590,8 +592,8 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   </section>;
 }
 
-function TargetDialog({ target, initialDate, canEdit, onClose, onCreate, onUpdate, onDelete }: {
-  target: ScheduleTarget | null; initialDate: string; canEdit: boolean; onClose: () => void;
+function TargetDialog({ target, initialDate, canEdit, userId, onClose, onCreate, onUpdate, onDelete }: {
+  target: ScheduleTarget | null; initialDate: string; canEdit: boolean; userId?: string | null; onClose: () => void;
   onCreate: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdate: (target: ScheduleTarget, value: { name: string; description: string | null;
     targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
@@ -601,6 +603,7 @@ function TargetDialog({ target, initialDate, canEdit, onClose, onCreate, onUpdat
   const [description, setDescription] = useState(target?.description ?? "");
   const [date, setDate] = useState(formatCivilDate(target?.targetDate ?? initialDate));
   const [color, setColor] = useState(target?.color ?? "#AA4557");
+  const [colorSelected, setColorSelected] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -616,6 +619,7 @@ function TargetDialog({ target, initialDate, canEdit, onClose, onCreate, onUpdat
       const value = { name: name.trim(), description: description.trim() || null, targetDate: iso, color };
       if (target) await onUpdate(target, { ...value, reason: dateChanged ? reason.trim() : null });
       else await onCreate(value);
+      if (colorSelected) rememberRecentCustomColor(userId, color);
       onClose();
     } catch (cause) { setError(cause instanceof Error ? cause.message : messages.milestoneSaveError); }
     finally { setBusy(false); }
@@ -641,8 +645,8 @@ function TargetDialog({ target, initialDate, canEdit, onClose, onCreate, onUpdat
     <label htmlFor="milestone-date">{messages.milestoneDate}</label>
     <input id="milestone-date" inputMode="numeric" placeholder="DD/MM/AAAA" aria-required="true" value={date}
       disabled={!canEdit || busy} onChange={(event) => setDate(event.target.value)} />
-    <ColorField id="milestone-color" label={messages.milestoneColor} value={color}
-      disabled={!canEdit || busy} onChange={setColor} />
+    <ColorField id="milestone-color" label={messages.milestoneColor} value={color} userId={userId}
+      disabled={!canEdit || busy} onChange={(value) => { setColor(value); setColorSelected(true); }} />
     {dateChanged && canEdit && <>
       <label htmlFor="milestone-reason">{messages.milestoneReason}</label>
       <textarea id="milestone-reason" maxLength={2000} aria-required="true" value={reason}

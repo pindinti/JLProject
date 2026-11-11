@@ -3,15 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ScheduleEditor } from "../src/ScheduleEditor";
 import { formatCivilDate, parseBrazilianDate } from "../src/civil-date";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
+import { readRecentCustomColors } from "../src/recent-color-history";
 
 const api = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../src/auth", () => ({ authenticatedFetch: api.fetch }));
 
 const workspace = { id: "e97c159e-3f7b-4e27-8b1e-38036bf47a3f", name: "JLProject", role: "admin" as const };
+const userId = "synthetic-user";
 const product = { id: "e3aa998a-a2c3-4376-9105-90af0d1dbfe3", name: "Synthetic product", active: true };
 const activity = { id: "cd960302-0b68-4621-95ed-7d4f57f8eedc", stageId: "7130dfdf-452d-4bfc-8ad0-9cbf4db53747",
   name: "Synthetic activity", activityType: null, plannedStart: "2026-11-01", plannedEnd: "2026-11-08",
-  displayOrder: 0, notes: null, version: 1, planningMode: "manual" as const,
+  displayOrder: 0, notes: null, colorOverride: null, version: 1, planningMode: "manual" as const,
   workingDayDuration: null, planningCalendarVersion: null };
 const stage = { id: activity.stageId, disciplineId: "bba53e18-f13f-4b2d-a02e-65a0d95627e6", code: "EC",
   color: "#336699", displayName: "Synthetic stage", displayOrder: 0, derivedStart: "2026-11-01",
@@ -44,12 +46,12 @@ function setup(tree: { productId: string; disciplines: unknown[] } = { productId
 }
 function mount(role: "admin" | "editor" | "viewer" = "admin", onSummaryRefresh?: () => Promise<void>) {
   const onAccessLost = vi.fn();
-  render(<ScheduleEditor workspace={{ ...workspace, role }} product={product}
+  render(<ScheduleEditor workspace={{ ...workspace, role }} product={product} userId={userId}
     onBack={vi.fn()} onAccessLost={onAccessLost} onSummaryRefresh={onSummaryRefresh} />);
   return onAccessLost;
 }
 
-beforeEach(() => { vi.clearAllMocks(); setup(); });
+beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); setup(); });
 
 function setupImpacts(impacts: ActivityCalendarImpact[], tree: { productId: string; disciplines: unknown[] } = workingTree) {
   setup(tree);
@@ -579,11 +581,12 @@ describe("schedule editor", () => {
       }
       return Promise.resolve(path.endsWith("/targets") ? json({ targets: [] }) : json({ changes: [] }));
     });
-    const { container } = render(<ScheduleEditor workspace={workspace} product={product}
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product} userId={userId}
       onBack={vi.fn()} onAccessLost={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Editar etapa" }));
     fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#AA5577" } });
     expect(screen.getByText("Alterar e salvar esta cor afeta todas as etapas que usam a definição EC.")).toBeInTheDocument();
+    expect(readRecentCustomColors(userId)).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Salvar cor compartilhada" }));
     await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
       `/api/workspaces/${workspace.id}/stage-definitions/${definitions[0].id}`,
@@ -593,6 +596,7 @@ describe("schedule editor", () => {
     expect(container.querySelector(".workspace-table-row.row-stage .color-chip")).toHaveStyle({ backgroundColor: "#AA5577" });
     expect(container.querySelector(".timeline-bar.bar-activity")).toHaveStyle({ backgroundColor: "#AA5577" });
     expect(confirmation).toHaveBeenCalledWith(expect.stringContaining("todas as etapas"));
+    await waitFor(() => expect(readRecentCustomColors(userId)).toEqual(["#AA5577"]));
     confirmation.mockRestore();
   });
 
@@ -694,6 +698,76 @@ describe("schedule editor", () => {
     const mutation = api.fetch.mock.calls.find(([path, options]) => path.endsWith(`/activities/${activity.id}`) && options?.method === "PATCH");
     expect(mutation?.[1].body).toContain('"version":1');
     expect(mutation?.[1].body).not.toContain("plannedStart");
+    confirmation.mockRestore();
+  });
+
+  it("edits and restores an activity color in the draft while the Gantt uses the saved effective color", async () => {
+    const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let current: Omit<typeof activity, "colorOverride"> & { colorOverride: string | null } = { ...activity };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id,
+        disciplines: [{ ...discipline, stages: [{ ...stage, activities: [current] }] }] } }));
+      if (path.endsWith(`/activities/${activity.id}`) && options?.method === "PATCH") {
+        const input = JSON.parse(String(options.body)) as { colorOverride: string | null };
+        current = { ...current, colorOverride: input.colorOverride, version: current.version + 1 };
+        return Promise.resolve(json({ activity: current }));
+      }
+      return Promise.resolve(path.endsWith("/targets") ? json({ targets: [] }) : json({ stageDefinitions: definitions }));
+    });
+    const { container } = render(<ScheduleEditor workspace={workspace} product={product} userId={userId}
+      onBack={vi.fn()} onAccessLost={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
+    expect(screen.queryByRole("radio", { name: "Herdar cor da etapa" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Usar cor personalizada" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#336699");
+    expect(screen.getByLabelText("Selecionar cor personalizada para Selecionar cor da atividade")).toHaveValue("#336699");
+    expect(screen.getByText("Herdando cor da etapa (#336699).")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar cor #52694D" }));
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#52694D");
+    expect(screen.getByLabelText("Selecionar cor personalizada para Selecionar cor da atividade")).toHaveValue("#52694d");
+    expect(screen.getByText("Cor personalizada ativa (#52694D).")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#AA5577" } });
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#AA5577");
+    expect(screen.getByLabelText("Selecionar cor personalizada para Selecionar cor da atividade")).toHaveValue("#aa5577");
+    expect(screen.getByText("Cor personalizada ativa (#AA5577).")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restaurar cor da etapa" })).toBeInTheDocument();
+    expect(readRecentCustomColors(userId)).toEqual([]);
+    expect(api.fetch.mock.calls.some(([path, options]) => path.endsWith(`/activities/${activity.id}`) &&
+      options?.method === "PATCH")).toBe(false);
+    fireEvent.click(screen.getAllByRole("button", { name: "Cancelar" })[0]);
+    expect(readRecentCustomColors(userId)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Editar atividade" }));
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#336699");
+    expect(screen.queryByRole("button", { name: "Restaurar cor da etapa" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#AA5577" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar dados" }));
+    await waitFor(() => expect(container.querySelector(".timeline-bar.bar-activity"))
+      .toHaveStyle({ backgroundColor: "#AA5577" }));
+    await waitFor(() => expect(readRecentCustomColors(userId)).toEqual(["#AA5577"]));
+    const overrideCall = api.fetch.mock.calls.find(([path, options]) => path.endsWith(`/activities/${activity.id}`) &&
+      options?.method === "PATCH" && String(options.body).includes('"colorOverride":"#AA5577"'));
+    expect(overrideCall).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar atividade" }));
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#AA5577");
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar cor #AA5577" }));
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#AA5577");
+    fireEvent.click(screen.getByRole("button", { name: "Restaurar cor da etapa" }));
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#336699");
+    expect(screen.getByLabelText("Selecionar cor personalizada para Selecionar cor da atividade")).toHaveValue("#336699");
+    expect(screen.getByText("Herdando cor da etapa (#336699).")).toBeInTheDocument();
+    const patchesBeforeSave = api.fetch.mock.calls.filter(([path, options]) =>
+      path.endsWith(`/activities/${activity.id}`) && options?.method === "PATCH").length;
+    expect(patchesBeforeSave).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Salvar dados" }));
+    await waitFor(() => expect(container.querySelector(".timeline-bar.bar-activity"))
+      .toHaveStyle({ backgroundColor: "#336699" }));
+    expect(api.fetch.mock.calls.some(([path, options]) => path.endsWith(`/activities/${activity.id}`) &&
+      options?.method === "PATCH" && String(options.body).includes('"colorOverride":null'))).toBe(true);
+    expect(readRecentCustomColors(userId)).toEqual(["#AA5577"]);
     confirmation.mockRestore();
   });
 

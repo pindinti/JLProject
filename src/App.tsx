@@ -34,6 +34,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [adminWorkspace, setAdminWorkspace] = useState<WorkspaceSummary | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(null);
   const [firstName, setFirstName] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [resetToken, setResetToken] = useState<string | null>(() =>
@@ -71,11 +72,13 @@ export function App() {
       if (!result.data?.session) {
         setAdminWorkspace(null);
         setCurrentWorkspace(null);
+        setAuthenticatedUserId(null);
         setFirstName(null);
         window.history.replaceState(null, "", "/");
         setView("login");
         return;
       }
+      setAuthenticatedUserId(result.data.user?.id ?? null);
       setFirstName(getFirstName(result.data.user?.name, result.data.user?.email));
       if (!token) {
         setMessage(messages.networkError);
@@ -171,6 +174,7 @@ export function App() {
       } else {
         setAdminWorkspace(null);
         setCurrentWorkspace(null);
+        setAuthenticatedUserId(null);
         setFirstName(null);
         window.history.replaceState(null, "", "/");
         setView("login");
@@ -399,7 +403,7 @@ export function App() {
         )}
 
         {view === "products" && currentWorkspace && (
-          <Products workspace={currentWorkspace} onAccessLost={refreshSession} />
+          <Products workspace={currentWorkspace} userId={authenticatedUserId} onAccessLost={refreshSession} />
         )}
         {view === "settings" && currentWorkspace && (
           <Settings workspace={currentWorkspace} adminWorkspace={adminWorkspace} onAccessLost={refreshSession} onBack={() => {

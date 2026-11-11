@@ -24,8 +24,9 @@ interface ProductHierarchy {
   disciplines: { stages: { activities: unknown[] }[] }[];
 }
 
-export function Products({ workspace, onAccessLost }: {
+export function Products({ workspace, userId, onAccessLost }: {
   workspace: WorkspaceSummary;
+  userId: string | null;
   onAccessLost: () => void;
 }) {
   const [products, setProducts] = useState<Product[]>([]);
@@ -252,7 +253,7 @@ export function Products({ workspace, onAccessLost }: {
     if (state === "error") return <div role="alert"><p>{messages.productsError}</p>
       <button type="button" onClick={() => void load()}>{messages.retry}</button></div>;
     return scheduleProduct
-      ? <ScheduleEditor workspace={workspace} product={scheduleProduct}
+      ? <ScheduleEditor workspace={workspace} product={scheduleProduct} userId={userId}
           onBack={backToProducts} onAccessLost={onAccessLost} onSummaryRefresh={refreshProductCounts} />
       : <div role="alert"><p>{messages.scheduleNotFound}</p>
           <button type="button" onClick={backToProducts}>{messages.backToProducts}</button></div>;
