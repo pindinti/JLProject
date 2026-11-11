@@ -6,10 +6,10 @@ import { messages } from "./locales/pt-BR";
 
 type ProductHistoryEventType = "product_created" | "schedule_imported" | "activity_dates_changed" |
   "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
-  "schedule_hierarchy_deleted";
+  "schedule_hierarchy_deleted" | "hierarchy_moved";
 interface ProductHistoryItem {
   kind: string; id: string; name: string | null;
-  hierarchy?: { discipline?: string | null; stage?: string | null };
+  hierarchy?: { scope?: string; discipline?: string | null; stage?: string | null };
 }
 interface ProductHistoryEvent {
   id: string; occurredAt: string; actorName: string | null; eventType: ProductHistoryEventType;
@@ -30,7 +30,7 @@ const historyTime = new Intl.DateTimeFormat("pt-BR", {
 });
 const eventTypes: ProductHistoryEventType[] = ["product_created", "schedule_imported", "activity_dates_changed",
   "business_target_date_changed", "calendar_rescheduled", "calendar_reschedule_reversed",
-  "schedule_hierarchy_deleted"];
+  "schedule_hierarchy_deleted", "hierarchy_moved"];
 const eventLabels: Record<ProductHistoryEventType, string> = {
   product_created: messages.productHistoryTypeProductCreated,
   schedule_imported: messages.productHistoryTypeImport,
@@ -38,7 +38,8 @@ const eventLabels: Record<ProductHistoryEventType, string> = {
   business_target_date_changed: messages.productHistoryTypeTargetDate,
   calendar_rescheduled: messages.productHistoryTypeCalendarReschedule,
   calendar_reschedule_reversed: messages.productHistoryTypeCalendarReversal,
-  schedule_hierarchy_deleted: messages.productHistoryTypeDeletion
+  schedule_hierarchy_deleted: messages.productHistoryTypeDeletion,
+  hierarchy_moved: messages.productHistoryTypeMovement
 };
 const detailLabels: Record<string, string> = {
   plannedStart: messages.productHistoryStart,
@@ -82,6 +83,7 @@ function decodePage(value: unknown): ProductHistoryPage {
 
 function hierarchyLabel(item: ProductHistoryItem | Record<string, unknown> | null | undefined): string | null {
   const hierarchy = record(item?.hierarchy);
+  if (hierarchy?.scope === "product_root") return messages.productHistoryProductRoot;
   const parts = [hierarchy?.discipline, hierarchy?.stage]
     .filter((value): value is string => typeof value === "string" && value.length > 0);
   return parts.length ? parts.join(" › ") : null;
@@ -118,6 +120,47 @@ function detailRows(details: Record<string, unknown> | null): [string, string][]
     const value = displayScalar(details[key], key);
     return value === null ? [] : [[label, value] as [string, string]];
   });
+}
+
+function movementParentLabel(details: Record<string, unknown> | null): string | null {
+  const parent = record(details?.parent);
+  if (!parent) return null;
+  if (parent.scope === "product_root") return messages.productHistoryProductRoot;
+  if (parent.scope === "product") return messages.productHistoryProduct;
+  const parts = [parent.discipline, parent.stage]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  return parts.length ? parts.join(" › ") : messages.productHistoryLocationUnavailable;
+}
+
+function movementPosition(details: Record<string, unknown> | null): string | null {
+  const position = details?.position;
+  return typeof position === "number" && Number.isSafeInteger(position) && position > 0
+    ? position.toLocaleString("pt-BR") : null;
+}
+
+function movementEventLabel(event: ProductHistoryEvent): string {
+  if (event.eventType !== "hierarchy_moved") return eventLabels[event.eventType];
+  if (event.item?.kind === "activity") return messages.productHistoryActivityMoved;
+  if (event.item?.kind === "stage") return messages.productHistoryStageMoved;
+  if (event.item?.kind === "discipline") return messages.productHistoryDisciplineMoved;
+  return eventLabels.hierarchy_moved;
+}
+
+function MovementComparison({ event }: { event: ProductHistoryEvent }) {
+  const beforeLocation = movementParentLabel(event.before);
+  const afterLocation = movementParentLabel(event.after);
+  const beforePosition = movementPosition(event.before);
+  const afterPosition = movementPosition(event.after);
+  return <div className="product-history__value-columns product-history__movement-comparison">
+    <section><h3>{messages.calendarBefore}</h3><dl>
+      {beforeLocation && <div><dt>{messages.productHistoryPreviousParent}</dt><dd>{beforeLocation}</dd></div>}
+      {beforePosition && <div><dt>{messages.productHistoryPreviousPosition}</dt><dd>{beforePosition}</dd></div>}
+    </dl></section>
+    <section><h3>{messages.calendarAfter}</h3><dl>
+      {afterLocation && <div><dt>{messages.productHistoryNewParent}</dt><dd>{afterLocation}</dd></div>}
+      {afterPosition && <div><dt>{messages.productHistoryNewPosition}</dt><dd>{afterPosition}</dd></div>}
+    </dl></section>
+  </div>;
 }
 
 function activityChanges(value: unknown): ActivityChange[] {
@@ -169,6 +212,7 @@ function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
   const affected = event.affectedItems.filter((item) => typeof item.name === "string");
   const beforeRows = detailRows(event.before);
   const afterRows = detailRows(event.after);
+  const hasMovement = event.eventType === "hierarchy_moved";
   const hasActivityDates = activityChanges(event.before).length > 0 || activityChanges(event.after).length > 0;
   const genericDetails = beforeRows.length > 0 || afterRows.length > 0;
   return <li className="product-history__event">
@@ -178,7 +222,7 @@ function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
         <time dateTime={event.occurredAt}>{historyTime.format(new Date(event.occurredAt))}</time>
         <span>{event.actorName ?? messages.calendarRescheduleActorUnavailable}</span>
       </div>
-      <span className="product-history__event-type">{eventLabels[event.eventType]}</span>
+        <span className="product-history__event-type">{movementEventLabel(event)}</span>
     </header>
     {itemHierarchy && <p className="product-history__hierarchy">{itemHierarchy}</p>}
     {event.justification && <p className="product-history__justification">
@@ -191,9 +235,9 @@ function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
         {hierarchyLabel(item) && <span className="product-history__hierarchy">{hierarchyLabel(item)}</span>}
       </li>)}</ul>
     </details>}
-    {(genericDetails || hasActivityDates) && <details className="product-history__details">
+    {(genericDetails || hasActivityDates || hasMovement) && <details className="product-history__details">
       <summary>{messages.productHistoryBeforeAfter}</summary>
-      {hasActivityDates ? <ActivityDateComparison event={event} /> : <div className="product-history__value-columns">
+      {hasMovement ? <MovementComparison event={event} /> : hasActivityDates ? <ActivityDateComparison event={event} /> : <div className="product-history__value-columns">
         {beforeRows.length > 0 && <section><h3>{messages.calendarBefore}</h3><dl>{beforeRows.map(([label, value]) => <div key={label}>
           <dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>}
         {afterRows.length > 0 && <section><h3>{messages.calendarAfter}</h3><dl>{afterRows.map(([label, value]) => <div key={label}>

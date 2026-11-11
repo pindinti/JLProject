@@ -1,6 +1,6 @@
 export interface ScheduleActivity {
   id: string; name: string; plannedStart: string | null; plannedEnd: string | null;
-  displayOrder: number; colorOverride: string | null;
+  displayOrder: number; colorOverride: string | null; version?: number;
 }
 export const rootActivityDefaultColor = "#8D9A89";
 export interface ScheduleStage {

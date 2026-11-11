@@ -20,6 +20,15 @@ const productEvent = {
   item: { kind: "product", id: "product", name: "Synthetic product" },
   justification: null, before: null, after: null, affectedItems: []
 };
+const movementEvent = {
+  id: "hierarchy-movement:00000000-0000-4000-8000-000000000003",
+  occurredAt: "2026-11-10T13:00:00.000Z", actorId: "actor", actorName: "Synthetic editor",
+  eventType: "hierarchy_moved", item: { kind: "activity", id: "activity-1",
+    name: "Synthetic activity", hierarchy: { scope: "product_root" } },
+  justification: null,
+  before: { parent: { scope: "stage", discipline: "Synthetic discipline", stage: "Synthetic stage" }, position: 3 },
+  after: { parent: { scope: "product_root", discipline: null, stage: null }, position: 1 }, affectedItems: []
+};
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }); }
 function mount(activity?: { id: string; name: string }, onClose = vi.fn(), onAccessLost = vi.fn()) {
   return { ...render(<ProductChangeHistoryDialog base={base} activity={activity}
@@ -44,7 +53,32 @@ describe("ProductChangeHistoryDialog", () => {
     expect(within(dialog).getByText("Synthetic activity")).toBeInTheDocument();
     expect(within(dialog).queryByText("Synthetic product")).not.toBeInTheDocument();
     expect(within(dialog).getByText(/não representa revisões formais/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Não há eventos para edição cadastral/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Não registra edição cadastral/)).toBeInTheDocument();
+  });
+
+  it("shows movement actor, time, item type, parent hierarchy and one-based positions", async () => {
+    auth.fetch.mockResolvedValue(json({ events: [movementEvent, activityEvent], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    const movementCard = within(dialog).getByText("Atividade movida").closest("li")!;
+    expect(within(movementCard).getByText("Synthetic activity")).toBeInTheDocument();
+    expect(within(movementCard).getByText("Synthetic editor")).toBeInTheDocument();
+    expect(movementCard.querySelector("time")).toHaveAttribute("dateTime", movementEvent.occurredAt);
+    fireEvent.click(within(movementCard).getByText("Ver antes e depois"));
+    const comparison = movementCard.querySelector(".product-history__movement-comparison") as HTMLElement;
+    expect(within(comparison).getByText("Atividades de Produto")).toBeInTheDocument();
+    expect(comparison).toHaveTextContent("Local anterior");
+    expect(comparison).toHaveTextContent("Synthetic discipline › Synthetic stage");
+    expect(comparison).toHaveTextContent(/Posi.+anterior/);
+    expect(comparison).toHaveTextContent("3");
+    expect(comparison).toHaveTextContent("Nova posição");
+    expect(comparison).toHaveTextContent("1");
+    fireEvent.change(within(dialog).getByLabelText("Filtrar por tipo de evento"), {
+      target: { value: "hierarchy_moved" }
+    });
+    expect(within(dialog).getByText("Atividade movida")).toBeInTheDocument();
+    expect([...dialog.querySelectorAll(".product-history__event-type")].map((item) => item.textContent))
+      .toEqual(["Atividade movida"]);
   });
 
   it("loads additional events by the returned cursor", async () => {
@@ -94,6 +128,22 @@ describe("ProductChangeHistoryDialog", () => {
     const comparison = dialog.querySelector(".product-history__date-comparison");
     expect(comparison).toHaveTextContent("01/11/2026 a 08/11/2026");
     expect(comparison).toHaveTextContent("02/11/2026 a 09/11/2026");
+  });
+
+  it("includes direct activity moves and ancestor stage moves in activity-specific history", async () => {
+    const stageMove = { ...movementEvent, id: "hierarchy-movement:stage",
+      item: { kind: "stage", id: "stage-1", name: "Synthetic stage",
+        hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage" } },
+      affectedItems: [{ kind: "activity", id: "activity-1", name: "Synthetic activity",
+        hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage" } }] };
+    const unrelatedMove = { ...movementEvent, id: "hierarchy-movement:other",
+      item: { kind: "activity", id: "activity-2", name: "Unrelated activity" } };
+    auth.fetch.mockResolvedValue(json({ events: [stageMove, movementEvent, unrelatedMove], nextCursor: null }));
+    mount({ id: "activity-1", name: "Synthetic activity" });
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Etapa movida")).toBeInTheDocument();
+    expect(within(dialog).getByText("Atividade movida")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Unrelated activity")).not.toBeInTheDocument();
   });
 
   it("shows a safe retryable error and supports keyboard dismissal", async () => {

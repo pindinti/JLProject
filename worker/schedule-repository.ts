@@ -73,11 +73,11 @@ export type CalendarRescheduleHistoryResult = { status: "ok"; operations: Calend
   { status: "not_found" | "forbidden" | "invalid" };
 export type ProductChangeEventType = "product_created" | "schedule_imported" | "activity_dates_changed" |
   "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
-  "schedule_hierarchy_deleted";
+  "schedule_hierarchy_deleted" | "hierarchy_moved";
 export interface ProductChangeHistoryCursor { occurredAt: string; eventId: string }
 export interface ProductChangeHistoryItem {
   kind: string; id: string; name: string | null;
-  hierarchy?: { discipline?: string | null; stage?: string | null };
+  hierarchy?: { scope?: string; discipline?: string | null; stage?: string | null };
 }
 export interface ProductChangeEvent {
   id: string; occurredAt: string; actorId: string; actorName: string | null;
@@ -95,8 +95,25 @@ export type DeletionPreview = { status: "ok"; fingerprint: string; counts: Delet
   { status: "not_found" | "invalid" | "forbidden" };
 export type DeletionResult = { status: "deleted"; operationId: string; counts: DeletionCounts } |
   { status: "not_found" | "invalid" | "forbidden" | "stale" };
+export type HierarchyItemKind = "activity" | "stage" | "discipline";
+export interface HierarchyMoveInput {
+  kind: HierarchyItemKind;
+  targetId: string;
+  expectedVersion: number;
+  destinationDisciplineId: string | null;
+  destinationStageId: string | null;
+  destinationIndex: number;
+  expectedSourceOrder: string[];
+  expectedDestinationOrder: string[];
+}
+export type HierarchyMoveResult =
+  { status: "moved"; operationId: string; version: number } |
+  { status: "unchanged"; version: number } |
+  { status: "not_found" | "invalid" | "forbidden" | "stale" | "conflict" | "duplicate" };
 
 export interface ScheduleRepository {
+  moveHierarchyItem(workspaceId: string, productId: string, actorId: string,
+    operationId: string, input: HierarchyMoveInput): Promise<HierarchyMoveResult>;
   previewDeletion(workspaceId: string, productId: string, actorId: string,
     kind: DeletionKind, targetId: string): Promise<DeletionPreview>;
   deleteSubtree(workspaceId: string, productId: string, actorId: string,
@@ -154,7 +171,7 @@ const text = (value: unknown) => String(value);
 const nullable = (value: unknown) => value === null || value === undefined ? null : String(value);
 const productChangeEventTypes = new Set<ProductChangeEventType>([
   "product_created", "schedule_imported", "activity_dates_changed", "business_target_date_changed",
-  "calendar_rescheduled", "calendar_reschedule_reversed", "schedule_hierarchy_deleted"
+  "calendar_rescheduled", "calendar_reschedule_reversed", "schedule_hierarchy_deleted", "hierarchy_moved"
 ]);
 
 function jsonRecord(value: unknown): Record<string, unknown> | null {
@@ -178,10 +195,12 @@ function productChangeEvent(value: unknown): ProductChangeEvent {
       ? jsonRecord(rawItem["hierarchy"]) : null;
     if (!rawItem || typeof rawItem["kind"] !== "string" || typeof rawItem["id"] !== "string" ||
         (rawItem["name"] !== null && typeof rawItem["name"] !== "string") ||
-        (rawItem["hierarchy"] !== undefined && !rawHierarchy))
+        (rawItem["hierarchy"] !== undefined && !rawHierarchy) ||
+        (rawHierarchy?.["scope"] !== undefined && typeof rawHierarchy["scope"] !== "string"))
       throw new Error("Invalid product change history item.");
     item = { kind: rawItem["kind"], id: rawItem["id"], name: rawItem["name"] as string | null,
       ...(rawHierarchy ? { hierarchy: {
+        ...(rawHierarchy["scope"] === undefined ? {} : { scope: rawHierarchy["scope"] as string }),
         ...(rawHierarchy["discipline"] === undefined ? {} : { discipline: nullable(rawHierarchy["discipline"]) }),
         ...(rawHierarchy["stage"] === undefined ? {} : { stage: nullable(rawHierarchy["stage"]) })
       } } : {}) };
@@ -410,6 +429,24 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
   }
 
   return {
+    async moveHierarchyItem(ws, productId, actorId, operationId, input) {
+      const rows = await sql`SELECT public.move_schedule_item(
+        ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
+        ${input.kind}, ${input.targetId}::uuid, ${input.expectedVersion}::bigint,
+        ${input.destinationDisciplineId}::uuid, ${input.destinationStageId}::uuid,
+        ${input.destinationIndex}, ${JSON.stringify(input.expectedSourceOrder)}::jsonb,
+        ${JSON.stringify(input.expectedDestinationOrder)}::jsonb) AS result`;
+      const result = rows[0]?.["result"] as { status?: string; version?: number } | undefined;
+      if (!result || !["moved", "unchanged", "not_found", "invalid", "forbidden", "stale",
+        "conflict", "duplicate"].includes(result.status ?? ""))
+        throw new Error("Unexpected hierarchy movement result.");
+      if (result.status === "moved")
+        return { status: "moved", operationId, version: Number(result.version) };
+      if (result.status === "unchanged")
+        return { status: "unchanged", version: Number(result.version) };
+      return { status: result.status as "not_found" | "invalid" | "forbidden" | "stale" |
+        "conflict" | "duplicate" };
+    },
     async previewDeletion(ws, productId, actorId, kind, targetId) {
       const rows = await sql`SELECT public.preview_schedule_deletion(
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${kind}, ${targetId}::uuid) AS result`;
@@ -475,10 +512,11 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         )
         UPDATE public.product_disciplines AS d
           SET name = ${input.name}, short_code = ${input.shortCode}, color = ${input.color},
-            display_order = ${input.displayOrder}, description = ${input.description},
+            description = ${input.description},
             updated_by = ${actorId}::uuid, updated_at = now(), version = d.version + 1
           WHERE d.workspace_id = ${ws}::uuid AND d.product_id = ${productId}::uuid
             AND d.id = ${disciplineId}::uuid AND d.version = ${version}
+            AND d.display_order = ${input.displayOrder}
             AND EXISTS (SELECT 1 FROM locked_product)
           RETURNING d.id::text AS id`;
         if (!rows[0]) return { status: await findDiscipline(ws, productId, disciplineId) ? "stale" : "not_found" };
@@ -726,7 +764,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       )
       UPDATE public.stage_activities AS a
         SET name = ${input.name}, activity_type = ${input.activityType},
-          display_order = ${input.displayOrder}, notes = ${input.notes},
+          notes = ${input.notes},
           color_override = CASE WHEN ${input.colorOverride === undefined} THEN a.color_override
             ELSE ${input.colorOverride ?? null} END,
           updated_by = ${actorId}::uuid, updated_at = now(), version = a.version + 1
@@ -734,6 +772,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           AND a.discipline_id IS NOT DISTINCT FROM ${disciplineId}::uuid
           AND a.stage_id IS NOT DISTINCT FROM ${stageId}::uuid
           AND a.id = ${activityId}::uuid AND a.version = ${version}
+          AND a.display_order = ${input.displayOrder}
           AND EXISTS (SELECT 1 FROM locked_product)
         RETURNING a.id::text AS id`;
       if (!rows[0]) return { status: await findActivity(ws, productId, disciplineId, stageId, activityId) ? "stale" : "not_found" };
@@ -783,7 +822,7 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       const value = await findActivity(ws, productId, disciplineId, stageId, activityId);
       return value ? { status: result.status, activity: value } : { status: "not_found" };
     },
-    async listActivityDateHistory(ws, productId, disciplineId, stageId, activityId) {
+    async listActivityDateHistory(ws, productId, _disciplineId, _stageId, activityId) {
       const rows = await sql`SELECT operation_id::text AS "operationId",
         to_char(changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "changedAt",
         to_char(previous_start, 'YYYY-MM-DD') AS "previousStart",
@@ -792,8 +831,6 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         to_char(new_end, 'YYYY-MM-DD') AS "newEnd", reason
         FROM public.activity_date_changes
         WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
-          AND discipline_id IS NOT DISTINCT FROM ${disciplineId}::uuid
-          AND stage_id IS NOT DISTINCT FROM ${stageId}::uuid
           AND activity_id = ${activityId}::uuid
         ORDER BY changed_at DESC, operation_id DESC`;
       return rows.map((row) => ({ operationId: text(row["operationId"]),

@@ -105,7 +105,8 @@ describe("product row locks for clone consistency", () => {
     database.calls.length = 0;
     await schedules.listActivityDateHistory(workspaceId, productId, null, null,
       "b3aa998a-a2c3-4376-9105-90af0d1dbfe3");
-    expect(database.calls[0]).toContain("discipline_id IS NOT DISTINCT FROM");
-    expect(database.calls[0]).toContain("stage_id IS NOT DISTINCT FROM");
+    expect(database.calls[0]).toContain("activity_id =");
+    expect(database.calls[0]).not.toContain("discipline_id IS NOT DISTINCT FROM");
+    expect(database.calls[0]).not.toContain("stage_id IS NOT DISTINCT FROM");
   });
 });

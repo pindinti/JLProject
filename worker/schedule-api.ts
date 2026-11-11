@@ -5,14 +5,14 @@ import { createCalendarRepository, type CalendarRepository } from "./calendar-re
 import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
-  type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type Mutation,
+  type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type HierarchyMoveInput, type Mutation,
   type ProductChangeHistoryCursor, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|change-history|targets|disciplines|root-activities)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const eventCursorId = /^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "product_change_history" | "targets" | "target" | "disciplines" | "stages" | "activities" | "root_activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "hierarchy_move" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "product_change_history" | "targets" | "target" | "disciplines" | "stages" | "activities" | "root_activities" | "activity_dates" | "activity_history" | "activity_working_plan";
   disciplineId?: string; stageId?: string; activityId?: string; targetId?: string; operationId?: string;
   rootActivity?: true };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
@@ -25,7 +25,9 @@ function parseRoute(pathname: string): Route | null {
   const match = pathname.match(prefix);
   if (!match) return null;
   const [, workspaceId, productId, root, remainder] = match;
-  if (root === "hierarchy") return remainder === "deletion-preview"
+  if (root === "hierarchy") return remainder === "moves"
+    ? { workspaceId, productId, kind: "hierarchy_move" }
+    : remainder === "deletion-preview"
     ? { workspaceId, productId, kind: "deletion_preview" }
     : remainder === "deletions" ? { workspaceId, productId, kind: "deletion_execute" }
       : remainder ? null : { workspaceId, productId, kind: "hierarchy" };
@@ -126,6 +128,43 @@ const optional = (value: unknown, max: number): string | null | undefined => {
     !Array.from(normalized).some((character) => character.charCodeAt(0) === 0 || character.charCodeAt(0) === 127)
     ? normalized || null : undefined;
 };
+
+function hierarchyMoveInput(value: Record<string, unknown>): HierarchyMoveInput | null {
+  if (!only(value, ["kind", "targetId", "expectedVersion", "destinationDisciplineId",
+    "destinationStageId", "destinationIndex", "expectedSourceOrder", "expectedDestinationOrder"])) return null;
+  const kind = value["kind"];
+  const targetId = value["targetId"];
+  const expectedVersion = value["expectedVersion"];
+  const destinationDisciplineId = value["destinationDisciplineId"];
+  const destinationStageId = value["destinationStageId"];
+  const destinationIndex = value["destinationIndex"];
+  const expectedSourceOrder = value["expectedSourceOrder"];
+  const expectedDestinationOrder = value["expectedDestinationOrder"];
+  if ((kind !== "activity" && kind !== "stage" && kind !== "discipline") ||
+      typeof targetId !== "string" || !uuid.test(targetId) ||
+      !Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 1 ||
+      !Number.isSafeInteger(destinationIndex) || Number(destinationIndex) < 0 ||
+      (destinationDisciplineId !== null &&
+        (typeof destinationDisciplineId !== "string" || !uuid.test(destinationDisciplineId))) ||
+      (destinationStageId !== null &&
+        (typeof destinationStageId !== "string" || !uuid.test(destinationStageId))) ||
+      !Array.isArray(expectedSourceOrder) || !Array.isArray(expectedDestinationOrder) ||
+      expectedSourceOrder.length > 1000 || expectedDestinationOrder.length > 1000) return null;
+  const sourceIds = expectedSourceOrder.filter((id): id is string => typeof id === "string" && uuid.test(id));
+  const destinationIds = expectedDestinationOrder.filter((id): id is string => typeof id === "string" && uuid.test(id));
+  if (sourceIds.length !== expectedSourceOrder.length || destinationIds.length !== expectedDestinationOrder.length ||
+      new Set(sourceIds.map((id) => id.toLowerCase())).size !== sourceIds.length ||
+      new Set(destinationIds.map((id) => id.toLowerCase())).size !== destinationIds.length) return null;
+  if (kind === "discipline" && (destinationDisciplineId !== null || destinationStageId !== null) ||
+      kind === "stage" && (destinationDisciplineId === null || destinationStageId !== null) ||
+      kind === "activity" && ((destinationDisciplineId === null) !== (destinationStageId === null))) return null;
+  return { kind, targetId: targetId.toLowerCase(), expectedVersion: Number(expectedVersion),
+    destinationDisciplineId: destinationDisciplineId?.toLowerCase() ?? null,
+    destinationStageId: destinationStageId?.toLowerCase() ?? null,
+    destinationIndex: Number(destinationIndex),
+    expectedSourceOrder: sourceIds.map((id) => id.toLowerCase()),
+    expectedDestinationOrder: destinationIds.map((id) => id.toLowerCase()) };
+}
 const order = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1000000;
 const version = (value: unknown): value is number =>
@@ -319,6 +358,27 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   if (route.kind === "hierarchy" && request.method === "GET") {
     const hierarchy = await repository.getHierarchy(ws, productId);
     return hierarchy ? response({ hierarchy }, 200) : response({ error: "Não encontrado." }, 404);
+  }
+  if (route.kind === "hierarchy_move" && request.method === "POST") {
+    const value = await body(request);
+    const input = value && hierarchyMoveInput(value);
+    if (!input) return response({ error: "Informe um movimento de hierarquia válido." }, 400);
+    try {
+      const operationId = crypto.randomUUID();
+      const result = await repository.moveHierarchyItem(ws, productId, identity.subject, operationId, input);
+      if (result.status === "moved")
+        return response({ changed: true, operationId, version: result.version }, 200);
+      if (result.status === "unchanged")
+        return response({ changed: false, version: result.version }, 200);
+      if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+      if (result.status === "not_found") return response({ error: "Item ou destino não encontrado." }, 404);
+      if (result.status === "invalid") return response({ error: "Movimento de hierarquia inválido." }, 400);
+      if (result.status === "duplicate")
+        return response({ error: "A disciplina de destino já possui esta etapa." }, 409);
+      return response({ error: "A estrutura foi alterada. Atualize os dados e tente novamente." }, 409);
+    } catch {
+      return response({ error: "Não foi possível mover o item. Nenhuma alteração foi confirmada." }, 503);
+    }
   }
   if (route.kind === "deletion_preview" && request.method === "GET") {
     if (membership.role === "viewer") return response({ error: "Acesso não autorizado." }, 403);

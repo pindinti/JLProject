@@ -674,6 +674,30 @@ form button {
 .schedule-deletion-dialog small { color: var(--jl-text-muted); }
 .schedule-deletion-dialog__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
 .workspace-inline-actions button.workspace-icon-action--delete:hover:not(:disabled) { color: var(--jl-danger); }
+.activity-move-feedback,
+.activity-move-live { flex: 0 0 auto; margin: 0; padding: 0.35rem 0.75rem; font-size: var(--jl-font-size-xs); }
+.activity-move-feedback { color: var(--jl-primary); background: var(--jl-primary-soft); }
+.activity-move-feedback--error { color: var(--jl-danger); background: color-mix(in srgb, var(--jl-danger) 9%, var(--jl-surface)); }
+.activity-move-live { color: var(--jl-text-muted); }
+.workspace-table-row.drop-before,
+.workspace-table-row.drop-after,
+.workspace-table-row.drop-append { position: relative; background: color-mix(in srgb, var(--jl-primary-soft) 70%, var(--jl-surface)); }
+.workspace-table-row.drop-before { box-shadow: inset 0 2px 0 var(--jl-primary); }
+.workspace-table-row.drop-after,
+.workspace-table-row.drop-append { box-shadow: inset 0 -2px 0 var(--jl-primary); }
+.workspace-drop-hint { min-width: 0; max-width: 42%; overflow: hidden; padding: 0.08rem 0.3rem; border-radius: var(--jl-radius-xs);
+  background: var(--jl-primary-soft); color: var(--jl-primary); font-size: 0.68rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-inline-actions button.workspace-icon-action--move { cursor: grab; color: var(--jl-primary); }
+.workspace-inline-actions button.workspace-icon-action--move:active { cursor: grabbing; }
+.activity-move-backdrop { position: fixed; z-index: 75; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(37 43 40 / 48%); }
+.activity-move-dialog { display: grid; gap: 0.65rem; width: min(30rem, 100%); max-height: min(90dvh, 42rem); overflow-y: auto;
+  padding: 1.25rem; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-lg); background: var(--jl-surface);
+  color: var(--jl-text); box-shadow: var(--jl-shadow-md); }
+.activity-move-dialog h2,.activity-move-dialog p { margin: 0; }
+.activity-move-dialog__target { overflow-wrap: anywhere; font-weight: 700; }
+.activity-move-dialog form { display: grid; gap: 0.4rem; }
+.activity-move-dialog select { width: 100%; min-height: 2.4rem; }
+.activity-move-dialog__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
 .calendar-highlight-status { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); }
 .calendar-highlight-status button { min-height: 1.7rem; padding: 0.1rem 0.3rem; border: 0; background: transparent; color: var(--jl-primary); text-decoration: underline; }
 .schedule-breadcrumb { min-height: 1.8rem; padding: 0.15rem 0.45rem; border: 0; background: transparent; color: var(--jl-primary); font-size: var(--jl-font-size-sm); white-space: nowrap; }

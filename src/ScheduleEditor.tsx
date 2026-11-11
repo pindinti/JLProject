@@ -8,6 +8,7 @@ import { CalendarRescheduleHistoryDialog } from "./CalendarRescheduleHistoryDial
 import { ProductChangeHistoryDialog } from "./ProductChangeHistoryDialog";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
 import { dayNumber, rootActivityDefaultColor } from "../domain/schedule-workspace";
+import type { ActivityMoveRequest } from "../domain/activity-movement";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import type { SkippedDateReason, SkippedWorkingDate } from "../domain/working-day-calculation";
 import { rememberRecentCustomColor } from "./recent-color-history";
@@ -109,6 +110,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
   const [workingPreview, setWorkingPreview] = useState<WorkingPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const workingPreviewRequest = useRef(0);
+  const movementSubmitting = useRef(false);
   const [productHistoryOpen, setProductHistoryOpen] = useState(false);
   const [productHistoryActivity, setProductHistoryActivity] = useState<{ id: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -158,7 +160,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     } catch { if (requestId === impactRequest.current) setImpactState("error"); }
   }, [base, onAccessLost]);
 
-  const load = useCallback(async (showLoading = true) => {
+  const load = useCallback(async (showLoading = true): Promise<boolean> => {
     if (showLoading) setState("loading");
     try {
       const [treeResponse, targetsResponse, definitionsResponse] = await Promise.all([
@@ -167,9 +169,9 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         canEdit ? authenticatedFetch(`/api/workspaces/${workspace.id}/stage-definitions`) : Promise.resolve(null)
       ]);
       if ([treeResponse, targetsResponse, definitionsResponse].some((result) => result?.status === 401 || result?.status === 403)) {
-        onAccessLost(); return;
+        onAccessLost(); return false;
       }
-      if (treeResponse.status === 404) { setState("notFound"); return; }
+      if (treeResponse.status === 404) { setState("notFound"); return false; }
       if (!treeResponse.ok || !targetsResponse.ok || (definitionsResponse && !definitionsResponse.ok))
         throw new Error("Schedule lookup failed.");
       const tree = (await treeResponse.json() as { hierarchy: Hierarchy }).hierarchy;
@@ -182,7 +184,8 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
       setOpenDisciplines((previous) => previous ?? new Set(tree.disciplines.map((item) => item.id)));
       setOpenStages((previous) => previous ?? new Set(tree.disciplines.flatMap((item) => item.stages.map((stage) => stage.id))));
       setState("ready");
-    } catch { setState("error"); }
+      return true;
+    } catch { setState("error"); return false; }
   }, [base, canEdit, onAccessLost, workspace.id]);
 
   async function calculateWorkingPreview(startText: string, durationText: string) {
@@ -530,6 +533,32 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     setTargets((current) => current.filter((item) => item.id !== target.id));
   }
 
+  async function moveActivity(request: ActivityMoveRequest): Promise<"moved" | "unchanged" | "stale" | "invalid" | "forbidden" | "error"> {
+    if (!canEdit) return "forbidden";
+    if (movementSubmitting.current) return "error";
+    movementSubmitting.current = true;
+    try {
+      const result = await authenticatedFetch(`${base}/hierarchy/moves`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request)
+      });
+      if (result.status === 401 || result.status === 403) { onAccessLost(); return "forbidden"; }
+      if (result.status === 409) {
+        await load(false);
+        return "stale";
+      }
+      if (result.status === 400 || result.status === 404) return "invalid";
+      if (!result.ok) return "error";
+      const payload = await result.json() as { changed?: unknown; version?: unknown; operationId?: unknown };
+      if (typeof payload.changed !== "boolean" || !Number.isSafeInteger(payload.version) || Number(payload.version) < 1 ||
+          payload.changed && typeof payload.operationId !== "string") return "error";
+      if (!payload.changed) return "unchanged";
+      if (!(await load(false))) return "error";
+      try { await onSummaryRefresh?.(); } catch { /* The confirmed hierarchy refresh is authoritative for this view. */ }
+      return "moved";
+    } catch { return "error"; }
+    finally { movementSubmitting.current = false; }
+  }
+
   function changeDefinition(id: string) {
     const selected = definitions.find((definition) => definition.id === id);
     setDraft((previous) => previous ? { ...previous, definitionId: id,
@@ -731,6 +760,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
               if (row.kind === "discipline" || row.kind === "stage") toggle(row.id, row.kind);
             }} onEdit={editRow} onAdd={addChild} onAddDiscipline={() => startDiscipline()}
             onAddRootActivity={addRootActivity}
+            onMoveActivity={moveActivity}
             onRefresh={async () => {
               closeDraft();
               await load(false);

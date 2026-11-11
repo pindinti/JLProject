@@ -1,4 +1,7 @@
-import { type CSSProperties, type FormEvent, type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent, type FormEvent, type MouseEvent,
+  useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { activityParentStageId, activitySiblingIds, buildActivityMoveRequest,
+  type ActivityMoveRequest } from "../domain/activity-movement";
 import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateAtPosition,
   timelineInterval, timelinePosition, visibleScheduleRows,
   type ScheduleTarget, type ScheduleTree, type VisibleRow, type Zoom } from "../domain/schedule-workspace";
@@ -16,11 +19,16 @@ const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "nume
 const noCalendarImpacts: ActivityCalendarImpact[] = [];
 type CalendarYearSnapshot = { version: number; exceptions: CalendarExceptionDates[] };
 type DeletionTarget = { kind: "discipline" | "stage" | "activity"; id: string; label: string };
+type ActivityMoveOutcome = "moved" | "unchanged" | "stale" | "invalid" | "forbidden" | "error";
+type MoveDialogActivity = { id: string; label: string; sourceStageId: string | null;
+  destinationStageId: string | null; position: "start" | "end" };
+type DropTarget = { rowKey: string; stageId: string | null; index: number; position: "before" | "after" | "append" };
 
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
   onAddRootActivity,
   onRefresh, onHistory, onProductHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
+  onMoveActivity = async () => "error",
   userId, onAccessLost = () => undefined }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
   userId?: string | null;
@@ -31,6 +39,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   onAddDiscipline: () => void; onAddRootActivity?: () => void;
   onRefresh: () => void | Promise<void>; onProductHistory: () => void;
   onRescheduleHistory: () => void;
+  onMoveActivity?: (request: ActivityMoveRequest) => Promise<ActivityMoveOutcome>;
   onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
     targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
@@ -61,6 +70,15 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const deletionRequest = useRef(0);
   const deletionTrigger = useRef<HTMLButtonElement | null>(null);
   const deletionDialog = useRef<HTMLDivElement>(null);
+  const [draggedActivityId, setDraggedActivityId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const [moveDialog, setMoveDialog] = useState<MoveDialogActivity | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
+  const [moveFeedback, setMoveFeedback] = useState("");
+  const [moveFeedbackIsError, setMoveFeedbackIsError] = useState(false);
+  const moveSubmitting = useRef(false);
+  const moveTrigger = useRef<HTMLButtonElement | null>(null);
+  const moveDialogElement = useRef<HTMLDivElement>(null);
   const [calendarExceptionsByYear, setCalendarExceptionsByYear] = useState<Record<number, CalendarYearSnapshot | null>>({});
   const splitRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -70,6 +88,146 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const dragging = useRef(false);
   const rows = useMemo(() => visibleScheduleRows(product, tree, openDisciplines, openStages, productExpanded),
     [product, tree, openDisciplines, openStages, productExpanded]);
+  const dropRow = dropTarget ? rows.find((row) => row.key === dropTarget.rowKey) : undefined;
+  const dropAnnouncement = !dropTarget ? messages.activityMoveDragInstructions
+    : dropTarget.position === "before" ? messages.activityMoveDropBefore(dropRow?.label ?? "")
+      : dropTarget.position === "after" ? messages.activityMoveDropAfter(dropRow?.label ?? "")
+        : dropTarget.stageId === null ? messages.activityMoveDropAppendRoot
+          : messages.activityMoveDropAppendStage(dropRow?.label ?? "");
+  function dropTargetFor(row: VisibleRow, event?: DragEvent<HTMLDivElement>): DropTarget | null {
+    if (!canEdit || !draggedActivityId || moveBusy) return null;
+    let stageId: string | null;
+    let position: DropTarget["position"] = "append";
+    if (row.kind === "product") stageId = null;
+    else if (row.kind === "stage") stageId = row.id;
+    else if (row.kind === "activity") {
+      stageId = row.stageId ?? null;
+      if (row.id === draggedActivityId) return null;
+      position = event && event.clientY > event.currentTarget.getBoundingClientRect().top +
+        event.currentTarget.getBoundingClientRect().height / 2 ? "after" : "before";
+    } else return null;
+    const siblingIds = activitySiblingIds(tree, stageId);
+    if (!siblingIds) return null;
+    const remaining = siblingIds.filter((id) => id !== draggedActivityId);
+    if (row.kind === "activity") {
+      const targetIndex = remaining.indexOf(row.id);
+      if (targetIndex < 0) return null;
+      return { rowKey: row.key, stageId, index: targetIndex + (position === "after" ? 1 : 0), position };
+    }
+    return { rowKey: row.key, stageId, index: remaining.length, position };
+  }
+
+  async function submitActivityMove(activityId: string, stageId: string | null, index: number) {
+    if (!canEdit || moveSubmitting.current) return;
+    const request = buildActivityMoveRequest(tree, activityId, stageId, index);
+    if (!request) {
+      setMoveFeedback(messages.activityMoveInvalid);
+      setMoveFeedbackIsError(true);
+      return;
+    }
+    moveSubmitting.current = true;
+    setMoveBusy(true);
+    setMoveFeedback("");
+    setMoveFeedbackIsError(false);
+    try {
+      const outcome = await onMoveActivity(request);
+      if (outcome === "moved" || outcome === "unchanged") {
+        setMoveDialog(null);
+        setMoveFeedback(outcome === "moved" ? messages.activityMoveSuccess : messages.activityMoveUnchanged);
+        setMoveFeedbackIsError(false);
+        queueMicrotask(() => moveTrigger.current?.focus());
+      } else {
+        const message = outcome === "stale" ? messages.activityMoveStale
+          : outcome === "invalid" ? messages.activityMoveInvalid
+            : outcome === "forbidden" ? messages.activityMovePermissionError : messages.activityMoveError;
+        setMoveFeedback(message);
+        setMoveFeedbackIsError(true);
+      }
+    } catch {
+      setMoveFeedback(messages.activityMoveError);
+      setMoveFeedbackIsError(true);
+    } finally {
+      moveSubmitting.current = false;
+      setMoveBusy(false);
+      setDraggedActivityId(null);
+      setDropTarget(null);
+    }
+  }
+
+  function startActivityDrag(event: DragEvent<HTMLButtonElement>, row: VisibleRow) {
+    if (!canEdit || moveBusy || activityParentStageId(tree, row.id) === undefined) {
+      event.preventDefault();
+      return;
+    }
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", row.id);
+    setMoveFeedback("");
+    setMoveFeedbackIsError(false);
+    setDraggedActivityId(row.id);
+    setDropTarget(null);
+  }
+
+  function openActivityMoveDialog(row: VisibleRow, trigger: HTMLButtonElement) {
+    if (!canEdit || row.kind !== "activity" || moveBusy) return;
+    const sourceStageId = activityParentStageId(tree, row.id);
+    if (sourceStageId === undefined) {
+      setMoveFeedback(messages.activityMoveInvalid);
+      setMoveFeedbackIsError(true);
+      return;
+    }
+    moveTrigger.current = trigger;
+    setMoveFeedback("");
+    setMoveFeedbackIsError(false);
+    setMoveDialog({ id: row.id, label: row.label, sourceStageId,
+      destinationStageId: sourceStageId, position: "end" });
+  }
+
+  function closeActivityMoveDialog() {
+    if (moveBusy) return;
+    setMoveDialog(null);
+    queueMicrotask(() => moveTrigger.current?.focus());
+  }
+
+  function submitActivityMoveDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!moveDialog || moveBusy) return;
+    const siblingIds = activitySiblingIds(tree, moveDialog.destinationStageId);
+    const sourceStageId = activityParentStageId(tree, moveDialog.id);
+    if (!siblingIds || sourceStageId === undefined) {
+      setMoveFeedback(messages.activityMoveInvalid);
+      setMoveFeedbackIsError(true);
+      return;
+    }
+    const maximumIndex = siblingIds.length - (sourceStageId === moveDialog.destinationStageId ? 1 : 0);
+    const index = moveDialog.position === "start" ? 0 : maximumIndex;
+    void submitActivityMove(moveDialog.id, moveDialog.destinationStageId, index);
+  }
+
+  useEffect(() => {
+    if (!moveDialog) return;
+    const dialog = moveDialogElement.current;
+    queueMicrotask(() => dialog?.querySelector<HTMLElement>("select, button")?.focus());
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !moveSubmitting.current) {
+        event.preventDefault();
+        setMoveDialog(null);
+        queueMicrotask(() => moveTrigger.current?.focus());
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const controls = [...dialog.querySelectorAll<HTMLElement>("button:not(:disabled), select:not(:disabled)")];
+      if (controls.length === 0) return;
+      if (event.shiftKey && document.activeElement === controls[0]) {
+        event.preventDefault(); controls[controls.length - 1]?.focus();
+      } else if (!event.shiftKey && document.activeElement === controls[controls.length - 1]) {
+        event.preventDefault(); controls[0]?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [moveDialog]);
+
   const scale = useMemo(() => {
     const previewBounds = { ...bounds };
     for (const impact of calendarImpacts) {
@@ -355,6 +513,11 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
 
   const style = { "--table-width": `${tableWidth}%` } as CSSProperties;
   return <section className="schedule-workspace" data-density="compact" aria-label={messages.scheduleWorkspace}>
+    {moveFeedback && <p className={moveFeedbackIsError ? "activity-move-feedback activity-move-feedback--error" : "activity-move-feedback"}
+      role={moveFeedbackIsError ? "alert" : "status"}>{moveFeedback}</p>}
+    {draggedActivityId && <p className="activity-move-live" role="status" aria-live="polite">
+      {dropAnnouncement}
+    </p>}
     <div className="workspace-controls">
       <div className="workspace-toolbar-actions">
         {canEdit && <button type="button" onClick={onAddDiscipline}>{messages.addDiscipline}</button>}
@@ -436,8 +599,35 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       </div>
       <div className="workspace-body">
         <div className="workspace-table-rows" role="table" aria-label={messages.scheduleTable} tabIndex={-1}>
-          {rows.map((row) => <div key={row.key} className={`workspace-table-row row-${row.kind}${selected === row.key ? " selected" : ""}`}
-            data-row-key={row.key} role="row" aria-selected={selected === row.key}>
+          {rows.map((row) => {
+            const isDropTarget = dropTarget?.rowKey === row.key;
+            const dropClass = isDropTarget ? ` drop-${dropTarget.position}` : "";
+            return <div key={row.key} className={`workspace-table-row row-${row.kind}${selected === row.key ? " selected" : ""}${dropClass}`}
+              data-row-key={row.key} role="row" aria-selected={selected === row.key}
+              onDragOver={(event) => {
+                const candidate = dropTargetFor(row, event);
+                if (!candidate) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                setDropTarget(candidate);
+              }}
+              onDragLeave={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+                setDropTarget((current) => current?.rowKey === row.key ? null : current);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const candidate = dropTargetFor(row, event);
+                if (candidate && draggedActivityId)
+                  void submitActivityMove(draggedActivityId, candidate.stageId, candidate.index);
+                else if (draggedActivityId) {
+                  setMoveFeedback(messages.activityMoveInvalid);
+                  setMoveFeedbackIsError(true);
+                }
+                setDraggedActivityId(null);
+                setDropTarget(null);
+              }}>
             <div role="cell" className="workspace-name-cell" style={{ paddingLeft: `${
               row.kind === "activity" && !row.disciplineId ? 12
                 : ({ product: 0, discipline: 12, stage: 27, activity: 42 })[row.kind]
@@ -453,6 +643,16 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
               {row.color && <span className="color-chip" style={{ backgroundColor: row.color }}
                 aria-label={messages.scheduleColor(row.color)} />}
               <span className="workspace-inline-actions">
+                {canEdit && row.kind === "activity" && <button type="button" className="workspace-icon-action workspace-icon-action--move"
+                  draggable={!moveBusy} disabled={moveBusy}
+                  aria-label={messages.activityMoveHandle(row.label)} title={messages.activityMoveHandle(row.label)}
+                  onClick={(event) => { event.stopPropagation(); openActivityMoveDialog(row, event.currentTarget); }}
+                  onDragStart={(event) => startActivityDrag(event, row)}
+                  onDragEnd={() => { setDraggedActivityId(null); setDropTarget(null); }}>
+                  <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><circle cx="7" cy="5" r="1" />
+                    <circle cx="13" cy="5" r="1" /><circle cx="7" cy="10" r="1" /><circle cx="13" cy="10" r="1" />
+                    <circle cx="7" cy="15" r="1" /><circle cx="13" cy="15" r="1" /></svg>
+                </button>}
                 {canEdit && row.kind === "product" && onAddRootActivity && <button type="button" className="workspace-icon-action"
                   aria-label={messages.addActivity} title={messages.addActivity}
                   onClick={() => { setSelected(row.key); onAddRootActivity(); }}>
@@ -487,6 +687,8 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
                 onDoubleClick={() => { if (canEdit) { setSelected(row.key); onEdit(row); } }}>
                 {row.label}{row.code ? ` (${row.code})` : ""}
               </button>
+              {draggedActivityId && row.kind === "product" && <span className="workspace-drop-hint">{messages.activityMoveRootTarget}</span>}
+              {draggedActivityId && row.kind === "stage" && <span className="workspace-drop-hint">{messages.activityMoveStageTarget}</span>}
             </div>
             <span role="cell" className="workspace-date-cell" onDoubleClick={() => {
               if (canEdit) { setSelected(row.key); onEdit(row); }
@@ -494,7 +696,8 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
             <span role="cell" className="workspace-date-cell" onDoubleClick={() => {
               if (canEdit) { setSelected(row.key); onEdit(row); }
             }}>{formatCivilDate(row.end)}</span>
-          </div>)}
+          </div>;
+          })}
         </div>
         <div className="workspace-divider" role="separator" tabIndex={0} aria-orientation="vertical"
           aria-label={messages.resizeSchedulePanes} aria-valuemin={30} aria-valuemax={70} aria-valuenow={tableWidth}
@@ -558,6 +761,38 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       initialDate={selectedDate ?? today} canEdit={canEdit} userId={userId}
       onClose={() => setTargetDialog(null)} onCreate={onCreateTarget} onUpdate={onUpdateTarget}
       onDelete={onDeleteTarget} />}
+    {moveDialog && <div className="activity-move-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !moveBusy) closeActivityMoveDialog();
+    }}>
+      <div ref={moveDialogElement} className="activity-move-dialog" role="dialog" aria-modal="true"
+        aria-labelledby="activity-move-title" aria-describedby="activity-move-description">
+        <h2 id="activity-move-title">{messages.activityMoveDialogTitle}</h2>
+        <p className="activity-move-dialog__target">{moveDialog.label}</p>
+        <p id="activity-move-description">{messages.activityMoveDialogDescription}</p>
+        <form onSubmit={submitActivityMoveDialog}>
+          <label htmlFor="activity-move-destination">{messages.activityMoveDestination}</label>
+          <select id="activity-move-destination" value={moveDialog.destinationStageId ?? "root"} disabled={moveBusy}
+            onChange={(event) => setMoveDialog((current) => current ? { ...current,
+              destinationStageId: event.target.value === "root" ? null : event.target.value } : null)}>
+            <option value="root">{messages.activityMoveProductRoot}</option>
+            {tree.disciplines.flatMap((discipline) => discipline.stages.map((stage) =>
+              <option key={stage.id} value={stage.id}>{discipline.name} — {stage.displayName}</option>))}
+          </select>
+          <label htmlFor="activity-move-position">{messages.activityMovePosition}</label>
+          <select id="activity-move-position" value={moveDialog.position} disabled={moveBusy}
+            onChange={(event) => setMoveDialog((current) => current ? { ...current,
+              position: event.target.value as "start" | "end" } : null)}>
+            <option value="start">{messages.activityMoveStart}</option>
+            <option value="end">{messages.activityMoveEnd}</option>
+          </select>
+          {moveBusy && <p role="status">{messages.activityMoveSubmitting}</p>}
+          <div className="activity-move-dialog__actions">
+            <button type="button" disabled={moveBusy} onClick={closeActivityMoveDialog}>{messages.cancel}</button>
+            <button type="submit" disabled={moveBusy}>{moveBusy ? messages.activityMoveSubmitting : messages.activityMoveConfirm}</button>
+          </div>
+        </form>
+      </div>
+    </div>}
     {deletionTarget && <div className="schedule-deletion-backdrop" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !deletionBusy) {
         deletionRequest.current++;

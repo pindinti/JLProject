@@ -34,6 +34,9 @@ const rootA = { ...a, id: rootActivity, stageId: null, name: "Root activity",
 
 function repository(): ScheduleRepository {
   return {
+    moveHierarchyItem: vi.fn(async (_ws, _product, _actor, operationId, input) => ({
+      status: "moved" as const, operationId, version: input.expectedVersion + 1
+    })),
     previewDeletion: vi.fn(async () => ({ status: "ok" as const,
       fingerprint: "a".repeat(32), counts: { disciplines: 1, stages: 2, activities: 3 } })),
     deleteSubtree: vi.fn(async (_ws, _product, _actor, operationId) => ({ status: "deleted" as const,
@@ -123,6 +126,39 @@ async function call(input: Request, role: WorkspaceRole | null, repo = repositor
 }
 
 describe("schedule hierarchy API", () => {
+  const movePath = `${base}/hierarchy/moves`;
+  const moveBody = { kind: "activity", targetId: activity, expectedVersion: 1,
+    destinationDisciplineId: null, destinationStageId: null, destinationIndex: 0,
+    expectedSourceOrder: [activity], expectedDestinationOrder: [] };
+
+  it("moves a hierarchy item atomically with server-derived actor and operation IDs", async () => {
+    const repo = repository();
+    const result = await call(request(movePath, "POST", moveBody), "editor", repo);
+    expect(result.status).toBe(200);
+    await expect(result.json()).resolves.toMatchObject({ changed: true, version: 2,
+      operationId: expect.any(String) });
+    expect(repo.moveHierarchyItem).toHaveBeenCalledWith(ws, product, actor, expect.any(String), moveBody);
+  });
+
+  it("rejects unauthorized, malformed, stale, conflicting, and failed hierarchy moves", async () => {
+    const repo = repository();
+    expect((await call(request(movePath, "POST", moveBody), "viewer", repo)).status).toBe(403);
+    expect((await call(request(movePath, "POST", { ...moveBody, actorId: actor }), "admin", repo)).status).toBe(400);
+    expect((await call(request(movePath, "POST", { ...moveBody,
+      destinationDisciplineId: discipline }), "admin", repo)).status).toBe(400);
+    expect((await call(request(movePath, "POST", { ...moveBody,
+      expectedSourceOrder: [activity, activity] }), "admin", repo)).status).toBe(400);
+    expect(repo.moveHierarchyItem).not.toHaveBeenCalled();
+    vi.mocked(repo.moveHierarchyItem).mockResolvedValueOnce({ status: "stale" });
+    expect((await call(request(movePath, "POST", moveBody), "admin", repo)).status).toBe(409);
+    vi.mocked(repo.moveHierarchyItem).mockResolvedValueOnce({ status: "conflict" });
+    expect((await call(request(movePath, "POST", moveBody), "admin", repo)).status).toBe(409);
+    vi.mocked(repo.moveHierarchyItem).mockRejectedValueOnce(new Error("private movement detail"));
+    const failed = await call(request(movePath, "POST", moveBody), "admin", repo);
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain("private movement detail");
+  });
+
   const previewPath = `${base}/hierarchy/deletion-preview?kind=discipline&targetId=${discipline}`;
   const deletePath = `${base}/hierarchy/deletions`;
   const deletionBody = { kind: "discipline", targetId: discipline,
@@ -399,6 +435,28 @@ describe("schedule hierarchy API", () => {
     expect(next.status).toBe(200);
     expect(repo.listProductChangeHistory).toHaveBeenLastCalledWith(ws, product, actor, 1,
       { occurredAt: "2026-11-10T12:00:00.000000Z", eventId: `activity-date:${targetId}` });
+  });
+
+  it("serves hierarchy movement events through the same viewer-authorized history cursor", async () => {
+    const repo = repository();
+    const eventId = `hierarchy-movement:${activity}`;
+    const occurredAt = "2026-11-11T18:14:22.000000Z";
+    vi.mocked(repo.listProductChangeHistory).mockResolvedValueOnce({ status: "ok", events: [{
+      id: eventId, occurredAt, actorId: actor, actorName: "Synthetic Actor", eventType: "hierarchy_moved",
+      item: { kind: "activity", id: activity, name: "Synthetic activity",
+        hierarchy: { scope: "product_root" } }, justification: null,
+      before: { parent: { scope: "stage", discipline: "Synthetic discipline", stage: "Synthetic stage" }, position: 2 },
+      after: { parent: { scope: "product_root" }, position: 1 }, affectedItems: []
+    }], nextCursor: { occurredAt, eventId } });
+
+    const result = await call(request(`${base}/change-history?limit=1`), "viewer", repo);
+    expect(result.status).toBe(200);
+    const page = await result.json() as { events: Array<Record<string, unknown>>; nextCursor: string };
+    expect(page.events).toMatchObject([{ id: eventId, eventType: "hierarchy_moved", actorId: actor,
+      item: { kind: "activity", id: activity, hierarchy: { scope: "product_root" } },
+      before: { parent: { stage: "Synthetic stage" }, position: 2 }, after: { parent: { scope: "product_root" }, position: 1 } }]);
+    expect(page.nextCursor).toBe(`${occurredAt}~${eventId}`);
+    expect(repo.listProductChangeHistory).toHaveBeenCalledWith(ws, product, actor, 1, null);
   });
 
   it("rejects malformed pagination and client actor claims before querying history", async () => {
