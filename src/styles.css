@@ -476,6 +476,40 @@ form button {
 .change-history-dialog__close { flex: 0 0 2.25rem; width: 2.25rem; min-height: 2.25rem; padding: 0; border: 1px solid var(--jl-border); border-radius: var(--jl-radius-sm); background: var(--jl-surface); color: var(--jl-text); font-size: 1.25rem; }
 .change-history-dialog__body { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.8rem 1rem; }
 .change-history-dialog__footer { position: sticky; z-index: 1; bottom: 0; min-width: 0; padding: 0.7rem 1rem; border-top: 1px solid var(--jl-border); background: var(--jl-surface); }
+.change-history-dialog.product-history-dialog { width: min(48rem, calc(100vw - 2rem)); }
+.product-history__coverage,.product-history__scope { margin: 0 0 var(--jl-space-2); padding: var(--jl-space-2) var(--jl-space-3); border-radius: var(--jl-radius-sm); background: var(--jl-info-bg); color: var(--jl-info); font-size: var(--jl-font-size-xs); overflow-wrap: anywhere; }
+.product-history__scope { background: var(--jl-surface-alt); color: var(--jl-text-muted); }
+.product-history__filter { display: inline-block; margin: 0 var(--jl-space-2) var(--jl-space-3) 0; font-size: var(--jl-font-size-sm); font-weight: 600; }
+.product-history-dialog select { width: auto; max-width: 100%; min-height: 2.25rem; margin-bottom: var(--jl-space-3); padding: 0.3rem 0.55rem; border: 1px solid var(--jl-border-strong); border-radius: var(--jl-radius-sm); background: var(--jl-surface); color: var(--jl-text); }
+.product-history__list { display: grid; gap: var(--jl-space-2); min-width: 0; margin: 0; padding: 0; list-style: none; }
+.product-history__event { min-width: 0; padding: var(--jl-space-2) var(--jl-space-3); border: 1px solid var(--jl-border); border-radius: var(--jl-radius-md); background: var(--jl-surface); overflow-wrap: anywhere; }
+.product-history__event-header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--jl-space-1) var(--jl-space-2); min-width: 0; }
+.product-history__event-main { display: flex; flex: 1 1 auto; align-items: baseline; flex-wrap: wrap; gap: 0.15rem var(--jl-space-3); min-width: 0; }
+.product-history__event-main time,.product-history__event-main > span { color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
+.product-history__event-main time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.product-history__item-name { min-width: 0; overflow-wrap: anywhere; }
+.product-history__event-type { flex: 0 0 auto; max-width: 100%; padding: 0.15rem 0.45rem; border-radius: var(--jl-radius-sm); background: var(--jl-surface-alt); color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); font-weight: 600; overflow-wrap: anywhere; }
+.product-history__hierarchy { display: block; margin: 0.1rem 0 0; color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); overflow-wrap: anywhere; }
+.product-history__justification { margin: var(--jl-space-1) 0 0; font-size: var(--jl-font-size-sm); overflow-wrap: anywhere; }
+.product-history__details { margin-top: var(--jl-space-1); }
+.product-history__details summary { width: fit-content; max-width: 100%; cursor: pointer; color: var(--jl-primary); font-size: var(--jl-font-size-sm); font-weight: 600; }
+.product-history__affected-items,.product-history__activity-changes { display: grid; gap: var(--jl-space-1); min-width: 0; margin: var(--jl-space-1) 0 0; padding: 0; list-style: none; }
+.product-history__affected-items li,.product-history__activity-changes li { min-width: 0; padding: var(--jl-space-1) 0; border-top: 1px solid var(--jl-border); overflow-wrap: anywhere; }
+.product-history__affected-items strong,.product-history__activity-changes strong { display: block; }
+.product-history__value-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--jl-space-2); margin-top: var(--jl-space-1); }
+.product-history__value-columns section { min-width: 0; padding: var(--jl-space-2); border: 1px solid var(--jl-border); border-radius: var(--jl-radius-sm); }
+.product-history__value-columns h3 { margin: 0 0 var(--jl-space-1); color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
+.product-history__value-columns dl { min-width: 0; margin: 0; }
+.product-history__value-columns dl div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.15rem var(--jl-space-2); }
+.product-history__value-columns dl div dt { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); }
+.product-history__value-columns dl div dd { margin: 0; font-variant-numeric: tabular-nums; }
+.product-history__date-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--jl-space-2); margin-top: var(--jl-space-1); color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); font-variant-numeric: tabular-nums; }
+.product-history__date-comparison span { min-width: 0; overflow-wrap: anywhere; }
+.product-history__date-comparison small { display: block; font-size: var(--jl-font-size-xs); }
+.product-history__activity-changes > li > small { display: block; color: var(--jl-text-muted); }
+.product-history__footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--jl-space-2); }
+.product-history__footer > span { flex: 1 1 18rem; color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); overflow-wrap: anywhere; }
+.product-history__footer > div { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: var(--jl-space-2); }
 .reschedule-history__provisional { margin: 0 0 0.65rem; padding: 0.55rem 0.7rem; border-radius: var(--jl-radius-sm); background: var(--jl-info-bg); color: var(--jl-info); font-size: var(--jl-font-size-sm); }
 .reschedule-history__feedback { margin: 0 0 0.65rem; color: var(--jl-danger); font-weight: 600; }
 .reschedule-history__list { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
@@ -838,10 +872,8 @@ form button {
 .schedule-drawer { width: min(100%, 28rem); height: 100%; overflow-y: auto; background: #fff; box-shadow: -0.5rem 0 1.5rem rgb(0 0 0 / 20%); padding: 1.25rem; }
 .schedule-drawer .hierarchy-form { border: 0; margin: 0; padding: 0; }
 .schedule-drawer__footer { position: sticky; bottom: -1.25rem; z-index: 2; display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1rem -1.25rem -1.25rem; padding: 0.65rem 1.25rem 1.25rem; border-top: 1px solid #d5e0e7; background: rgb(255 255 255 / 96%); }
-.schedule-date-form,
-.schedule-history { border-top: 1px solid #cbd6de; margin-top: 1rem; padding-top: 1rem; }
-.schedule-date-form h4,
-.schedule-history h4 { margin: 0; }
+.schedule-date-form { border-top: 1px solid #cbd6de; margin-top: 1rem; padding-top: 1rem; }
+.schedule-date-form h4 { margin: 0; }
 .schedule-date-form p { margin: 0.2rem 0; }
 .schedule-date-form textarea { min-height: 5rem; }
 .working-day-preview { margin: 0.35rem 0 0.75rem; padding: 0.65rem 0.75rem; border-radius: 0.5rem;
@@ -849,10 +881,6 @@ form button {
 .working-day-preview p { margin: 0.2rem 0; }
 .working-day-preview ul { max-height: 10rem; overflow: auto; margin: 0.4rem 0 0; padding-left: 1.25rem; }
 .working-day-preview__warning { color: var(--color-warning-text, #694c00); }
-.schedule-history ol { padding-left: 1.25rem; }
-.schedule-history li { margin-bottom: 1rem; overflow-wrap: anywhere; }
-.schedule-history li p { margin: 0.35rem 0; }
-
 @media (max-width: 70rem) {
   .workspace-table-header,
   .workspace-table-row { grid-template-columns: minmax(0, 1fr) 5.6rem 5.6rem; }
@@ -867,6 +895,8 @@ form button {
   .change-history-backdrop { padding: 0.4rem; }
   .change-history-dialog { width: calc(100vw - 0.8rem); max-height: 96dvh; }
   .change-history-dialog__header,.change-history-dialog__body,.change-history-dialog__footer { padding-inline: 0.7rem; }
+  .product-history__footer { align-items: flex-start; }
+  .product-history__footer > div { flex: 1 1 100%; justify-content: flex-end; }
   .reschedule-history__dates { grid-template-columns: minmax(0, 1fr); }
   .calendar-impact-panel {
     top: 5rem;
@@ -894,6 +924,14 @@ form button {
   .mobile-gantt .workspace-table-header,
   .mobile-gantt .workspace-table-rows { display: none; }
   .application-card:has(.schedule-editor) { padding: 0.4rem; }
+}
+
+@media (max-width: 40rem) {
+  .product-history__filter { display: block; margin-bottom: var(--jl-space-1); }
+  .product-history-dialog select { width: 100%; }
+  .product-history__value-columns,.product-history__date-comparison { grid-template-columns: minmax(0, 1fr); }
+  .product-history__footer > div { justify-content: stretch; }
+  .product-history__footer > div button { flex: 1 1 auto; }
 }
 
 @media (max-height: 34rem) {

@@ -5,6 +5,7 @@ import { ColorField } from "./ColorField";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { ScheduleWorkspace } from "./ScheduleWorkspace";
 import { CalendarRescheduleHistoryDialog } from "./CalendarRescheduleHistoryDialog";
+import { ProductChangeHistoryDialog } from "./ProductChangeHistoryDialog";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
 import { dayNumber } from "../domain/schedule-workspace";
 import type { ActivityCalendarImpact } from "../domain/calendar-impact";
@@ -44,12 +45,7 @@ interface DateDraft {
   originalPlanningMode: "manual" | "working_days"; originalWorkingDays: number | null;
   originalCalendarVersion: number | null;
 }
-interface HistorySubject { id: string; disciplineId: string; stageId: string; name: string }
 interface CalendarImpactResponse { calendarVersion: number; impacts: ActivityCalendarImpact[] }
-interface DateChange { operationId: string; changedAt: string; previousStart: string | null;
-  previousEnd: string | null; newStart: string; newEnd: string; reason: string }
-const auditDate = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo",
-  day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 type DraftKind = "discipline" | "stage" | "activity";
 interface Draft {
   kind: DraftKind; id?: string; disciplineId?: string; stageId?: string; version?: number;
@@ -109,9 +105,8 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   const [workingPreview, setWorkingPreview] = useState<WorkingPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const workingPreviewRequest = useRef(0);
-  const [historySubject, setHistorySubject] = useState<HistorySubject | null>(null);
-  const [history, setHistory] = useState<DateChange[]>([]);
-  const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("loading");
+  const [productHistoryOpen, setProductHistoryOpen] = useState(false);
+  const [productHistoryActivity, setProductHistoryActivity] = useState<{ id: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [impactState, setImpactState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -130,7 +125,6 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   const impactTriggerRef = useRef<HTMLElement | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
-  const historyRequest = useRef(0);
   const canEdit = product.active && (workspace.role === "admin" || workspace.role === "editor");
   const base = `/api/workspaces/${workspace.id}/products/${product.id}`;
 
@@ -158,22 +152,6 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
         item.proposedStartDate !== item.currentStartDate || item.proposedEndDate !== item.currentEndDate);
       if (!hasDateChange) setImpactOpen(false);
     } catch { if (requestId === impactRequest.current) setImpactState("error"); }
-  }, [base, onAccessLost]);
-
-  const loadHistory = useCallback(async (subject: HistorySubject) => {
-    const requestId = ++historyRequest.current;
-    setHistoryState("loading");
-    try {
-      const result = await authenticatedFetch(`${base}/disciplines/${subject.disciplineId}/stages/${subject.stageId}/activities/${subject.id}/date-history`);
-      if (requestId !== historyRequest.current) return;
-      if (result.status === 401 || result.status === 403) { onAccessLost(); return; }
-      if (!result.ok) throw new Error("History lookup failed.");
-      const changes = (await result.json() as { changes: DateChange[] }).changes;
-      if (!Array.isArray(changes)) throw new Error("Invalid history response.");
-      if (requestId !== historyRequest.current) return;
-      setHistory(changes);
-      setHistoryState("ready");
-    } catch { if (requestId === historyRequest.current) setHistoryState("error"); }
   }, [base, onAccessLost]);
 
   const load = useCallback(async (showLoading = true) => {
@@ -241,11 +219,9 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   }, []);
 
   const closeDraft = useCallback(() => {
-    historyRequest.current++;
     setDraft(null);
     setDateDraft(null);
     clearWorkingPreview();
-    setHistorySubject(null);
     setFeedback("");
     queueMicrotask(() => previousFocus.current?.focus());
   }, [clearWorkingPreview]);
@@ -254,8 +230,6 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   useEffect(() => {
     if (state === "ready" && hierarchy) queueMicrotask(() => void refreshImpacts());
   }, [state, hierarchy, refreshImpacts]);
-  useEffect(() => { if (historySubject) queueMicrotask(() => void loadHistory(historySubject)); }, [historySubject, loadHistory]);
-
   useEffect(() => {
     if (!impactOpen || impactConfirmOpen) return;
     queueMicrotask(() => impactPanelRef.current?.querySelector<HTMLElement>("button")?.focus());
@@ -293,7 +267,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   }, [impactConfirmOpen, impactBusy]);
 
   useEffect(() => {
-    if (!draft && !historySubject) return;
+    if (!draft) return;
     queueMicrotask(() => {
       if (!drawerRef.current?.contains(document.activeElement))
         drawerRef.current?.querySelector<HTMLElement>(draft ? "input, select, textarea" : "button")?.focus();
@@ -309,7 +283,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [draft, historySubject, busy, closeDraft]);
+  }, [draft, busy, closeDraft]);
 
   function rememberFocus() {
     previousFocus.current = document.activeElement as HTMLElement | null;
@@ -329,7 +303,6 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
     rememberFocus();
     setDateDraft(null);
     clearWorkingPreview();
-    setHistorySubject(null);
     setFeedback("");
     setDraft(item ? { ...initialDraft("discipline"), id: item.id, version: item.version,
       name: item.name, shortCode: item.shortCode, color: item.color,
@@ -340,7 +313,6 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
     rememberFocus();
     setDateDraft(null);
     clearWorkingPreview();
-    setHistorySubject(null);
     const match = item && definitions.find((definition) => definition.code.toLowerCase() === item.code.toLowerCase());
     setFeedback("");
     setDraft(item ? { ...initialDraft("stage"), id: item.id, version: item.version, disciplineId,
@@ -351,11 +323,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   function startActivity(disciplineId: string, stageId: string, item?: Activity) {
     rememberFocus();
     setFeedback("");
-    historyRequest.current++;
-    setHistory([]);
-    setHistoryState("loading");
     clearWorkingPreview();
-    setHistorySubject(item ? { id: item.id, disciplineId, stageId, name: item.name } : null);
     setDateDraft(item ? { originalStart: formatCivilDate(item.plannedStart),
       originalEnd: formatCivilDate(item.plannedEnd), plannedStart: item.plannedStart ? formatCivilDate(item.plannedStart) : "",
       plannedEnd: item.plannedEnd ? formatCivilDate(item.plannedEnd) : "", reason: "", version: item.version,
@@ -443,7 +411,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
 
   async function saveDates(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft?.id || !dateDraft || !historySubject || !canEdit || busy) return;
+    if (!draft?.id || !draft.disciplineId || !draft.stageId || !dateDraft || !canEdit || busy) return;
     const start = parseBrazilianDate(dateDraft.plannedStart);
     const workingMode = dateDraft.planningMode === "working_days";
     const end = workingMode && previewMatches(workingPreview, dateDraft.plannedStart, dateDraft.workingDays)
@@ -472,7 +440,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
     setBusy(true);
     setFeedback("");
     try {
-      const endpoint = `${base}/disciplines/${historySubject.disciplineId}/stages/${historySubject.stageId}/activities/${historySubject.id}`;
+      const endpoint = `${base}/disciplines/${draft.disciplineId}/stages/${draft.stageId}/activities/${draft.id}`;
       const result = await authenticatedFetch(`${endpoint}/${workingMode ? "working-plan" : "dates"}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(workingMode
@@ -502,7 +470,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
         originalCalendarVersion: updated.planningCalendarVersion });
       clearWorkingPreview();
       setFeedback(dateChanged ? messages.dateChangeSaved : messages.activityPlanSaved);
-      await Promise.all([load(false), loadHistory(historySubject)]);
+      await load(false);
     } catch { setFeedback(messages.scheduleSaveError); }
     finally { setBusy(false); }
   }
@@ -603,13 +571,11 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
   function openHistory(row: VisibleRow) {
     if (row.kind !== "activity" || !row.disciplineId || !row.stageId) return;
     rememberFocus();
-    historyRequest.current++;
-    setHistory([]);
-    setHistoryState("loading");
     setDraft(null);
     setDateDraft(null);
     setFeedback("");
-    setHistorySubject({ id: row.id, disciplineId: row.disciplineId, stageId: row.stageId, name: row.label });
+    setProductHistoryActivity({ id: row.id, name: row.label });
+    setProductHistoryOpen(true);
   }
 
   const impactRows = useMemo(() => (impactData?.impacts ?? []).map((impact) => ({
@@ -736,6 +702,7 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
               await load(false);
               await onSummaryRefresh?.();
             }} onHistory={openHistory}
+            onProductHistory={() => { setProductHistoryActivity(null); setProductHistoryOpen(true); }}
             onRescheduleHistory={() => setRescheduleHistoryOpen(true)}
             onCreateTarget={createTarget} onUpdateTarget={updateTarget} onDeleteTarget={deleteTarget}
             onAccessLost={onAccessLost} />
@@ -857,10 +824,16 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
           </div>
         </div>
       </div>}
+      {productHistoryOpen && state === "ready" && <ProductChangeHistoryDialog
+        key={productHistoryActivity?.id ?? "product"} base={base} activity={productHistoryActivity ?? undefined}
+        onAccessLost={onAccessLost} onClose={() => {
+          setProductHistoryOpen(false);
+          setProductHistoryActivity(null);
+        }} />}
       {rescheduleHistoryOpen && state === "ready" && <CalendarRescheduleHistoryDialog base={base} hierarchy={hierarchy}
         canEdit={canEdit} onClose={() => setRescheduleHistoryOpen(false)} onAccessLost={onAccessLost}
         onReversed={async () => { await load(false); await refreshImpacts(); }} />}
-      {((draft && canEdit) || historySubject) && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
+      {draft && canEdit && <div className="schedule-drawer-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) closeDraft();
       }}><div ref={drawerRef} className="schedule-drawer" role="dialog" aria-modal="true"
         aria-labelledby="schedule-drawer-title">{draft && canEdit && <form className="hierarchy-form" onSubmit={(event) => void save(event)}>
@@ -999,21 +972,6 @@ export function ScheduleEditor({ workspace, product, onBack, onAccessLost, onSum
       {feedback && <div role="alert" className="feedback"><p>{feedback}</p>
         {feedback === messages.scheduleConflict && <button type="button" onClick={() => { closeDraft(); void load(false); }}>{messages.refreshHierarchy}</button>}
       </div>}
-      {historySubject && <section className="schedule-history" aria-label={messages.activityDateHistory}>
-        {!draft && <h3 id="schedule-drawer-title">{messages.activityDateHistory}: {historySubject.name}</h3>}
-        {draft && <h4>{messages.activityDateHistory}</h4>}
-        {historyState === "loading" && <p role="status">{messages.historyLoading}</p>}
-        {historyState === "error" && <div role="alert"><p>{messages.historyError}</p>
-          <button type="button" onClick={() => void loadHistory(historySubject)}>{messages.retry}</button></div>}
-        {historyState === "ready" && (history.length === 0 ? <p>{messages.historyEmpty}</p> :
-          <ol>{history.map((change) => <li key={change.operationId}>
-            <time dateTime={change.changedAt}>{auditDate.format(new Date(change.changedAt))}</time>
-            <p>{messages.historyEntry(messages.dateRange(formatCivilDate(change.previousStart), formatCivilDate(change.previousEnd)),
-              messages.dateRange(formatCivilDate(change.newStart), formatCivilDate(change.newEnd)))}</p>
-            <p>{change.reason}</p>
-          </li>)}</ol>)}
-        {!draft && <button type="button" className="back-button" onClick={closeDraft}>{messages.closeHistory}</button>}
-      </section>}
       </div></div>}
     </section>
   );

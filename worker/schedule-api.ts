@@ -6,12 +6,13 @@ import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
   type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type Mutation,
-  type ScheduleRepository, type StageInput } from "./schedule-repository";
+  type ProductChangeHistoryCursor, type ScheduleRepository, type StageInput } from "./schedule-repository";
 
-const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|targets|disciplines)(?:\/(.*))?$/;
+const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|change-history|targets|disciplines)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const eventCursorId = /^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "product_change_history" | "targets" | "target" | "disciplines" | "stages" | "activities" | "activity_dates" | "activity_history" | "activity_working_plan";
   disciplineId?: string; stageId?: string; activityId?: string; targetId?: string; operationId?: string };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
 
@@ -36,6 +37,8 @@ function parseRoute(pathname: string): Route | null {
     return operation ? { workspaceId, productId, kind: "calendar_reschedule_reverse",
       operationId: operation[1] } : null;
   }
+  if (root === "change-history") return remainder
+    ? null : { workspaceId, productId, kind: "product_change_history" };
   if (root === "targets") return !remainder ? { workspaceId, productId, kind: "targets" }
     : /^[^/]+$/.test(remainder) ? { workspaceId, productId, kind: "target", targetId: remainder } : null;
   const parts = remainder?.split("/") ?? [];
@@ -54,6 +57,30 @@ function parseRoute(pathname: string): Route | null {
   if (parts.length === 6 && parts[5] === "working-plan")
     return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activity_working_plan" };
   return null;
+}
+
+function validCursorTimestamp(value: string): boolean {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z$/);
+  if (!match) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fraction] = match;
+  const year = Number(yearText); const month = Number(monthText); const day = Number(dayText);
+  const hour = Number(hourText); const minute = Number(minuteText); const second = Number(secondText);
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second, Number(fraction!.slice(0, 3))));
+  return year >= 1900 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day && date.getUTCHours() === hour && date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second;
+}
+
+function decodeHistoryCursor(value: string): ProductChangeHistoryCursor | null {
+  const separator = value.indexOf("~");
+  if (separator < 1 || separator !== value.lastIndexOf("~")) return null;
+  const occurredAt = value.slice(0, separator);
+  const eventId = value.slice(separator + 1);
+  return validCursorTimestamp(occurredAt) && eventCursorId.test(eventId) ? { occurredAt, eventId } : null;
+}
+
+function encodeHistoryCursor(cursor: ProductChangeHistoryCursor): string {
+  return `${cursor.occurredAt}~${cursor.eventId}`;
 }
 
 export function isScheduleRoute(pathname: string): boolean { return parseRoute(pathname) !== null; }
@@ -334,6 +361,30 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
       return response({ error: "Não foi possível consultar o histórico." }, 400);
     } catch { return response({ error: "Não foi possível carregar o histórico de reprogramações." }, 503); }
+  }
+  if (route.kind === "product_change_history" && request.method === "GET") {
+    const params = new URL(request.url).searchParams;
+    const allowed = new Set(["limit", "cursor"]);
+    if ([...params.keys()].some((key) => !allowed.has(key)) ||
+        params.getAll("limit").length > 1 || params.getAll("cursor").length > 1 ||
+        (params.has("limit") && !/^\d{1,3}$/.test(params.get("limit") ?? "")) ||
+        (params.has("cursor") && (params.get("cursor") ?? "").length > 256))
+      return response({ error: "Parâmetros de paginação inválidos." }, 400);
+    const limit = params.has("limit") ? Number(params.get("limit")) : 25;
+    const cursorValue = params.get("cursor");
+    const cursor = cursorValue === null ? null : decodeHistoryCursor(cursorValue);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+        (cursorValue !== null && !cursor))
+      return response({ error: "Parâmetros de paginação inválidos." }, 400);
+    try {
+      const result = await repository.listProductChangeHistory(ws, productId, identity.subject,
+        limit, cursor);
+      if (result.status === "ok") return response({ events: result.events,
+        nextCursor: result.nextCursor ? encodeHistoryCursor(result.nextCursor) : null }, 200);
+      if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
+      if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
+      return response({ error: "Consulta inválida." }, 400);
+    } catch { return response({ error: "Não foi possível carregar o histórico do produto." }, 503); }
   }
   if (route.kind === "calendar_impact_apply" && request.method === "POST") {
     const value = await body(request);

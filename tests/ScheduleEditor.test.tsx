@@ -35,8 +35,8 @@ function setup(tree: { productId: string; disciplines: unknown[] } = { productId
   targets: unknown[] = []) {
   api.fetch.mockImplementation((path: string) => Promise.resolve(path.endsWith("/hierarchy")
     ? json({ hierarchy: tree }) : path.endsWith("/targets")
-      ? json({ targets }) : path.endsWith("/date-history")
-        ? json({ changes: [] }) : path.endsWith("/calendar-impact")
+      ? json({ targets }) : path.includes("/change-history")
+        ? json({ events: [], nextCursor: null }) : path.endsWith("/calendar-impact")
           ? json({ calendarVersion: 0, impacts: [] }) : path.includes("/calendar?year=")
             ? json({ calendar: { version: 0, exceptions: [] } }) : path.includes("/deletion-preview")
               ? json({ fingerprint: "a".repeat(32), counts: { disciplines: 0, stages: 0, activities: 1 } })
@@ -661,7 +661,7 @@ describe("schedule editor", () => {
       if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id,
         disciplines: [{ ...discipline, stages: [{ ...stage, derivedStart: current.plannedStart,
           derivedEnd: current.plannedEnd, activities: [current] }] }] } }));
-      if (path.endsWith("/date-history")) return Promise.resolve(json({ changes: [] }));
+      if (path.includes("/change-history")) return Promise.resolve(json({ events: [], nextCursor: null }));
       return Promise.resolve(path.endsWith("/targets") ? json({ targets: [] }) : json({ stageDefinitions: definitions }));
     });
     mount();
@@ -699,15 +699,18 @@ describe("schedule editor", () => {
 
   it("requires a reason, saves audited dates, refreshes stage and Gantt, and preserves workspace state", async () => {
     let current = activity;
-    let changes: unknown[] = [];
+    let historyEvents: unknown[] = [];
     api.fetch.mockImplementation((path: string, options?: RequestInit) => {
       if (path.endsWith("/calendar-impact")) return Promise.resolve(json({ calendarVersion: 0, impacts: [] }));
-      if (path.endsWith("/date-history")) return Promise.resolve(json({ changes }));
+      if (path.includes("/change-history")) return Promise.resolve(json({ events: historyEvents, nextCursor: null }));
       if (path.endsWith("/dates") && options?.method === "PATCH") {
         current = { ...current, plannedStart: "2026-11-03", plannedEnd: "2026-11-10", version: 2 };
-        changes = [{ operationId: "a7777777-7777-4777-8777-777777777777",
-          changedAt: "2026-11-09T12:00:00.000Z", previousStart: "2026-11-01", previousEnd: "2026-11-08",
-          newStart: current.plannedStart, newEnd: current.plannedEnd, reason: "Synthetic approved correction" }];
+        historyEvents = [{ id: "activity-date:a7777777-7777-4777-8777-777777777777",
+          occurredAt: "2026-11-09T12:00:00.000Z", actorId: "synthetic-actor", actorName: "Synthetic editor",
+          eventType: "activity_dates_changed", item: { kind: "activity", id: activity.id,
+            name: activity.name, hierarchy: { discipline: discipline.name, stage: stage.displayName } },
+          justification: "Synthetic approved correction", before: { plannedStart: "2026-11-01", plannedEnd: "2026-11-08" },
+          after: { plannedStart: current.plannedStart, plannedEnd: current.plannedEnd }, affectedItems: [] }];
         return Promise.resolve(json({ activity: current, changed: true }));
       }
       if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: { productId: product.id,
@@ -735,7 +738,8 @@ describe("schedule editor", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("registradas no histórico"));
     expect(container.querySelector<HTMLElement>(".workspace-table-row.row-stage")!.textContent).toContain("10/11/2026");
     expect(container.querySelector<HTMLElement>(".timeline-bar.bar-activity")!.style.left).not.toBe(initialLeft);
-    expect(screen.getByText("Synthetic approved correction")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver log de alterações" }));
+    expect(await screen.findByText("Synthetic approved correction")).toBeInTheDocument();
     expect(body.scrollTop).toBe(120);
     expect(screen.getByRole("button", { name: "Mês" })).toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector(".workspace-table-row.row-activity")).toHaveClass("selected");
@@ -754,8 +758,8 @@ describe("schedule editor", () => {
       operationalDate: null, displayOrder: 0 }]);
     const { unmount } = render(<ScheduleEditor workspace={{ ...workspace, role: "viewer" }} product={product}
       onBack={vi.fn()} onAccessLost={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Histórico de datas" }));
-    expect(await screen.findByText("Nenhuma alteração de datas registrada.")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Histórico de datas: Synthetic activity/ }));
+    expect(await screen.findByText("Nenhum evento de auditoria foi registrado para este produto.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Salvar datas" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Editar atividade" })).not.toBeInTheDocument();
     unmount();
@@ -766,29 +770,23 @@ describe("schedule editor", () => {
     const defaultFetch = api.fetch.getMockImplementation()!;
     let historyCalls = 0;
     api.fetch.mockImplementation((path: string, options?: RequestInit) => {
-      if (path.endsWith("/date-history") && historyCalls++ === 0)
+      if (path.includes("/change-history") && historyCalls++ === 0)
         return Promise.resolve(new Response("private history detail", { status: 503 }));
       return defaultFetch(path, options);
     });
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o histórico");
+    fireEvent.click(await screen.findByRole("button", { name: "Ver log de alterações" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o log de alterações");
     expect(screen.getByRole("alert")).not.toHaveTextContent("private history detail");
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
-    expect(await screen.findByText("Nenhuma alteração de datas registrada.")).toBeInTheDocument();
+    expect(await screen.findByText("Nenhum evento de auditoria foi registrado para este produto.")).toBeInTheDocument();
   });
 
-  it("renders audit instants in São Paulo and prevents duplicate date submissions", async () => {
+  it("prevents duplicate date submissions", async () => {
     const defaultFetch = api.fetch.getMockImplementation()!;
     let resolveDate!: (value: Response) => void;
     let dateCalls = 0;
     api.fetch.mockImplementation((path: string, options?: RequestInit) => {
-      if (path.endsWith("/date-history")) return Promise.resolve(json({ changes: [{
-        operationId: "a7777777-7777-4777-8777-777777777777",
-        changedAt: "2026-11-09T01:00:00.000Z", previousStart: "2026-11-01",
-        previousEnd: "2026-11-08", newStart: "2026-11-03", newEnd: "2026-11-10",
-        reason: "Synthetic approved correction"
-      }] }));
       if (path.endsWith("/dates") && options?.method === "PATCH") {
         dateCalls++;
         return new Promise<Response>((resolve) => { resolveDate = resolve; });
@@ -797,8 +795,6 @@ describe("schedule editor", () => {
     });
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Editar atividade" }));
-    const recorded = await screen.findByText(/08\/11\/2026.*22:00/);
-    expect(recorded).toHaveAttribute("dateTime", "2026-11-09T01:00:00.000Z");
     fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "03/11/2026" } });
     fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "10/11/2026" } });
     fireEvent.change(screen.getByLabelText("Justificativa da alteração"),

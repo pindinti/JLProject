@@ -56,6 +56,14 @@ function repository(): ScheduleRepository {
         previousStart: "2026-11-01", previousEnd: "2026-11-03", newStart: "2026-11-01", newEnd: "2026-11-04",
         currentStart: "2026-11-01", currentEnd: "2026-11-04" }]
     }] })),
+    listProductChangeHistory: vi.fn(async () => ({ status: "ok" as const, events: [{
+      id: `activity-date:${targetId}`, occurredAt: "2026-11-10T12:00:00.000000Z",
+      actorId: actor, actorName: "Synthetic Actor", eventType: "activity_dates_changed" as const,
+      item: { kind: "activity", id: activity, name: "Synthetic activity",
+        hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage" } },
+      justification: "Synthetic date adjustment", before: { plannedStart: "2026-11-01", plannedEnd: "2026-11-03" },
+      after: { plannedStart: "2026-11-01", plannedEnd: "2026-11-04" }, affectedItems: []
+    }], nextCursor: { occurredAt: "2026-11-10T12:00:00.000000Z", eventId: `activity-date:${targetId}` } })),
     updateActivity: vi.fn(async () => ({ status: "ok" as const, value: { ...a, version: 2 } })),
     changeActivityDates: vi.fn(async () => ({ status: "updated" as const,
       activity: { ...a, plannedStart: "2026-11-02", version: 2 } })),
@@ -332,6 +340,52 @@ describe("schedule hierarchy API", () => {
     const failed = await call(request(historyPath), "admin", repo);
     expect(failed.status).toBe(503);
     expect(await failed.text()).not.toContain("private SQL detail");
+  });
+
+  it("returns the normalized product change feed with stable pagination to active viewers", async () => {
+    const repo = repository();
+    const path = `${base}/change-history?limit=1`;
+    const first = await call(request(path), "viewer", repo);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("Cache-Control")).toBe("no-store");
+    const firstPage = await first.json() as { events: Array<Record<string, unknown>>; nextCursor: string | null };
+    expect(firstPage.events).toMatchObject([{
+      eventType: "activity_dates_changed", actorId: actor, actorName: "Synthetic Actor",
+      item: { kind: "activity", id: activity, hierarchy: {
+        discipline: "Synthetic discipline", stage: "Synthetic stage"
+      } }, justification: "Synthetic date adjustment",
+      before: { plannedStart: "2026-11-01", plannedEnd: "2026-11-03" },
+      after: { plannedStart: "2026-11-01", plannedEnd: "2026-11-04" }
+    }]);
+    expect(firstPage.nextCursor).toBeTruthy();
+    expect(repo.listProductChangeHistory).toHaveBeenCalledWith(ws, product, actor, 1, null);
+
+    const next = await call(request(`${base}/change-history?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor!)}`),
+      "viewer", repo);
+    expect(next.status).toBe(200);
+    expect(repo.listProductChangeHistory).toHaveBeenLastCalledWith(ws, product, actor, 1,
+      { occurredAt: "2026-11-10T12:00:00.000000Z", eventId: `activity-date:${targetId}` });
+  });
+
+  it("rejects malformed pagination and client actor claims before querying history", async () => {
+    const repo = repository();
+    for (const suffix of ["?limit=0", "?limit=101", `?actorId=${actor}`,
+      "?cursor=not-a-cursor", "?limit=01&limit=02"]) {
+      expect((await call(request(`${base}/change-history${suffix}`), "admin", repo)).status).toBe(400);
+    }
+    expect(repo.listProductChangeHistory).not.toHaveBeenCalled();
+  });
+
+  it("denies anonymous, inactive, and cross-workspace product history reads", async () => {
+    const repo = repository();
+    const path = `${base}/change-history`;
+    const anonymous = await handleRequest(request(path), environment, async () => null,
+      () => membership("admin"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+    expect((await call(request(path), null, repo)).status).toBe(403);
+    expect((await call(request(path), "viewer", repo, false)).status).toBe(403);
+    expect((await call(request(path.replace(ws, otherWs)), "admin", repo)).status).toBe(403);
+    expect(repo.listProductChangeHistory).not.toHaveBeenCalled();
   });
 
   it("returns scoped read-only calendar impacts to active members", async () => {

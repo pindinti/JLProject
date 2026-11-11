@@ -21,13 +21,32 @@ function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[], works
     targets={targets} workspaceId={workspaceId} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
     calendarImpacts={calendarImpacts}
     canEdit={canEdit} onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()}
-    onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onRescheduleHistory={vi.fn()}
+    onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()}
     onCreateTarget={vi.fn(async (value) => ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }))}
     onUpdateTarget={vi.fn(async (target, value) => ({ ...target, ...value, version: target.version + 1 }))}
     onDeleteTarget={vi.fn(async () => undefined)} />);
 }
 
 describe("schedule workspace refinements", () => {
+  it("keeps product history, activity history, and rescheduling history accessible to editors", () => {
+    const onHistory = vi.fn();
+    const onProductHistory = vi.fn();
+    const onRescheduleHistory = vi.fn();
+    const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
+      targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={onHistory}
+      onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={onProductHistory}
+      onRescheduleHistory={onRescheduleHistory} onCreateTarget={vi.fn()} onUpdateTarget={vi.fn()}
+      onDeleteTarget={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Ver log de alterações" }));
+    fireEvent.click(screen.getByRole("button", { name: "Histórico de reprogramações" }));
+    fireEvent.click(within(container.querySelector(".workspace-table-row.row-activity")!)
+      .getByRole("button", { name: /Histórico de datas: Synthetic activity/ }));
+    expect(onProductHistory).toHaveBeenCalledOnce();
+    expect(onRescheduleHistory).toHaveBeenCalledOnce();
+    expect(onHistory).toHaveBeenCalledWith(expect.objectContaining({ kind: "activity", id: "activity" }));
+  });
+
   it("shades only weekends and applicable workspace calendar dates behind the Gantt", async () => {
     auth.fetch.mockReset();
     auth.fetch.mockImplementation(async (path: string) => {
@@ -238,7 +257,7 @@ describe("schedule workspace refinements", () => {
     const onAdd = vi.fn();
     const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
       targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
-      onToggle={vi.fn()} onEdit={onEdit} onAdd={onAdd} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onRescheduleHistory={vi.fn()}
+      onToggle={vi.fn()} onEdit={onEdit} onAdd={onAdd} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()}
       onCreateTarget={vi.fn()} onUpdateTarget={vi.fn()} onDeleteTarget={vi.fn()} />);
     const name = screen.getByRole("button", { name: "Synthetic activity" });
 
@@ -270,7 +289,7 @@ describe("schedule workspace refinements", () => {
       ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }));
     const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
       targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
-      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={onCreate}
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={onCreate}
       onUpdateTarget={vi.fn(async (target, value) => ({ ...target, ...value, version: 2 }))}
       onDeleteTarget={vi.fn(async () => undefined)} />);
     const header = container.querySelector<HTMLElement>(".workspace-timeline-header")!;
@@ -304,7 +323,7 @@ describe("schedule workspace refinements", () => {
     const onDelete = vi.fn(async () => undefined);
     const first = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree} targets={targets}
       openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
-      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={vi.fn()}
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={vi.fn()}
       onUpdateTarget={onUpdate} onDeleteTarget={onDelete} />);
     fireEvent.click(first.container.querySelector(".timeline-target-label")!);
     fireEvent.change(screen.getByLabelText("Data"), { target: { value: "08/11/2026" } });
@@ -322,7 +341,7 @@ describe("schedule workspace refinements", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const second = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree} targets={targets}
       openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
-      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={vi.fn()}
+      onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={vi.fn()}
       onUpdateTarget={onUpdate} onDeleteTarget={onDelete} />);
     fireEvent.click(second.container.querySelector(".timeline-target-label")!);
     fireEvent.click(within(second.container).getByRole("button", { name: "Excluir meta" }));

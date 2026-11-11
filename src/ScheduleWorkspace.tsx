@@ -18,14 +18,15 @@ type DeletionTarget = { kind: "discipline" | "stage" | "activity"; id: string; l
 
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
   canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
-  onRefresh, onHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
+  onRefresh, onHistory, onProductHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
   onAccessLost = () => undefined }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
   onAdd: (row: VisibleRow) => void; onHistory: (row: VisibleRow) => void;
-  onAddDiscipline: () => void; onRefresh: () => void | Promise<void>; onRescheduleHistory: () => void;
+  onAddDiscipline: () => void; onRefresh: () => void | Promise<void>; onProductHistory: () => void;
+  onRescheduleHistory: () => void;
   onCreateTarget: (value: { name: string; description: string | null; targetDate: string; color: string }) => Promise<ScheduleTarget>;
   onUpdateTarget: (target: ScheduleTarget, value: { name: string; description: string | null;
     targetDate: string; color: string; reason: string | null }) => Promise<ScheduleTarget>;
@@ -354,6 +355,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
       <div className="workspace-toolbar-actions">
         {canEdit && <button type="button" onClick={onAddDiscipline}>{messages.addDiscipline}</button>}
         <button type="button" onClick={() => { setCalendarExceptionsByYear({}); onRefresh(); }}>{messages.refreshHierarchy}</button>
+        <button type="button" onClick={onProductHistory}>{messages.productHistoryOpen}</button>
         <button type="button" onClick={onRescheduleHistory}>{messages.calendarRescheduleHistory}</button>
       </div>
       <div className="workspace-zoom" role="group" aria-label={messages.scheduleZoom}>
@@ -462,9 +464,9 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
                   onClick={(event) => { setSelected(row.key); startDeletion(row, event.currentTarget); }}>
                   <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M4 6h12m-10 0 .7 10h6.6L14 6M8 6V4h4v2m-3 3v4m2-4v4" /></svg>
                 </button>}
-                {row.kind === "activity" && !canEdit && <button type="button" className="workspace-icon-action"
-                  title={messages.activityDateHistory} onClick={() => { setSelected(row.key); onHistory(row); }}
-                  aria-label={messages.activityDateHistory}>
+                {row.kind === "activity" && <button type="button" className="workspace-icon-action"
+                  title={messages.activityDateHistoryFor(row.label)} onClick={() => { setSelected(row.key); onHistory(row); }}
+                  aria-label={messages.activityDateHistoryFor(row.label)}>
                   <svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M3 4.5h14v12H3zM6 2.5v4M14 2.5v4M3 8h14M6 11h2m2 0h2m-6 3h2" /></svg>
                 </button>}
               </span>

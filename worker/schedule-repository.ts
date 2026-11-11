@@ -66,6 +66,22 @@ export interface CalendarRescheduleHistoryOperation {
 }
 export type CalendarRescheduleHistoryResult = { status: "ok"; operations: CalendarRescheduleHistoryOperation[] } |
   { status: "not_found" | "forbidden" | "invalid" };
+export type ProductChangeEventType = "product_created" | "schedule_imported" | "activity_dates_changed" |
+  "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
+  "schedule_hierarchy_deleted";
+export interface ProductChangeHistoryCursor { occurredAt: string; eventId: string }
+export interface ProductChangeHistoryItem {
+  kind: string; id: string; name: string | null;
+  hierarchy?: { discipline?: string | null; stage?: string | null };
+}
+export interface ProductChangeEvent {
+  id: string; occurredAt: string; actorId: string; actorName: string | null;
+  eventType: ProductChangeEventType; item: ProductChangeHistoryItem | null;
+  justification: string | null; before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null; affectedItems: Array<Record<string, unknown>>;
+}
+export type ProductChangeHistoryResult = { status: "ok"; events: ProductChangeEvent[];
+  nextCursor: ProductChangeHistoryCursor | null } | { status: "not_found" | "forbidden" | "invalid" };
 export type Mutation<T> = { status: "ok"; value: T } |
   { status: "not_found" | "duplicate" | "stale" | "stale_calendar" | "conflict" | "invalid" | "forbidden" };
 export type DeletionKind = "activity" | "stage" | "discipline";
@@ -104,6 +120,8 @@ export interface ScheduleRepository {
     originalOperationId: string, operationId: string, reason: string): Promise<CalendarRescheduleReversalResult>;
   listCalendarRescheduleHistory(workspaceId: string, productId: string, actorId: string):
     Promise<CalendarRescheduleHistoryResult>;
+  listProductChangeHistory(workspaceId: string, productId: string, actorId: string, limit: number,
+    cursor: ProductChangeHistoryCursor | null): Promise<ProductChangeHistoryResult>;
   createActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
   createWorkingActivity(workspaceId: string, productId: string, disciplineId: string, stageId: string,
     actorId: string, input: WorkingActivityInput): Promise<Mutation<Activity>>;
@@ -128,6 +146,54 @@ export interface ScheduleRepository {
 
 const text = (value: unknown) => String(value);
 const nullable = (value: unknown) => value === null || value === undefined ? null : String(value);
+const productChangeEventTypes = new Set<ProductChangeEventType>([
+  "product_created", "schedule_imported", "activity_dates_changed", "business_target_date_changed",
+  "calendar_rescheduled", "calendar_reschedule_reversed", "schedule_hierarchy_deleted"
+]);
+
+function jsonRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : null;
+}
+
+function productChangeEvent(value: unknown): ProductChangeEvent {
+  const event = jsonRecord(value);
+  if (!event || typeof event["id"] !== "string" || typeof event["occurredAt"] !== "string" ||
+      typeof event["actorId"] !== "string" ||
+      (event["actorName"] !== null && typeof event["actorName"] !== "string") ||
+      typeof event["eventType"] !== "string" ||
+      !productChangeEventTypes.has(event["eventType"] as ProductChangeEventType) ||
+      (event["justification"] !== null && typeof event["justification"] !== "string") ||
+      !Array.isArray(event["affectedItems"])) throw new Error("Invalid product change history event.");
+  let item: ProductChangeHistoryItem | null = null;
+  if (event["item"] !== null) {
+    const rawItem = jsonRecord(event["item"]);
+    const rawHierarchy = rawItem && rawItem["hierarchy"] !== undefined
+      ? jsonRecord(rawItem["hierarchy"]) : null;
+    if (!rawItem || typeof rawItem["kind"] !== "string" || typeof rawItem["id"] !== "string" ||
+        (rawItem["name"] !== null && typeof rawItem["name"] !== "string") ||
+        (rawItem["hierarchy"] !== undefined && !rawHierarchy))
+      throw new Error("Invalid product change history item.");
+    item = { kind: rawItem["kind"], id: rawItem["id"], name: rawItem["name"] as string | null,
+      ...(rawHierarchy ? { hierarchy: {
+        ...(rawHierarchy["discipline"] === undefined ? {} : { discipline: nullable(rawHierarchy["discipline"]) }),
+        ...(rawHierarchy["stage"] === undefined ? {} : { stage: nullable(rawHierarchy["stage"]) })
+      } } : {}) };
+  }
+  const before = event["before"] === null ? null : jsonRecord(event["before"]);
+  const after = event["after"] === null ? null : jsonRecord(event["after"]);
+  if ((event["before"] !== null && !before) || (event["after"] !== null && !after) ||
+      event["item"] === undefined || event["before"] === undefined || event["after"] === undefined)
+    throw new Error("Invalid product change history details.");
+  return { id: event["id"], occurredAt: event["occurredAt"], actorId: event["actorId"],
+    actorName: event["actorName"] as string | null, eventType: event["eventType"] as ProductChangeEventType,
+    item, justification: event["justification"] as string | null, before, after,
+    affectedItems: event["affectedItems"].map((entry) => {
+      const record = jsonRecord(entry);
+      if (!record) throw new Error("Invalid product change history affected item.");
+      return record;
+    }) };
+}
 
 function discipline(row: Record<string, unknown>): Discipline {
   return { id: text(row["id"]), productId: text(row["productId"]),
@@ -522,6 +588,57 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           reversal, activities };
       });
       return { status: "ok", operations };
+    },
+    async listProductChangeHistory(ws, productId, actorId, limit, cursor) {
+      const rows = await sql`SELECT public.list_product_change_history(
+        ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${limit}::integer,
+        ${cursor?.occurredAt ?? null}::timestamptz, ${cursor?.eventId ?? null}::text) AS result`;
+      const result = rows[0]?.["result"] as {
+        status?: string; events?: unknown[]; nextCursor?: Record<string, unknown> | null
+      } | undefined;
+      if (result?.status !== "ok") {
+        if (result && ["not_found", "forbidden", "invalid"].includes(result.status ?? ""))
+          return { status: result.status as "not_found" | "forbidden" | "invalid" };
+        throw new Error("Unexpected product change history result.");
+      }
+      if (!Array.isArray(result.events)) throw new Error("Invalid product change history result.");
+      let nextCursor: ProductChangeHistoryCursor | null = null;
+      if (result.nextCursor !== null) {
+        const rawCursor = result.nextCursor;
+        if (!rawCursor || typeof rawCursor["occurredAt"] !== "string" ||
+            typeof rawCursor["eventId"] !== "string") throw new Error("Invalid product change history cursor.");
+        nextCursor = { occurredAt: rawCursor["occurredAt"], eventId: rawCursor["eventId"] };
+      }
+      const events = result.events.map(productChangeEvent);
+      const actorIds = [...new Set(events.map((event) => event.actorId))];
+      const actorNames = new Map<string, string>();
+      if (actorIds.length > 0) {
+        const actorIdsJson = JSON.stringify(actorIds);
+        const nameRows = await sql`
+          WITH page_actors AS (
+            SELECT value::uuid AS id
+            FROM jsonb_array_elements_text(${actorIdsJson}::jsonb) AS actor_entries(value)
+          )
+          SELECT member.auth_user_id::text AS id, NULLIF(auth_user.name, '') AS name
+          FROM page_actors AS page_actor
+          JOIN public.workspace_memberships AS member ON member.workspace_id = ${ws}::uuid
+            AND member.auth_user_id = page_actor.id
+          JOIN neon_auth."user" AS auth_user ON auth_user.id = member.auth_user_id
+        `;
+        for (const row of nameRows) {
+          if (typeof row["id"] === "string" && typeof row["name"] === "string")
+            actorNames.set(row["id"], row["name"]);
+        }
+      }
+      for (let index = 1; index < events.length; index += 1) {
+        const previous = events[index - 1]!;
+        const current = events[index]!;
+        if (previous.occurredAt < current.occurredAt ||
+            (previous.occurredAt === current.occurredAt && previous.id <= current.id))
+          throw new Error("Product change history is not ordered newest first.");
+      }
+      return { status: "ok", events: events.map((event) => ({ ...event,
+        actorName: actorNames.get(event.actorId) ?? null })), nextCursor };
     },
     async createActivity(ws, productId, disciplineId, stageId, actorId, input) {
       const rows = await sql`WITH locked_product AS MATERIALIZED (
