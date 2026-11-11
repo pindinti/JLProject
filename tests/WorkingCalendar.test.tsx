@@ -68,6 +68,10 @@ describe("working calendar settings", () => {
     fireEvent.change(screen.getByLabelText("Nome do feriado"), { target: { value: holiday.name } });
     fireEvent.change(screen.getByLabelText("Município"), { target: { value: holiday.municipality } });
     fireEvent.change(screen.getByLabelText("Data (DD/MM/AAAA)"), { target: { value: "09/11/2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir calendário para Data (DD/MM/AAAA)" }));
+    const datePicker = await screen.findByRole("dialog", { name: "Escolher data para Data (DD/MM/AAAA)" });
+    fireEvent.click(within(datePicker).getByRole("button", { name: "segunda-feira, 9 de novembro de 2026" }));
+    expect(auth.authenticatedFetch.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     expect(await screen.findByText("Feriado sintético")).toBeInTheDocument();
     expect(screen.getByText(/Nenhuma data do cronograma foi alterada/)).toBeInTheDocument();
@@ -144,6 +148,20 @@ describe("working calendar settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     expect(screen.getByText(/Confira os campos e informe datas válidas/)).toBeInTheDocument();
     expect(auth.authenticatedFetch.mock.calls.every((call) => call[1]?.method === undefined)).toBe(true);
+  });
+
+  it("discards a picker-selected working-calendar date when the form is canceled", async () => {
+    readResponses();
+    render(<WorkingCalendar workspace={workspace} onAccessLost={vi.fn()} initialYear={2026} />);
+    await screen.findByText("Nenhum feriado local cadastrado para este ano.");
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar feriado local" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir calendário para Data (DD/MM/AAAA)" }));
+    const datePicker = await screen.findByRole("dialog", { name: "Escolher data para Data (DD/MM/AAAA)" });
+    fireEvent.click(within(datePicker).getByRole("button", { current: "date" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("textbox", { name: "Data (DD/MM/AAAA)" })).not.toBeInTheDocument();
+    expect(auth.authenticatedFetch.mock.calls.some(([, options]) => options?.method === "POST" || options?.method === "PATCH"))
+      .toBe(false);
   });
 
   it("shows safe errors for malformed successful API responses", async () => {

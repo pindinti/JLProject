@@ -8,6 +8,7 @@ import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateA
   timelineInterval, timelinePosition, visibleScheduleRows,
   type ScheduleTarget, type ScheduleTree, type VisibleRow, type Zoom } from "../domain/schedule-workspace";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
+import { DatePickerField } from "./DatePickerField";
 import { messages } from "./locales/pt-BR";
 import { ColorField } from "./ColorField";
 import { layoutMilestoneLabels } from "./design/gantt-colors";
@@ -56,6 +57,8 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const [zoom, setZoom] = useState<Zoom>("week");
   const [tableWidth, setTableWidth] = useState(50);
   const [selected, setSelected] = useState<string | null>(null);
+  const [hoveredRowKey, setHoveredRowKey] = useState<string | null>(null);
+  const hoverClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [today, setToday] = useState(() => saoPauloCivilDate(new Date()));
   const [bounds, setBounds] = useState(() => {
@@ -95,6 +98,9 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   const scrollbarRef = useRef<HTMLDivElement>(null);
   const centerDateAfterScale = useRef<string | null>(null);
   const dragging = useRef(false);
+  useEffect(() => () => {
+    if (hoverClearTimer.current !== null) clearTimeout(hoverClearTimer.current);
+  }, []);
   const rows = useMemo(() => visibleScheduleRows(product, tree, openDisciplines, openStages, productExpanded),
     [product, tree, openDisciplines, openStages, productExpanded]);
   const dropRow = dropTarget ? rows.find((row) => row.key === dropTarget.rowKey) : undefined;
@@ -657,6 +663,20 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     setSelectedDate(civilFromDay(Math.max(scale.startDay, Math.min(scale.endDay, day))));
   }
 
+  function enterRow(rowKey: string) {
+    if (hoverClearTimer.current !== null) clearTimeout(hoverClearTimer.current);
+    hoverClearTimer.current = null;
+    setHoveredRowKey((current) => current === rowKey ? current : rowKey);
+  }
+
+  function leaveRow(rowKey: string) {
+    if (hoverClearTimer.current !== null) clearTimeout(hoverClearTimer.current);
+    hoverClearTimer.current = setTimeout(() => {
+      hoverClearTimer.current = null;
+      setHoveredRowKey((current) => current === rowKey ? null : current);
+    }, 40);
+  }
+
   const style = { "--table-width": `${tableWidth}%` } as CSSProperties;
   return <section className="schedule-workspace" data-density="compact" aria-label={messages.scheduleWorkspace}>
     {moveFeedback && <p className={moveFeedbackIsError ? "activity-move-feedback activity-move-feedback--error" : "activity-move-feedback"}
@@ -748,8 +768,9 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
           {rows.map((row) => {
             const isDropTarget = dropTarget?.rowKey === row.key;
             const dropClass = isDropTarget ? ` drop-${dropTarget.position}` : "";
-            return <div key={row.key} className={`workspace-table-row row-${row.kind}${selected === row.key ? " selected" : ""}${dropClass}`}
+            return <div key={row.key} className={`workspace-table-row row-${row.kind}${selected === row.key ? " selected" : ""}${hoveredRowKey === row.key ? " is-hovered" : ""}${dropClass}`}
               data-row-key={row.key} role="row" aria-selected={selected === row.key}
+              onMouseEnter={() => enterRow(row.key)} onMouseLeave={() => leaveRow(row.key)}
               onDragOver={(event) => {
                 const candidate = dropTargetFor(row, event);
                 if (!candidate) return;
@@ -898,8 +919,9 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
               const impact = row.kind === "activity" ? impactByActivity.get(row.id) : undefined;
               const proposedInterval = impact
                 ? timelineInterval(scale, impact.proposedStartDate, impact.proposedEndDate) : null;
-              return <div key={row.key} className={`workspace-chart-row row-${row.kind}${selected === row.key ? " selected" : ""}`}
+              return <div key={row.key} className={`workspace-chart-row row-${row.kind}${selected === row.key ? " selected" : ""}${hoveredRowKey === row.key ? " is-hovered" : ""}`}
                 data-row-key={row.key}
+                onMouseEnter={() => enterRow(row.key)} onMouseLeave={() => leaveRow(row.key)}
                 onClick={() => setSelected(row.key)}>
                 {interval && <button type="button" className={`timeline-bar bar-${row.kind}`}
                   style={{ left: interval.left, width: interval.width, backgroundColor: row.color ?? "var(--jl-gantt-line-fallback)" }}
@@ -1091,8 +1113,8 @@ function TargetDialog({ target, initialDate, canEdit, userId, onClose, onCreate,
     <textarea id="milestone-description" maxLength={2000} value={description} disabled={!canEdit || busy}
       onChange={(event) => setDescription(event.target.value)} />
     <label htmlFor="milestone-date">{messages.milestoneDate}</label>
-    <input id="milestone-date" inputMode="numeric" placeholder="DD/MM/AAAA" aria-required="true" value={date}
-      disabled={!canEdit || busy} onChange={(event) => setDate(event.target.value)} />
+    <DatePickerField id="milestone-date" label={messages.milestoneDate} ariaRequired
+      value={date} disabled={!canEdit || busy} onChange={setDate} />
     <ColorField id="milestone-color" label={messages.milestoneColor} value={color} userId={userId}
       disabled={!canEdit || busy} onChange={(value) => { setColor(value); setColorSelected(true); }} />
     {dateChanged && canEdit && <>

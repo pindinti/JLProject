@@ -232,7 +232,7 @@ Suggested 16 quick-pick colors (final UI palette may be refined without changing
 
 ### Microinteractions
 
-- Hover: highlight the corresponding row and show full name and dates without losing context.
+- Hover: highlight the corresponding table and Gantt rows together using their shared row identity; keep the highlight subtle enough to preserve chart-grid visibility and show full name and dates without losing context.
 - Click: explicit selection; editing is a deliberate separate action where appropriate.
 - Date edits: show before → after, justification, save status, and audit trail.
 - Preserve zoom and scroll positions where practical.

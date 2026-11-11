@@ -4,6 +4,7 @@ import { messages } from "./locales/pt-BR";
 import { ColorField } from "./ColorField";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
 import { ScheduleWorkspace } from "./ScheduleWorkspace";
+import { DatePickerField } from "./DatePickerField";
 import { CalendarRescheduleHistoryDialog } from "./CalendarRescheduleHistoryDialog";
 import { ProductChangeHistoryDialog } from "./ProductChangeHistoryDialog";
 import type { ScheduleTarget, VisibleRow } from "../domain/schedule-workspace";
@@ -978,12 +979,12 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
                 <option value="working_days">{messages.workingDaysPlanning}</option>
               </select>
               <label htmlFor="activity-start">{messages.plannedStart}</label>
-              <input id="activity-start" inputMode="numeric" placeholder="DD/MM/AAAA" value={draft.plannedStart}
-                onChange={(event) => { clearWorkingPreview(); setDraft({ ...draft, plannedStart: event.target.value }); }} />
+              <DatePickerField id="activity-start" label={messages.plannedStart} value={draft.plannedStart}
+                onChange={(plannedStart) => { clearWorkingPreview(); setDraft({ ...draft, plannedStart }); }} />
               {draft.planningMode === "manual" ? <>
                 <label htmlFor="activity-end">{messages.plannedEnd}</label>
-                <input id="activity-end" inputMode="numeric" placeholder="DD/MM/AAAA" value={draft.plannedEnd}
-                  onChange={(event) => setDraft({ ...draft, plannedEnd: event.target.value })} />
+                <DatePickerField id="activity-end" label={messages.plannedEnd} value={draft.plannedEnd}
+                  onChange={(plannedEnd) => setDraft({ ...draft, plannedEnd })} />
               </> : <>
                 <label htmlFor="activity-working-days">{messages.workingDayDuration}</label>
                 <input id="activity-working-days" type="number" min={1} max={27393} step={1}
@@ -1021,12 +1022,12 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
           <option value="working_days">{messages.workingDaysPlanning}</option>
         </select>
         <label htmlFor="date-start">{messages.plannedStart}</label>
-        <input id="date-start" inputMode="numeric" placeholder="DD/MM/AAAA" value={dateDraft.plannedStart}
-          onChange={(event) => { clearWorkingPreview(); setDateDraft({ ...dateDraft, plannedStart: event.target.value }); }} />
+        <DatePickerField id="date-start" label={messages.plannedStart} value={dateDraft.plannedStart}
+          onChange={(plannedStart) => { clearWorkingPreview(); setDateDraft({ ...dateDraft, plannedStart }); }} />
         {dateDraft.planningMode === "manual" ? <>
           <label htmlFor="date-end">{messages.plannedEnd}</label>
-          <input id="date-end" inputMode="numeric" placeholder="DD/MM/AAAA" value={dateDraft.plannedEnd}
-            onChange={(event) => setDateDraft({ ...dateDraft, plannedEnd: event.target.value })} />
+          <DatePickerField id="date-end" label={messages.plannedEnd} value={dateDraft.plannedEnd}
+            onChange={(plannedEnd) => setDateDraft({ ...dateDraft, plannedEnd })} />
         </> : <>
           <label htmlFor="date-working-days">{messages.workingDayDuration}</label>
           <input id="date-working-days" type="number" min={1} max={27393} step={1}

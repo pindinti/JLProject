@@ -936,11 +936,16 @@ describe("schedule editor", () => {
     fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Synthetic working activity" } });
     fireEvent.change(screen.getByLabelText("Modo de planejamento"), { target: { value: "working_days" } });
     fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "06/11/2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir calendário para Início planejado" }));
+    const datePicker = await screen.findByRole("dialog", { name: "Escolher data para Início planejado" });
+    fireEvent.click(within(datePicker).getByRole("button", { name: "sexta-feira, 6 de novembro de 2026" }));
     fireEvent.change(screen.getByLabelText("Duração em dias úteis"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Calcular término" }));
     expect(await screen.findByText("10/11/2026")).toBeInTheDocument();
     expect(screen.getByText(/1 dia\(s\) não útil\(eis\) considerado\(s\)/)).toBeInTheDocument();
     expect(screen.getByText(/07\/11\/2026/)).toBeInTheDocument();
+    expect(api.fetch.mock.calls.some(([path, options]) => String(path).endsWith(`/stages/${stage.id}/activities`) && options?.method === "POST"))
+      .toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
       expect.stringContaining(`/stages/${stage.id}/activities`),

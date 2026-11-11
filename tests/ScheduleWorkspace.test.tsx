@@ -184,6 +184,51 @@ describe("schedule workspace refinements", () => {
     expect(container.querySelectorAll(".workspace-divider-header, .workspace-divider, .workspace-divider-footer")).toHaveLength(3);
   });
 
+  it("shares table row hover with the Gantt and keeps the highlight through a pane handoff", async () => {
+    const { container } = mount();
+    const tableRow = container.querySelector<HTMLElement>(
+      '.workspace-table-row[data-row-key="activity:activity"]'
+    )!;
+    const chartRow = container.querySelector<HTMLElement>(
+      '.workspace-chart-row[data-row-key="activity:activity"]'
+    )!;
+
+    fireEvent.mouseEnter(tableRow);
+    expect(tableRow).toHaveClass("is-hovered");
+    expect(chartRow).toHaveClass("is-hovered");
+
+    fireEvent.mouseLeave(tableRow);
+    fireEvent.mouseEnter(chartRow);
+    expect(tableRow).toHaveClass("is-hovered");
+    expect(chartRow).toHaveClass("is-hovered");
+
+    fireEvent.mouseLeave(chartRow);
+    await waitFor(() => {
+      expect(tableRow).not.toHaveClass("is-hovered");
+      expect(chartRow).not.toHaveClass("is-hovered");
+    });
+  });
+
+  it("shares Gantt row hover with the table and clears it when the pointer leaves", async () => {
+    const { container } = mount();
+    const tableRow = container.querySelector<HTMLElement>(
+      '.workspace-table-row[data-row-key="activity:activity"]'
+    )!;
+    const chartRow = container.querySelector<HTMLElement>(
+      '.workspace-chart-row[data-row-key="activity:activity"]'
+    )!;
+
+    fireEvent.mouseEnter(chartRow);
+    expect(chartRow).toHaveClass("is-hovered");
+    expect(tableRow).toHaveClass("is-hovered");
+
+    fireEvent.mouseLeave(chartRow);
+    await waitFor(() => {
+      expect(chartRow).not.toHaveClass("is-hovered");
+      expect(tableRow).not.toHaveClass("is-hovered");
+    });
+  });
+
   it("selects exact dates from header and empty grid while keeping bars selectable", () => {
     const { container } = mount();
     const header = container.querySelector<HTMLElement>(".workspace-timeline-header")!;
@@ -302,11 +347,16 @@ describe("schedule workspace refinements", () => {
     fireEvent.click(header, { clientX: timelinePosition(scale, "2026-11-08") + 1 });
     fireEvent.click(screen.getByRole("button", { name: "Adicionar marco" }));
     expect(screen.getByLabelText("Data")).toHaveValue("08/11/2026");
+    fireEvent.click(screen.getByRole("button", { name: "Abrir calendário para Data" }));
+    const datePicker = await screen.findByRole("dialog", { name: "Escolher data para Data" });
+    fireEvent.click(within(datePicker).getByRole("button", { name: /10 de novembro de 2026/ }));
+    expect(screen.getByLabelText("Data")).toHaveValue("10/11/2026");
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Marco sintético" } });
+    expect(onCreate).not.toHaveBeenCalled();
     fireEvent.submit(screen.getByRole("dialog"));
     await act(async () => { await Promise.resolve(); });
     expect(onCreate).toHaveBeenCalledWith({ name: "Marco sintético", description: null,
-      targetDate: "2026-11-08", color: "#AA4557" });
+      targetDate: "2026-11-10", color: "#AA4557" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -324,6 +374,10 @@ describe("schedule workspace refinements", () => {
       onDeleteTarget={vi.fn(async () => undefined)} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Adicionar marco" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir calendário para Data" }));
+    const datePicker = await screen.findByRole("dialog", { name: "Escolher data para Data" });
+    fireEvent.click(within(datePicker).getByRole("button", { current: "date" }));
+    expect(onCreate).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#12BC34" } });
     expect(readRecentCustomColors(userId)).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));

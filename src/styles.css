@@ -378,6 +378,29 @@ form button {
 .administration > h3 { margin-top: var(--jl-space-4); }
 .administration > h4 { margin-bottom: var(--jl-space-3); }
 
+.date-picker-field { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: var(--jl-space-1); width: 100%; min-width: 0; }
+.date-picker-field > input { width: 100%; min-width: 0; }
+.date-picker-trigger { display: grid; place-items: center; width: 2.5rem; min-width: 2.5rem; min-height: var(--jl-control-height); padding: var(--jl-space-1); border: 1px solid var(--jl-border-strong); border-radius: var(--jl-radius-md); background: var(--jl-surface); color: var(--jl-primary); }
+.date-picker-trigger:hover { background: var(--jl-primary-soft); }
+.date-picker-trigger svg { width: 1.2rem; height: 1.2rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.date-picker-popover { position: fixed; z-index: 130; width: min(18rem, calc(100vw - 1rem)); max-height: min(22rem, calc(100vh - 1rem)); overflow: auto; padding: var(--jl-space-3); border: 1px solid var(--jl-border-strong); border-radius: var(--jl-radius-md); background: var(--jl-surface); color: var(--jl-text); box-shadow: var(--jl-shadow-md); font-family: var(--jl-font-sans); }
+.date-picker-popover__navigation { display: grid; grid-template-columns: 2rem 2rem minmax(0, 1fr) 2rem 2rem; align-items: center; gap: 2px; margin-bottom: var(--jl-space-2); }
+.date-picker-popover__navigation button { display: grid; place-items: center; width: 2rem; min-width: 2rem; min-height: 2rem; padding: 0; border: 1px solid transparent; border-radius: var(--jl-radius-sm); background: transparent; color: var(--jl-primary); font-size: var(--jl-font-size-lg); line-height: 1; }
+.date-picker-popover__navigation button:hover:not(:disabled) { border-color: var(--jl-border); background: var(--jl-primary-soft); }
+.date-picker-popover__navigation button:disabled { color: var(--jl-disabled); }
+.date-picker-popover__navigation strong { overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; font-size: var(--jl-font-size-sm); font-weight: 600; text-transform: capitalize; }
+.date-picker-popover__weekdays, .date-picker-popover__week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.date-picker-popover__weekdays { margin-bottom: 2px; }
+.date-picker-popover__weekdays span { display: grid; place-items: center; min-height: 1.6rem; color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); font-weight: 600; text-transform: lowercase; }
+.date-picker-popover__week > div { display: grid; place-items: center; min-width: 0; }
+.date-picker-popover__hint { display: block; margin-top: var(--jl-space-2); color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); line-height: var(--jl-leading-normal); }
+.date-picker-day { display: grid; place-items: center; width: 2rem; min-width: 2rem; min-height: 2rem; padding: 0; border: 1px solid transparent; border-radius: var(--jl-radius-sm); background: transparent; color: var(--jl-text); font-size: var(--jl-font-size-sm); font-variant-numeric: tabular-nums; }
+.date-picker-day:hover:not(:disabled) { border-color: var(--jl-border-strong); background: var(--jl-primary-soft); }
+.date-picker-day.is-adjacent { color: var(--jl-text-muted); }
+.date-picker-day.is-selected { border-color: var(--jl-primary); background: var(--jl-primary); color: var(--jl-primary-contrast); font-weight: 600; }
+.date-picker-day.is-today:not(.is-selected) { border-color: var(--jl-focus); box-shadow: inset 0 0 0 1px var(--jl-focus); }
+.date-picker-day:disabled { visibility: hidden; }
+
 .working-calendar { display: grid; gap: var(--jl-space-4); margin-bottom: var(--jl-space-8); }
 .working-calendar__heading { display: flex; align-items: center; justify-content: space-between; gap: var(--jl-space-4); }
 .working-calendar__header-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--jl-space-2); }
@@ -777,8 +800,8 @@ form button {
 .workspace-chart-row.row-stage { background: var(--jl-surface); font-weight: 600; }
 .workspace-table-row.selected,
 .workspace-chart-row.selected,
-.workspace-table-row:hover,
-.workspace-chart-row:hover { background: color-mix(in srgb, var(--jl-primary-soft) 58%, transparent); }
+.workspace-table-row.is-hovered,
+.workspace-chart-row.is-hovered { background: color-mix(in srgb, var(--jl-primary-soft) 58%, transparent); }
 .workspace-name-cell { display: flex; align-items: center; gap: 0.2rem; min-width: 0; }
 .workspace-name-cell .color-chip { width: 0.75rem; height: 0.75rem; flex: 0 0 auto; }
 .workspace-expand,

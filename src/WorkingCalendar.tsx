@@ -6,6 +6,7 @@ import {
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { CalendarHistoryDialog } from "./CalendarHistoryDialog";
 import { formatCivilDate, parseBrazilianDate } from "./civil-date";
+import { DatePickerField } from "./DatePickerField";
 import { messages } from "./locales/pt-BR";
 
 interface Draft {
@@ -223,21 +224,21 @@ export function WorkingCalendar({ workspace, onAccessLost, initialYear = current
         <input id="calendar-municipality" required maxLength={120} value={draft.municipality} disabled={busy}
           onChange={(event) => setDraft({ ...draft, municipality: event.target.value })} />
         <label htmlFor="calendar-date">{messages.calendarDate}</label>
-        <input id="calendar-date" required inputMode="numeric" placeholder="DD/MM/AAAA" maxLength={10}
+        <DatePickerField id="calendar-date" label={messages.calendarDate} required maxLength={10}
           value={draft.startDate} disabled={busy}
-          onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} />
+          onChange={(startDate) => setDraft({ ...draft, startDate })} />
       </> : <>
         <label htmlFor="calendar-description">{messages.calendarDescription}</label>
         <input id="calendar-description" required maxLength={500} value={draft.description} disabled={busy}
           onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
         <label htmlFor="calendar-start">{messages.calendarStart}</label>
-        <input id="calendar-start" required inputMode="numeric" placeholder="DD/MM/AAAA" maxLength={10}
+        <DatePickerField id="calendar-start" label={messages.calendarStart} required maxLength={10}
           value={draft.startDate} disabled={busy}
-          onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} />
+          onChange={(startDate) => setDraft({ ...draft, startDate })} />
         <label htmlFor="calendar-end">{messages.calendarEnd}</label>
-        <input id="calendar-end" required inputMode="numeric" placeholder="DD/MM/AAAA" maxLength={10}
+        <DatePickerField id="calendar-end" label={messages.calendarEnd} required maxLength={10}
           value={draft.endDate} disabled={busy}
-          onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} />
+          onChange={(endDate) => setDraft({ ...draft, endDate })} />
       </>}
       <div className="calendar-list__actions"><button type="submit" disabled={busy}>
         {busy ? messages.calendarSaving : messages.calendarSave}</button>

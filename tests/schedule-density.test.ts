@@ -16,8 +16,9 @@ describe("compact schedule density styles", () => {
     expect(styles).toContain("min-height: 24px;");
   });
 
-  it("overrides the global dark button hover on activity names while retaining full-row selection", () => {
+  it("overrides activity name hover and styles selected and shared-hover rows", () => {
     expect(styles).toMatch(/\.schedule-workspace \.workspace-row-name:not\(:disabled\):hover\s*\{\s*background:\s*transparent;\s*\}/);
-    expect(styles).toMatch(/\.workspace-table-row\.selected,[\s\S]*?\.workspace-chart-row\.selected,[\s\S]*?\.workspace-chart-row:hover\s*\{ background: color-mix\(in srgb, var\(--jl-primary-soft\) 58%, transparent\); \}/);
+    expect(styles).toMatch(/\.workspace-table-row\.selected,[\s\S]*?\.workspace-chart-row\.selected,[\s\S]*?\.workspace-table-row\.is-hovered,[\s\S]*?\.workspace-chart-row\.is-hovered\s*\{ background: color-mix\(in srgb, var\(--jl-primary-soft\) 58%, transparent\); \}/);
+    expect(styles).not.toMatch(/\.workspace-(?:table|chart)-row:hover/);
   });
 });
