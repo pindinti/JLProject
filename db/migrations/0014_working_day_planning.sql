@@ -30,8 +30,7 @@ GRANT INSERT (workspace_id, product_id, discipline_id, stage_id, name, activity_
   planned_start, planned_end, display_order, notes, created_by, updated_by)
   ON public.stage_activities TO jlproject_worker;
 
-GRANT SELECT ON public.workspaces, public.workspace_calendar_versions,
-  public.workspace_calendar_exceptions TO jlproject_date_executor;
+GRANT SELECT ON public.workspaces TO jlproject_date_executor;
 GRANT UPDATE (name) ON public.workspaces TO jlproject_date_executor;
 GRANT UPDATE (active) ON public.products TO jlproject_date_executor;
 GRANT UPDATE (planning_mode, working_day_duration, planning_calendar_version)

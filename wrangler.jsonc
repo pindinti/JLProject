@@ -8,6 +8,13 @@
     "run_worker_first": ["/api/*"]
   },
   "env": {
+    "e2e": {
+      "name": "jlproject-e2e",
+      "vars": {
+        "JLPROJECT_ENV": "e2e"
+      },
+      "workers_dev": false
+    },
     "production": {
       "name": "jlproject",
       "vars": {
