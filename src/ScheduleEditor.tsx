@@ -101,11 +101,13 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
   onSummaryRefresh?: () => Promise<void>;
 }) {
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
+  const [productRevealGeneration, setProductRevealGeneration] = useState(0);
   const [definitions, setDefinitions] = useState<StageDefinition[]>([]);
   const [targets, setTargets] = useState<ScheduleTarget[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error" | "notFound">("loading");
   const [openDisciplines, setOpenDisciplines] = useState<Set<string> | null>(null);
   const [openStages, setOpenStages] = useState<Set<string> | null>(null);
+  const hierarchyRequestGeneration = useRef(0);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [dateDraft, setDateDraft] = useState<DateDraft | null>(null);
   const [workingPreview, setWorkingPreview] = useState<WorkingPreview | null>(null);
@@ -162,6 +164,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
   }, [base, onAccessLost]);
 
   const load = useCallback(async (showLoading = true): Promise<boolean> => {
+    const requestGeneration = ++hierarchyRequestGeneration.current;
     if (showLoading) setState("loading");
     try {
       const [treeResponse, targetsResponse, definitionsResponse] = await Promise.all([
@@ -169,6 +172,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         authenticatedFetch(`${base}/targets`),
         canEdit ? authenticatedFetch(`/api/workspaces/${workspace.id}/stage-definitions`) : Promise.resolve(null)
       ]);
+      if (requestGeneration !== hierarchyRequestGeneration.current) return true;
       if ([treeResponse, targetsResponse, definitionsResponse].some((result) => result?.status === 401 || result?.status === 403)) {
         onAccessLost(); return false;
       }
@@ -179,6 +183,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
       const targetList = (await targetsResponse.json() as { targets: ScheduleTarget[] }).targets;
       const catalog = definitionsResponse
         ? (await definitionsResponse.json() as { stageDefinitions: StageDefinition[] }).stageDefinitions : [];
+      if (requestGeneration !== hierarchyRequestGeneration.current) return true;
       setHierarchy(tree);
       setTargets(targetList);
       setDefinitions(catalog);
@@ -186,7 +191,11 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
       setOpenStages((previous) => previous ?? new Set(tree.disciplines.flatMap((item) => item.stages.map((stage) => stage.id))));
       setState("ready");
       return true;
-    } catch { setState("error"); return false; }
+    } catch {
+      if (requestGeneration !== hierarchyRequestGeneration.current) return true;
+      setState((current) => current === "loading" ? "error" : current);
+      return false;
+    }
   }, [base, canEdit, onAccessLost, workspace.id]);
 
   async function calculateWorkingPreview(startText: string, durationText: string) {
@@ -352,9 +361,22 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         stageId: stageId ?? undefined, stageColor });
   }
 
+  function revealCreatedHierarchyItem(kind: DraftKind, id: string | null, item: Draft) {
+    const disciplineId = kind === "discipline" ? id : item.disciplineId ?? null;
+    if (disciplineId) setOpenDisciplines((current) => new Set(current ??
+      hierarchy?.disciplines.map((discipline) => discipline.id) ?? []).add(disciplineId));
+    if (kind === "stage" && id) setOpenStages((current) => new Set(current ??
+      hierarchy?.disciplines.flatMap((discipline) => discipline.stages.map((stage) => stage.id)) ?? []).add(id));
+    if (kind === "activity" && item.stageId)
+      setOpenStages((current) => new Set(current ??
+        hierarchy?.disciplines.flatMap((discipline) => discipline.stages.map((stage) => stage.id)) ?? [])
+        .add(item.stageId!));
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft || !canEdit || busy) return;
+    if (draft.kind === "stage" && (stageCodeConflict || stageCodeColorConflict)) return;
     if (draft.kind === "stage" && draft.definitionId !== newDefinition && selectedStageDefinition &&
         draft.color.toUpperCase() !== selectedStageDefinition.color.toUpperCase()) {
       setFeedback(messages.saveSharedColorFirst); return;
@@ -419,16 +441,56 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         body: JSON.stringify(data)
       });
       if (result.status === 401 || result.status === 403) { onAccessLost(); return; }
-      if (result.status === 409) { setFeedback(messages.scheduleConflict); return; }
+      if (result.status === 409) {
+        if (draft.kind === "stage") {
+          const payload = await result.json().catch(() => null) as Record<string, unknown> | null;
+          if (payload?.code === "stage_code_in_use") {
+            const conflict = payload.conflictingStage;
+            if (conflict && typeof conflict === "object") {
+              const details = conflict as Record<string, unknown>;
+              if (typeof details.code === "string" && typeof details.displayName === "string") {
+                setFeedback(messages.stageCodeAlreadyUsed(details.code, details.displayName, details.deleted === true));
+                return;
+              }
+            }
+            setFeedback(messages.stageCodeAlreadyReserved(draft.code.trim())); return;
+          }
+          if (payload?.code === "stage_definition_color_conflict") {
+            const definition = payload.definition;
+            if (definition && typeof definition === "object") {
+              const details = definition as Record<string, unknown>;
+              setFeedback(messages.stageDefinitionColorConflict(
+                typeof details.code === "string" ? details.code : draft.code.trim(),
+                typeof details.color === "string" ? details.color : undefined));
+            } else setFeedback(messages.stageDefinitionColorConflict(draft.code.trim()));
+            return;
+          }
+        }
+        setFeedback(messages.scheduleConflict); return;
+      }
       if (result.status === 404) { setFeedback(messages.scheduleNotFound); return; }
       if (!result.ok) { setFeedback(messages.scheduleSaveError); return; }
+      let createdId: string | null = null;
+      if (!draft.id) {
+        const payload = await result.json().catch(() => null) as Record<string, unknown> | null;
+        const entity = payload?.[draft.kind];
+        if (entity && typeof entity === "object" && "id" in entity && typeof entity.id === "string")
+          createdId = entity.id;
+        revealCreatedHierarchyItem(draft.kind, createdId, draft);
+        setProductRevealGeneration((current) => current + 1);
+      }
       if (draft.colorSelected) rememberRecentCustomColor(userId,
         draft.kind === "activity" ? draft.colorOverride : draft.color);
       closeDraft();
       setFeedback(messages.scheduleSaved);
-      await load(false);
+      if (!(await load(false))) setFeedback(messages.scheduleSavedRefreshError);
     } catch { setFeedback(messages.scheduleSaveError); }
     finally { setBusy(false); }
+  }
+
+  async function retrySavedHierarchyRefresh() {
+    if (await load(false)) setFeedback(messages.scheduleSaved);
+    else setFeedback(messages.scheduleSavedRefreshError);
   }
 
   async function saveDates(event: FormEvent<HTMLFormElement>) {
@@ -562,6 +624,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
 
   function changeDefinition(id: string) {
     const selected = definitions.find((definition) => definition.id === id);
+    setFeedback("");
     setDraft((previous) => previous ? { ...previous, definitionId: id,
       code: selected?.code ?? "", color: selected?.color ?? "#336699", colorSelected: false } : null);
   }
@@ -598,6 +661,19 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
 
   const selectedStageDefinition = draft?.kind === "stage"
     ? definitions.find((item) => item.id === draft.definitionId) : undefined;
+  const draftDiscipline = draft?.kind === "stage" && draft.disciplineId
+    ? hierarchy?.disciplines.find((item) => item.id === draft.disciplineId) : undefined;
+  const stageCodeConflict = draft?.kind === "stage" && draft.code.trim()
+    ? draftDiscipline?.stages.find((item) => item.id !== draft.id &&
+      item.code.toLowerCase() === draft.code.trim().toLowerCase()) : undefined;
+  const typedStageDefinition = draft?.kind === "stage"
+    ? definitions.find((item) => item.code.toLowerCase() === draft.code.trim().toLowerCase()) : undefined;
+  const stageCodeColorConflict = draft?.kind === "stage" && draft.definitionId === newDefinition &&
+    !!typedStageDefinition && draft.color.toUpperCase() !== typedStageDefinition.color.toUpperCase();
+  const stageCodeFeedback = stageCodeConflict
+    ? messages.stageCodeAlreadyUsed(stageCodeConflict.code, stageCodeConflict.displayName)
+    : stageCodeColorConflict && typedStageDefinition
+      ? messages.stageDefinitionColorConflict(typedStageDefinition.code, typedStageDefinition.color) : "";
   const sharedStageColorChanged = !!selectedStageDefinition && draft?.kind === "stage" &&
     draft.color.toUpperCase() !== selectedStageDefinition.color.toUpperCase();
 
@@ -750,10 +826,14 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
               setImpactOpen(true);
             }}>{messages.reviewCalendarImpacts}</button>
           </div>}
-          {feedback && !draft && <div role="alert" className="feedback"><p>{feedback}</p></div>}
+          {feedback && !draft && <div role="alert" className="feedback"><p>{feedback}</p>
+            {feedback === messages.scheduleSavedRefreshError && <button type="button"
+              onClick={() => void retrySavedHierarchyRefresh()}>{messages.refreshHierarchy}</button>}
+          </div>}
           {hierarchy.disciplines.length === 0 && (hierarchy.rootActivities?.length ?? 0) === 0 &&
             <p>{messages.noDisciplines}</p>}
           <ScheduleWorkspace key={`${workspace.id}:${product.id}`} workspaceId={workspace.id} userId={userId}
+            revealProductGeneration={productRevealGeneration}
             product={product} tree={hierarchy} targets={targets}
             calendarImpacts={impactOpen ? visibleImpacts : undefined}
             openDisciplines={openDisciplines ?? new Set()} openStages={openStages ?? new Set()}
@@ -765,7 +845,8 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
             onMoveHierarchyItem={moveActivity}
             onRefresh={async () => {
               closeDraft();
-              await load(false);
+              const refreshed = await load(false);
+              if (!refreshed) setFeedback(messages.scheduleRefreshError);
               await onSummaryRefresh?.();
             }} onHistory={openHistory}
             onProductHistory={() => { setProductHistoryActivity(null); setProductHistoryOpen(true); }}
@@ -919,15 +1000,24 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         </>}
         {draft.kind === "stage" && <>
           <label htmlFor="stage-definition">{messages.stageDefinition}</label>
-          <select id="stage-definition" value={draft.definitionId}
+          <select id="stage-definition" value={draft.definitionId} aria-invalid={!!stageCodeConflict}
+            aria-describedby={stageCodeFeedback ? "stage-code-feedback" : undefined}
             onChange={(event) => changeDefinition(event.target.value)}>
             <option value={newDefinition}>{messages.newStageCode}</option>
-            {definitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.code}</option>)}
+            {definitions.map((definition) => {
+              const usedStage = !draft.id ? draftDiscipline?.stages.find((item) =>
+                item.code.toLowerCase() === definition.code.toLowerCase()) : undefined;
+              return <option key={definition.id} value={definition.id} disabled={!!usedStage}>
+                {usedStage ? messages.stageDefinitionUsedInDiscipline(definition.code, usedStage.displayName) : definition.code}
+              </option>;
+            })}
           </select>
           {draft.definitionId === newDefinition && <>
             <label htmlFor="stage-code">{messages.stageCode}</label>
             <input id="stage-code" required maxLength={24} value={draft.code}
-              onChange={(event) => setDraft({ ...draft, code: event.target.value })} />
+              aria-invalid={!!stageCodeConflict || stageCodeColorConflict}
+              aria-describedby={stageCodeFeedback ? "stage-code-feedback" : undefined}
+              onChange={(event) => { setFeedback(""); setDraft({ ...draft, code: event.target.value }); }} />
             <ColorField id="stage-color" label={messages.color} value={draft.color} userId={userId}
               onChange={(color) => setDraft({ ...draft, color, colorSelected: true })} />
           </>}
@@ -944,6 +1034,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
           <label htmlFor="stage-name">{messages.stageName}</label>
           <input id="stage-name" required maxLength={200} value={draft.displayName}
             onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} />
+          {stageCodeFeedback && <p id="stage-code-feedback" role="alert" className="feedback">{stageCodeFeedback}</p>}
         </>}
         {draft.kind === "activity" && <>
           <label htmlFor="activity-name">{messages.activityName}</label>

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => {
   const calls: string[] = [];
-  const query = vi.fn(async (strings: TemplateStringsArray) => {
+  const query = vi.fn(async (strings: TemplateStringsArray): Promise<Record<string, unknown>[]> => {
     calls.push(strings.join(" "));
     return [];
   });
@@ -93,6 +93,46 @@ describe("product row locks for clone consistency", () => {
     expect(database.calls[4]).toContain("d.deleted_at IS NULL");
     expect(database.calls[4]).toContain("s.deleted_at IS NULL");
     expect(database.calls[4]).toContain("a.deleted_at IS NULL");
+  });
+
+  it("identifies the existing same-discipline stage when a definition code is duplicated", async () => {
+    database.query.mockImplementationOnce(async (strings) => {
+      database.calls.push(strings.join(" "));
+      return [{ result: "duplicate" }];
+    }).mockImplementationOnce(async (strings) => {
+      database.calls.push(strings.join(" "));
+      return [{ code: "MV", displayName: "Imagens de Vendas", deleted: true }];
+    });
+
+    const result = await repository().createStage(workspaceId, productId,
+      "d3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, {
+        code: "mv", color: "#8D9A89", displayName: "Maquete Física", displayOrder: 1
+      });
+
+    expect(result).toEqual({ status: "duplicate", conflict: {
+      code: "MV", displayName: "Imagens de Vendas", deleted: true
+    } });
+    expect(database.calls[1]).toContain("lower(def.code) = lower(");
+    expect(database.calls[1]).toContain("s.deleted_at IS NOT NULL");
+    expect(database.calls[1]).not.toContain("s.deleted_at IS NULL");
+  });
+
+  it("returns the workspace-shared color for a conflicting definition code", async () => {
+    database.query.mockImplementationOnce(async (strings) => {
+      database.calls.push(strings.join(" "));
+      return [{ result: "conflict" }];
+    }).mockImplementationOnce(async (strings) => {
+      database.calls.push(strings.join(" "));
+      return [{ code: "MF", color: "#8D9A89" }];
+    });
+
+    const result = await repository().createStage(workspaceId, productId,
+      "d3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, {
+        code: "MF", color: "#336699", displayName: "Maquete Física", displayOrder: 1
+      });
+
+    expect(result).toEqual({ status: "conflict", definition: { code: "MF", color: "#8D9A89" } });
+    expect(database.calls[1]).toContain("lower(code) = lower(");
   });
 
   it("lists active root activities in display order and matches root activity parents as null", async () => {

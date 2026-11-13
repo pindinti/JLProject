@@ -819,8 +819,25 @@ describe("schedule editor", () => {
   });
 
   it("creates a discipline with ordered metadata", async () => {
+    const createdDiscipline = { ...destinationDiscipline, id: "created-discipline",
+      name: "Created discipline", shortCode: "NEW", displayOrder: 1 };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [discipline] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/disciplines") && options?.method === "POST") {
+        currentTree = { ...currentTree, disciplines: [...currentTree.disciplines, createdDiscipline] };
+        return Promise.resolve(json({ discipline: createdDiscipline }, 201));
+      }
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
     mount("editor");
-    fireEvent.click(await screen.findByRole("button", { name: "Adicionar disciplina" }));
+    await screen.findByText("Synthetic activity");
+    const productRow = document.querySelector<HTMLElement>(`[data-row-key="product:${product.id}"]`)!;
+    fireEvent.click(within(productRow).getByRole("button", { name: "Expandir ou recolher Synthetic product" }));
+    expect(within(productRow).getByRole("button", { name: "Expandir ou recolher Synthetic product" }))
+      .toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar disciplina" }));
     fireEvent.change(screen.getByLabelText("Nome da disciplina"), { target: { value: "Nova disciplina" } });
     fireEvent.change(screen.getByLabelText("Código da disciplina"), { target: { value: "NEW" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
@@ -828,6 +845,9 @@ describe("schedule editor", () => {
       `/api/workspaces/${workspace.id}/products/${product.id}/disciplines`,
       expect.objectContaining({ method: "POST", body: expect.stringContaining('"shortCode":"NEW"') })
     ));
+    expect(await screen.findByText(/Created discipline/, { selector: ".workspace-row-name" })).toBeInTheDocument();
+    expect(within(productRow).getByRole("button", { name: "Expandir ou recolher Synthetic product" }))
+      .toHaveAttribute("aria-expanded", "true");
   });
 
   it("confirms a discipline metadata edit with its current version", async () => {
@@ -845,17 +865,245 @@ describe("schedule editor", () => {
   });
 
   it("selects a shared stage definition and preserves its color", async () => {
+    const sharedDefinition = { id: "shared-mf-definition", code: "MF", color: "#8D9A89" };
+    const sourceStage = { ...emptyStage, id: "source-mf-stage", code: "MF", color: sharedDefinition.color,
+      displayName: "Source Maquette" };
+    const sourceDiscipline = { ...discipline, stages: [...discipline.stages, sourceStage] };
+    const targetDiscipline = { ...destinationDiscipline, stages: [] };
+    const createdStage = { ...emptyStage, id: "target-mf-stage", disciplineId: targetDiscipline.id,
+      code: "MF", color: sharedDefinition.color, displayName: "Target Maquette", displayOrder: 0 };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [sourceDiscipline, targetDiscipline] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/stage-definitions")) return Promise.resolve(json({ stageDefinitions: [...definitions, sharedDefinition] }));
+      if (path.endsWith(`/disciplines/${targetDiscipline.id}/stages`) && options?.method === "POST") {
+        currentTree = { ...currentTree, disciplines: [sourceDiscipline, { ...targetDiscipline, stages: [createdStage] }] };
+        return Promise.resolve(json({ stage: createdStage }, 201));
+      }
+      return Promise.resolve(json({ stageDefinitions: [...definitions, sharedDefinition] }));
+    });
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Adicionar etapa" }));
-    fireEvent.change(screen.getByLabelText("Código compartilhado da etapa"), { target: { value: definitions[0].id } });
-    expect(screen.getByText("Alterar e salvar esta cor afeta todas as etapas que usam a definição EC.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue("#336699");
-    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Nova etapa" } });
+    await screen.findByText("Synthetic activity");
+    const targetRow = document.querySelector<HTMLElement>(`[data-row-key="discipline:${targetDiscipline.id}"]`)!;
+    fireEvent.click(within(targetRow).getByRole("button", { name: "Adicionar etapa" }));
+    expect(screen.getByRole("option", { name: "MF" })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "MF" } });
+    expect(screen.getByText(
+      "O código MF já possui a cor compartilhada #8D9A89. Selecione a definição existente ou escolha outro código.",
+      { selector: "#stage-code-feedback" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-    await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
-      expect.stringContaining(`/disciplines/${discipline.id}/stages`),
-      expect.objectContaining({ method: "POST", body: expect.stringContaining('"color":"#336699"') })
-    ));
+    expect(api.fetch.mock.calls.some(([path, options]) => String(path).endsWith("/stages") && options?.method === "POST"))
+      .toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Código compartilhado da etapa"), { target: { value: sharedDefinition.id } });
+    expect(screen.getByLabelText("Código hexadecimal")).toHaveValue(sharedDefinition.color);
+    expect(screen.queryByText(/já possui a cor compartilhada/, { selector: "#stage-code-feedback" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Target Maquette" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    expect(await screen.findByRole("button", { name: "Target Maquette (MF)" })).toBeInTheDocument();
+    expect(api.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/disciplines/${targetDiscipline.id}/stages`),
+      expect.objectContaining({ method: "POST", body: expect.stringContaining('"code":"MF"') })
+    );
+    expect(api.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/disciplines/${targetDiscipline.id}/stages`),
+      expect.objectContaining({ method: "POST", body: expect.stringContaining('"color":"#8D9A89"') })
+    );
+  });
+
+  it("reveals a created stage under a collapsed discipline and preserves other expansion choices across refresh and reload", async () => {
+    const unrelatedStage = { ...emptyStage, id: "unrelated-stage", displayName: "Unrelated stage" };
+    const unrelatedDiscipline = { ...discipline, id: "unrelated-discipline", name: "Unrelated discipline",
+      stages: [unrelatedStage] };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [discipline, unrelatedDiscipline] };
+    const createdStage = { ...emptyStage, id: "created-stage", code: "MF", displayName: "Maquete Física" };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/stages") && options?.method === "POST") {
+        currentTree = { ...currentTree, disciplines: [
+          { ...discipline, stages: [...discipline.stages, createdStage] }, unrelatedDiscipline
+        ] };
+        return Promise.resolve(json({ stage: createdStage }, 201));
+      }
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+
+    const view = render(<ScheduleEditor workspace={{ ...workspace, role: "admin" }} product={product}
+      userId={userId} onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    await screen.findByText("Synthetic activity");
+    fireEvent.click(screen.getByRole("button", { name: "Expandir ou recolher Unrelated discipline" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expandir ou recolher Synthetic discipline" }));
+    const disciplineRow = view.container.querySelector<HTMLElement>(`[data-row-key="discipline:${discipline.id}"]`)!;
+    fireEvent.click(within(disciplineRow).getByRole("button", { name: "Adicionar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "MF" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Maquete Física" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    expect(await screen.findByRole("button", { name: "Maquete Física (MF)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir ou recolher Synthetic discipline" }))
+      .toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Expandir ou recolher Unrelated discipline" }))
+      .toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Nenhuma atividade cadastrada nesta etapa.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Atualizar dados" })[0]);
+    expect(await screen.findByRole("button", { name: "Maquete Física (MF)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir ou recolher Unrelated discipline" }))
+      .toHaveAttribute("aria-expanded", "false");
+
+    view.unmount();
+    render(<ScheduleEditor workspace={{ ...workspace, role: "admin" }} product={product}
+      userId={userId} onBack={vi.fn()} onAccessLost={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Maquete Física (MF)" })).toBeInTheDocument();
+  });
+
+  it("keeps successful creation distinct from a failed hierarchy refresh and offers refresh without resubmitting", async () => {
+    let hierarchyRequests = 0;
+    let currentTree: EditorTree = { productId: product.id, disciplines: [discipline] };
+    const createdStage = { ...emptyStage, id: "created-after-refresh-failure", code: "NEW", displayName: "Created after failure" };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) {
+        hierarchyRequests++;
+        return Promise.resolve(hierarchyRequests === 2 ? json({ error: "unavailable" }, 503)
+          : json({ hierarchy: currentTree }));
+      }
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/stages") && options?.method === "POST") {
+        currentTree = { ...currentTree, disciplines: [{ ...discipline, stages: [...discipline.stages, createdStage] }] };
+        return Promise.resolve(json({ stage: createdStage }, 201));
+      }
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount();
+    await screen.findByRole("button", { name: "Adicionar etapa" });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "NEW" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Created after failure" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    expect(await screen.findByText(/A alteração foi salva, mas não foi possível atualizar o cronograma\./))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Adicionar etapa" })).not.toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([path, options]) => String(path).endsWith("/stages") && options?.method === "POST"))
+      .toHaveLength(1);
+    fireEvent.click(screen.getAllByRole("button", { name: "Atualizar dados" })
+      .find((button) => button.closest(".feedback"))!);
+    expect(await screen.findByText(/Created after failure/, { selector: ".workspace-row-name" })).toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([path, options]) => String(path).endsWith("/stages") && options?.method === "POST"))
+      .toHaveLength(1);
+  });
+
+  it("reveals a created activity after reopening its collapsed stage", async () => {
+    const createdActivity = { ...activity, id: "created-activity", name: "Created activity", displayOrder: 1 };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [discipline] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith(`/disciplines/${discipline.id}/stages/${stage.id}/activities`) && options?.method === "POST") {
+        const currentDiscipline = currentTree.disciplines[0] as typeof discipline;
+        currentTree = { ...currentTree, disciplines: [{ ...currentDiscipline, stages: currentDiscipline.stages.map((item) =>
+          item.id === stage.id ? { ...item, activities: [...item.activities, createdActivity] } : item) }] };
+        return Promise.resolve(json({ activity: createdActivity }, 201));
+      }
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount();
+    await screen.findByText("Synthetic activity");
+    fireEvent.click(screen.getByRole("button", { name: "Expandir ou recolher Synthetic stage" }));
+    const stageRow = document.querySelector<HTMLElement>(`[data-row-key="stage:${stage.id}"]`)!;
+    fireEvent.click(within(stageRow).getByRole("button", { name: "Adicionar atividade" }));
+    fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "Created activity" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    expect(await screen.findByText(/Created activity/, { selector: ".workspace-row-name" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir ou recolher Synthetic discipline" }))
+      .toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Expandir ou recolher Synthetic stage" }))
+      .toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("does not let an older hierarchy request replace a newer response", async () => {
+    let hierarchyRequests = 0;
+    let resolveOlder: ((response: Response) => void) | undefined;
+    let resolveNewer: ((response: Response) => void) | undefined;
+    const older = new Promise<Response>((resolve) => { resolveOlder = resolve; });
+    const newer = new Promise<Response>((resolve) => { resolveNewer = resolve; });
+    api.fetch.mockImplementation((path: string) => {
+      if (path.endsWith("/hierarchy")) {
+        hierarchyRequests++;
+        if (hierarchyRequests === 2) return older;
+        if (hierarchyRequests === 3) return newer;
+        return Promise.resolve(json({ hierarchy: { productId: product.id, disciplines: [discipline] } }));
+      }
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount();
+    await screen.findByText("Synthetic activity");
+    fireEvent.click(screen.getByRole("button", { name: "Atualizar dados" }));
+    fireEvent.click(screen.getByRole("button", { name: "Atualizar dados" }));
+    await waitFor(() => expect(hierarchyRequests).toBe(3));
+    const newerDiscipline = { ...discipline, id: "newest-discipline", name: "Newest hierarchy" };
+    await act(async () => resolveNewer?.(json({ hierarchy: { productId: product.id, disciplines: [newerDiscipline] } })));
+    expect(await screen.findByText(/Newest hierarchy/, { selector: ".workspace-row-name" })).toBeInTheDocument();
+    const olderDiscipline = { ...discipline, id: "older-discipline", name: "Stale hierarchy" };
+    await act(async () => resolveOlder?.(json({ hierarchy: { productId: product.id, disciplines: [olderDiscipline] } })));
+    expect(screen.getByText(/Newest hierarchy/, { selector: ".workspace-row-name" })).toBeInTheDocument();
+    expect(screen.queryByText(/Stale hierarchy/, { selector: ".workspace-row-name" })).not.toBeInTheDocument();
+  });
+
+  it("reports the conflicting stage from a duplicate response and keeps the draft available", async () => {
+    const emptyDiscipline = { ...discipline, stages: [] };
+    const currentTree: EditorTree = { productId: product.id, disciplines: [emptyDiscipline] };
+    const conflict = { code: "MF", displayName: "Concurrent Maquette", deleted: false };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/stages") && options?.method === "POST") return Promise.resolve(json({
+        code: "stage_code_in_use", conflictingStage: conflict
+      }, 409));
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount();
+    await screen.findByRole("button", { name: "Adicionar etapa" });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "MF" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Maquete Física" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(await screen.findByText("O código MF já está sendo usado pela etapa “Concurrent Maquette” nesta disciplina.",
+      { selector: ".feedback p" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Nome da etapa")).toHaveValue("Maquete Física");
+    expect(screen.getByLabelText("Código da etapa")).toHaveValue("MF");
+    expect(api.fetch.mock.calls.filter(([path, options]) => String(path).endsWith("/stages") && options?.method === "POST"))
+      .toHaveLength(1);
+  });
+
+  it("blocks a code already used in the same discipline and identifies the existing stage", async () => {
+    const existingStage = { ...stage, code: "MV", displayName: "Imagens de Vendas" };
+    const affectedDiscipline = { ...discipline, stages: [existingStage] };
+    const currentTree: EditorTree = { productId: product.id, disciplines: [affectedDiscipline] };
+    const mvDefinition = { id: "mv-definition", code: "MV", color: "#8D9A89" };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/stages") && options?.method === "POST") return Promise.resolve(json({ stage: {} }, 201));
+      return Promise.resolve(json({ stageDefinitions: [mvDefinition] }));
+    });
+    mount();
+    await screen.findByRole("button", { name: "Adicionar etapa" });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar etapa" }));
+    expect(screen.getByRole("option", { name: "MV — já usado por “Imagens de Vendas” nesta disciplina" }))
+      .toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "MV" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Maquete Física" } });
+    expect(screen.getByText("O código MV já está sendo usado pela etapa “Imagens de Vendas” nesta disciplina.",
+      { selector: "#stage-code-feedback" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(api.fetch.mock.calls.filter(([path, options]) => String(path).endsWith("/stages") && options?.method === "POST"))
+      .toHaveLength(0);
   });
 
   it("edits a stage using its shared definition and version", async () => {
@@ -1213,10 +1461,26 @@ describe("schedule editor", () => {
   });
 
   it("creates root activities with the default color, custom colors, and manual dates through the product route", async () => {
+    const createdRootActivity = { ...rootActivity, id: "created-root-activity", name: "New root activity",
+      plannedStart: "2026-11-11", plannedEnd: "2026-11-13", colorOverride: "#123ABC", displayOrder: 0 };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [discipline], rootActivities: [] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/root-activities") && options?.method === "POST") {
+        currentTree = { ...currentTree, rootActivities: [...(currentTree.rootActivities ?? []), createdRootActivity] };
+        return Promise.resolve(json({ activity: createdRootActivity }, 201));
+      }
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
     const { container } = render(<ScheduleEditor workspace={workspace} product={product} userId={userId}
       onBack={vi.fn()} onAccessLost={vi.fn()} />);
     await waitFor(() => expect(container.querySelector(`[data-row-key="product:${product.id}"]`)).toBeInTheDocument());
     const productRow = container.querySelector<HTMLElement>(`[data-row-key="product:${product.id}"]`)!;
+    await screen.findByText("Synthetic activity");
+    fireEvent.click(within(productRow).getByRole("button", { name: "Expandir ou recolher Synthetic product" }));
+    expect(within(productRow).getByRole("button", { name: "Expandir ou recolher Synthetic product" }))
+      .toHaveAttribute("aria-expanded", "false");
     fireEvent.click(within(productRow).getByRole("button", { name: "Adicionar atividade" }));
     expect(screen.getByText(/cor padr.*atividade de produto \(#8D9A89\)/i)).toBeInTheDocument();
     expect(screen.queryByText(/cor da etapa/i)).not.toBeInTheDocument();
@@ -1242,6 +1506,9 @@ describe("schedule editor", () => {
         plannedStart: "2026-11-11", plannedEnd: "2026-11-13" }) })
     ));
     expect(readRecentCustomColors(userId)).toEqual(["#123ABC"]);
+    expect(await screen.findByText(/New root activity/, { selector: ".workspace-row-name" })).toBeInTheDocument();
+    expect(within(productRow).getByRole("button", { name: "Expandir ou recolher Synthetic product" }))
+      .toHaveAttribute("aria-expanded", "true");
   });
 
   it("edits root overrides, saves root dates through the parentless route, and opens activity history", async () => {

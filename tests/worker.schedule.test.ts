@@ -703,6 +703,34 @@ describe("schedule hierarchy API", () => {
       { ...activityInput, activityType: null, notes: null });
   });
 
+  it("returns the conflicting stage when a stage code is already used in the discipline", async () => {
+    const conflict = { code: "MV", displayName: "Imagens de Vendas", deleted: false };
+    const input = { code: "MV", color: "#8D9A89", displayName: "Maquete Física", displayOrder: 1 };
+    const response = await call(request(stages, "POST", input), "editor", {
+      ...repository(), createStage: vi.fn(async () => ({ status: "duplicate" as const, conflict }))
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stage_code_in_use", conflictingStage: conflict,
+      error: "O código MV já está sendo usado pela etapa “Imagens de Vendas” nesta disciplina."
+    });
+  });
+
+  it("identifies a shared definition color conflict without changing the definition", async () => {
+    const definition = { code: "MF", color: "#8D9A89" };
+    const input = { code: "MF", color: "#336699", displayName: "Maquete Física", displayOrder: 1 };
+    const response = await call(request(stages, "POST", input), "editor", {
+      ...repository(), createStage: vi.fn(async () => ({ status: "conflict" as const, definition }))
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stage_definition_color_conflict", definition,
+      error: "O código MF já possui a cor compartilhada #8D9A89 neste espaço de trabalho."
+    });
+  });
+
   it("lists and creates product-scoped root activities with optional color overrides", async () => {
     const repo = repository();
     vi.mocked(repo.listRootActivities).mockResolvedValue([rootA]);

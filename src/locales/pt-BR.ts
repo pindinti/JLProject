@@ -364,6 +364,8 @@ export const messages = {
   scheduleNotFound: "Cronograma não encontrado.",
   scheduleLoadError: "Não foi possível carregar o cronograma. Tente novamente.",
   refreshHierarchy: "Atualizar dados",
+  scheduleRefreshError: "Não foi possível atualizar o cronograma. Tente novamente.",
+  scheduleSavedRefreshError: "A alteração foi salva, mas não foi possível atualizar o cronograma. Atualize os dados; não é necessário salvar novamente.",
   calendarImpactNotice: (count: number) => `${count.toLocaleString("pt-BR")} ${count === 1 ? "atividade com alteração de data proposta" : "atividades com alterações de data propostas"}`,
   reviewCalendarImpacts: "Revisar impactos",
   calendarImpactTitle: "Prévia de impactos do calendário",
@@ -422,6 +424,14 @@ export const messages = {
   newStageCode: "Novo código de etapa",
   stageCode: "Código da etapa",
   stageName: "Nome da etapa",
+  stageDefinitionUsedInDiscipline: (code: string, stageName: string) => `${code} — já usado por “${stageName}” nesta disciplina`,
+  stageCodeAlreadyUsed: (code: string, stageName: string, deleted = false) => deleted
+    ? `O código ${code} está reservado pela etapa removida “${stageName}” nesta disciplina.`
+    : `O código ${code} já está sendo usado pela etapa “${stageName}” nesta disciplina.`,
+  stageCodeAlreadyReserved: (code: string) => `O código ${code} já está reservado por uma etapa nesta disciplina. Atualize os dados e tente novamente.`,
+  stageDefinitionColorConflict: (code: string, color?: string) => color
+    ? `O código ${code} já possui a cor compartilhada ${color}. Selecione a definição existente ou escolha outro código.`
+    : `O código ${code} já possui uma cor compartilhada diferente. Selecione a definição existente ou escolha outro código.`,
   sharedStageColor: (code: string) => `Alterar e salvar esta cor afeta todas as etapas que usam a definição ${code}.`,
   saveSharedStageColor: "Salvar cor compartilhada",
   sharedStageColorSaved: "Cor compartilhada atualizada para todas as etapas que usam esta definição.",

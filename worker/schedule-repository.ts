@@ -36,6 +36,12 @@ export interface ScheduleHierarchy {
   disciplines: (Discipline & { stages: (Stage & { activities: Activity[] })[] })[];
 }
 export interface StageDefinition { id: string; code: string; color: string }
+export interface StageCodeConflict { code: string; displayName: string; deleted: boolean }
+export interface StageDefinitionColorConflict { code: string; color: string }
+export type StageCreateMutation = { status: "ok"; value: Stage } |
+  { status: "duplicate"; conflict?: StageCodeConflict } |
+  { status: "conflict"; definition?: StageDefinitionColorConflict } |
+  { status: "not_found" };
 export type StageDefinitionColorMutation = { status: "ok"; value: StageDefinition } |
   { status: "not_found" } | { status: "stale" };
 export interface BusinessTarget { id: string; name: string; description: string | null; color: string;
@@ -131,7 +137,7 @@ export interface ScheduleRepository {
   createDiscipline(workspaceId: string, productId: string, actorId: string, input: DisciplineInput): Promise<Mutation<Discipline>>;
   updateDiscipline(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: DisciplineInput, version: number): Promise<Mutation<Discipline>>;
   listStages(workspaceId: string, productId: string, disciplineId: string): Promise<Stage[]>;
-  createStage(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: StageInput): Promise<Mutation<Stage>>;
+  createStage(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: StageInput): Promise<StageCreateMutation>;
   updateStage(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: StageInput, version: number): Promise<Mutation<Stage>>;
   listActivities(workspaceId: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]>;
   listRootActivities(workspaceId: string, productId: string): Promise<Activity[]>;
@@ -530,7 +536,29 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${actorId}::uuid,
         ${input.code}, ${input.color}, ${input.displayName}, ${input.displayOrder}) AS result`;
       const result = text(rows[0]?.["result"]);
-      if (result === "not_found" || result === "duplicate" || result === "conflict") return { status: result };
+      if (result === "duplicate") {
+        const conflicts = await sql`SELECT def.code, s.display_name AS "displayName",
+            (s.deleted_at IS NOT NULL) AS deleted
+          FROM public.discipline_stages AS s
+          JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = s.workspace_id
+          WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
+            AND s.discipline_id = ${disciplineId}::uuid AND lower(def.code) = lower(${input.code})
+          ORDER BY s.deleted_at NULLS FIRST, s.display_order, s.id LIMIT 1`;
+        const conflict = conflicts[0];
+        return { status: "duplicate", ...(conflict ? { conflict: {
+          code: text(conflict["code"]), displayName: text(conflict["displayName"]),
+          deleted: conflict["deleted"] === true
+        } } : {}) };
+      }
+      if (result === "conflict") {
+        const definitions = await sql`SELECT code, color FROM public.stage_definitions
+          WHERE workspace_id = ${ws}::uuid AND lower(code) = lower(${input.code}) LIMIT 1`;
+        const definition = definitions[0];
+        return { status: "conflict", ...(definition ? { definition: {
+          code: text(definition["code"]), color: text(definition["color"])
+        } } : {}) };
+      }
+      if (result === "not_found") return { status: "not_found" };
       const value = await findStage(ws, productId, disciplineId, result);
       return value ? { status: "ok", value } : { status: "not_found" };
     },

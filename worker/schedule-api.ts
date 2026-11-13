@@ -6,7 +6,7 @@ import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
   type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type HierarchyMoveInput, type Mutation,
-  type ProductChangeHistoryCursor, type ScheduleRepository, type StageInput } from "./schedule-repository";
+  type ProductChangeHistoryCursor, type ScheduleRepository, type StageCreateMutation, type StageInput } from "./schedule-repository";
 
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|change-history|targets|disciplines|root-activities)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -314,6 +314,25 @@ function mutation<T>(result: Mutation<T>, noun: string, created = false): Respon
   if (result.status === "stale_calendar") return response({ error: "O calendário mudou. Recalcule a previsão e tente novamente.", code: "stale_calendar" }, 409);
   if (result.status === "conflict") return response({ error: "O código da etapa já possui outra cor neste espaço de trabalho." }, 409);
   return response({ error: "O item foi alterado. Atualize os dados e tente novamente." }, 409);
+}
+function stageCreateMutation(result: StageCreateMutation): Response {
+  if (result.status === "duplicate") {
+    const conflict = result.conflict;
+    const error = conflict
+      ? conflict.deleted
+        ? `O código ${conflict.code} está reservado pela etapa removida “${conflict.displayName}” nesta disciplina.`
+        : `O código ${conflict.code} já está sendo usado pela etapa “${conflict.displayName}” nesta disciplina.`
+      : "Este código já está reservado por uma etapa nesta disciplina.";
+    return response({ error, code: "stage_code_in_use", ...(conflict ? { conflictingStage: conflict } : {}) }, 409);
+  }
+  if (result.status === "conflict") {
+    const definition = result.definition;
+    const error = definition
+      ? `O código ${definition.code} já possui a cor compartilhada ${definition.color} neste espaço de trabalho.`
+      : "O código informado já possui outra cor neste espaço de trabalho.";
+    return response({ error, code: "stage_definition_color_conflict", ...(definition ? { definition } : {}) }, 409);
+  }
+  return mutation(result, "stage", true);
 }
 function targetMutation(result: Mutation<unknown>, created = false): Response {
   if (result.status === "ok") return response({ target: result.value }, created ? 201 : 200);
@@ -640,7 +659,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     if (request.method === "POST" && !stageId) {
       const value = await body(request); const parsed = value && stageInput(value, false);
       if (!parsed) return response({ error: "Dados inválidos." }, 400);
-      return mutation(await repository.createStage(ws, productId, disciplineId, identity.subject, parsed.input), "stage", true);
+      return stageCreateMutation(await repository.createStage(ws, productId, disciplineId, identity.subject, parsed.input));
     }
     if (request.method === "PATCH" && stageId) {
       const value = await body(request); const parsed = value && stageInput(value, true);

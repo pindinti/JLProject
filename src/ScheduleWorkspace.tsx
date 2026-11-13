@@ -31,7 +31,7 @@ type DropTarget = { rowKey: string; kind: HierarchyMoveKind; parentId: string | 
   index: number; position: "before" | "after" | "append" };
 
 export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDisciplines, openStages,
-  canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
+  revealProductGeneration = 0, canEdit, calendarImpacts = noCalendarImpacts, onToggle, onEdit, onAdd, onAddDiscipline,
   onAddRootActivity,
   onRefresh, onHistory, onProductHistory, onRescheduleHistory, onCreateTarget, onUpdateTarget, onDeleteTarget,
   onMoveActivity = async () => "error",
@@ -39,6 +39,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   userId, onAccessLost = () => undefined }: {
   product: { id: string; name: string }; tree: ScheduleTree; targets: ScheduleTarget[]; workspaceId?: string;
   userId?: string | null;
+  revealProductGeneration?: number;
   openDisciplines: ReadonlySet<string>; openStages: ReadonlySet<string>; canEdit: boolean;
   calendarImpacts?: ActivityCalendarImpact[];
   onToggle: (row: VisibleRow) => void; onEdit: (row: VisibleRow) => void;
@@ -65,7 +66,9 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     const initial = makeTimeline(tree, targets, "week", today);
     return { startDay: initial.startDay, endDay: initial.endDay };
   });
-  const [productExpanded, setProductExpanded] = useState(true);
+  const [productExpansion, setProductExpansion] = useState({ expanded: true, acknowledgedRevealGeneration: 0 });
+  const productExpanded = revealProductGeneration > productExpansion.acknowledgedRevealGeneration
+    ? true : productExpansion.expanded;
   const [mobilePane, setMobilePane] = useState<"table" | "gantt">("table");
   const [targetDialog, setTargetDialog] = useState<ScheduleTarget | "new" | null>(null);
   const [deletionTarget, setDeletionTarget] = useState<DeletionTarget | null>(null);
@@ -805,7 +808,9 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
             }px` }}>
               {row.hasChildren && <button type="button" className="workspace-expand" aria-expanded={row.expanded}
                 aria-label={messages.toggleScheduleRow(row.label)} onClick={() => {
-                  if (row.kind === "product") setProductExpanded((value) => !value);
+                    if (row.kind === "product") setProductExpansion({
+                      expanded: !productExpanded, acknowledgedRevealGeneration: revealProductGeneration
+                    });
                   else onToggle(row);
                 }}>
                 {row.expanded ? "▾" : "▸"}
