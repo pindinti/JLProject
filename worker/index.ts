@@ -16,12 +16,14 @@ import { handleImportRequest, isImportRoute, type ImportRepositoryFactory } from
 import { createImportRepository } from "./import-repository";
 import { handleCalendarRequest, isCalendarRoute, type CalendarRepositoryFactory } from "./calendar-api";
 import { createCalendarRepository } from "./calendar-repository";
+import { createExecutiveGanttRepository, type ExecutiveGanttRepository } from "./executive-gantt";
 
 const healthPath = "/api/health";
 const databaseConnectivityPath = "/api/internal/database-connectivity";
 const sessionPath = "/api/auth/session";
 const workspaceMembershipPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/membership$/i;
 const workspacesPath = "/api/workspaces";
+const executiveGanttPath = /^\/api\/workspaces\/([^/]+)\/executive-gantt$/;
 const membersPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships$/i;
 const memberPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships\/([0-9a-f-]{36})$/i;
 const stageCatalogPath = /^\/api\/workspaces\/([^/]+)\/stage-definitions$/;
@@ -33,6 +35,7 @@ type IdentityVerifier = (request: Request, environment: WorkerEnvironment) => Pr
 type MembershipRepositoryFactory = (environment: WorkerEnvironment) => MembershipRepository;
 type MemberAdminRepositoryFactory = (environment: WorkerEnvironment) => MemberAdminRepository;
 type AuthUserProvisioner = (email: string, environment: WorkerEnvironment) => Promise<ProvisionResult>;
+type ExecutiveGanttRepositoryFactory = (environment: WorkerEnvironment) => ExecutiveGanttRepository;
 
 function privateResponse(body: Record<string, unknown>, status: number): Response {
   return Response.json(body, {
@@ -101,7 +104,8 @@ export async function handleRequest(
   scheduleRepositoryFactory: ScheduleRepositoryFactory = createScheduleRepository,
   importRepositoryFactory: ImportRepositoryFactory = createImportRepository,
   authUserProvisioner: AuthUserProvisioner = provisionDevelopmentAuthUser,
-  calendarRepositoryFactory: CalendarRepositoryFactory = createCalendarRepository
+  calendarRepositoryFactory: CalendarRepositoryFactory = createCalendarRepository,
+  executiveGanttRepositoryFactory: ExecutiveGanttRepositoryFactory = createExecutiveGanttRepository
 ): Promise<Response> {
   const url = new URL(request.url);
 
@@ -117,6 +121,7 @@ export async function handleRequest(
   }
 
   const workspaceMatch = url.pathname.match(workspaceMembershipPath);
+  const executiveGanttMatch = url.pathname.match(executiveGanttPath);
   const membersMatch = url.pathname.match(membersPath);
   const memberMatch = url.pathname.match(memberPath);
   const productRoute = isProductRoute(url.pathname);
@@ -129,7 +134,8 @@ export async function handleRequest(
     (url.pathname === sessionPath || url.pathname === workspacesPath || workspaceMatch || membersMatch) ||
     request.method === "POST" && !!membersMatch ||
     request.method === "PATCH" && (!!memberMatch || !!stageDefinitionColorMatch) ||
-    productRoute || scheduleRoute || importRoute || calendarRoute || !!stageCatalogMatch || !!stageDefinitionColorMatch;
+    productRoute || scheduleRoute || importRoute || calendarRoute || !!stageCatalogMatch ||
+    !!stageDefinitionColorMatch || !!executiveGanttMatch;
   if (protectedRoute) {
     const origin = request.headers.get("Origin");
     if (origin && origin !== url.origin) {
@@ -164,6 +170,15 @@ export async function handleRequest(
         }
         const workspaces = await memberAdminRepositoryFactory(environment).listOwnWorkspaces(identity.subject);
         return privateResponse({ workspaces }, 200);
+      }
+
+      if (executiveGanttMatch) {
+        const workspaceId = executiveGanttMatch[1];
+        if (!uuidPattern.test(workspaceId)) return privateResponse({ error: "Identificador inválido." }, 400);
+        if (request.method !== "GET") return privateResponse({ error: "Método não permitido." }, 405);
+        const membership = await authorizeWorkspace(identity, workspaceId, "read", repository);
+        if (!membership) return privateResponse({ error: "Acesso não autorizado." }, 403);
+        return privateResponse({ products: await executiveGanttRepositoryFactory(environment).read(membership.workspaceId) }, 200);
       }
 
       if (productRoute) {

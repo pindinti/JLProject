@@ -1,0 +1,11 @@
+# Executive Gantt data contract — Phase B
+
+`GET /api/workspaces/:workspaceId/executive-gantt` returns `{ "products": [...] }` to an authenticated member of the requested workspace. The response has `Cache-Control: no-store`. Every role with active read membership may use it. The route has no mutation method.
+
+Each product has `id`, `name`, `active`, `start`, `end`, `rootActivities`, `disciplines`, and `targets`. Archived products have `active: false` and remain in the response so clients can identify and filter them. Each discipline has its stable `id`, `productId`, `name`, `shortCode`, `color`, `displayOrder`, `start`, `end`, and ordered `stages`. Each stage has its stable `id`, `productId`, `disciplineId`, `code`, `displayName`, `color`, `displayOrder`, `start`, `end`, and ordered `activities`.
+
+Activities retain `id`, `productId`, nullable `disciplineId` and `stageId`, `name`, `activityType`, `displayOrder`, nullable `plannedStart` and `plannedEnd`, nullable `colorOverride`, and effective `color`. Product-root activities have null parent IDs and use the existing root color when no override exists. `Marco` is an ordinary activity type in its original hierarchy. Targets retain `id`, `productId`, `name`, `color`, `displayOrder`, `targetDate`, and nullable `operationalDate`; they are separate markers, including when several targets share a date.
+
+All schedule and target dates are ISO civil-date strings (`YYYY-MM-DD`). Missing interval boundaries remain null. Stage intervals use the earliest activity start and latest activity end within that stage. Discipline intervals use their descendant activities. Product intervals include stage and product-root activities; targets do not extend those schedule intervals. Overlapping stages retain distinct intervals. Siblings sort by `displayOrder` then ID; products sort active first, then name and ID.
+
+The repository reads current working tables with five set-based, workspace-scoped queries in one read-only repeatable-read transaction. It excludes logically deleted hierarchy items and targets. It returns only projection fields, with no import provenance, audit records, R00 snapshots, or user details. The route authorizes the verified identity and active workspace membership before calling the repository. No schedule data is changed by this endpoint.
