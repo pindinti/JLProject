@@ -88,7 +88,7 @@ export interface TimelineScale {
   ticks: number[];
 }
 
-export function makeTimeline(tree: ScheduleTree, targets: ScheduleTarget[], zoom: Zoom,
+export function makeTimeline(tree: ScheduleTree, targets: readonly Pick<ScheduleTarget, "targetDate">[], zoom: Zoom,
   today = saoPauloCivilDate(new Date()), previous?: Pick<TimelineScale, "startDay" | "endDay">): TimelineScale {
   const activities = [...(tree.rootActivities ?? []), ...tree.disciplines.flatMap((discipline) =>
     discipline.stages.flatMap((stage) => stage.activities))];

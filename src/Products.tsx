@@ -2,6 +2,7 @@ import { lazy, Suspense, type FormEvent, useCallback, useEffect, useState } from
 import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
 import { ScheduleEditor } from "./ScheduleEditor";
+import { ExecutiveGanttHome } from "./ExecutiveGanttHome";
 
 const ImportPreview = lazy(() => import("./ImportPreview").then((module) => ({ default: module.ImportPreview })));
 
@@ -271,6 +272,7 @@ export function Products({ workspace, userId, onAccessLost }: {
           }}>{messages.importTitle}</button>
         </div>}
       </div>
+      <ExecutiveGanttHome key={workspace.id} workspaceId={workspace.id} onAccessLost={onAccessLost} />
       {state === "loading" && <p role="status">{messages.productsLoading}</p>}
       {state === "error" && <div role="alert"><p>{messages.productsError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && products.length === 0 && <p>{messages.productsEmpty}</p>}

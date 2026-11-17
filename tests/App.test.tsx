@@ -19,7 +19,11 @@ vi.mock("../src/auth", () => ({
   },
   checkWorkspaceAccess: auth.checkWorkspaceAccess,
   listMyWorkspaces: auth.listMyWorkspaces,
-  authenticatedFetch: auth.authenticatedFetch,
+  authenticatedFetch: (path: string, init?: RequestInit) => path.endsWith("/executive-gantt")
+    ? Promise.resolve(new Response(JSON.stringify({ products: [] }), { status: 200 }))
+    : path.includes("/calendar?year=")
+      ? Promise.resolve(new Response(JSON.stringify({ calendar: { version: 1, exceptions: [] } }), { status: 200 }))
+      : auth.authenticatedFetch(path, init),
   sendEmailVerificationCode: auth.sendEmailVerificationCode,
   verifyEmailCode: auth.verifyEmailCode
 }));
@@ -173,7 +177,8 @@ describe("products UI", () => {
       screen.getByRole("button", { name: "Cadastrar produto" }));
     expect(homeHeader?.querySelector(".products-primary-actions")).toContainElement(
       screen.getByRole("button", { name: "Importar planilha" }));
-    expect(homeHeader?.nextElementSibling).toHaveClass("product-list");
+    expect(homeHeader?.nextElementSibling).toHaveClass("executive-gantt");
+    expect(homeHeader?.nextElementSibling?.nextElementSibling).toHaveClass("product-list");
     expect(screen.queryByRole("button", { name: "Voltar" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cadastrar produto" }));
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Novo teste" } });

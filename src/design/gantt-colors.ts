@@ -5,6 +5,17 @@ export const ganttPresetColors = [
   "#B9654E", "#B98738", "#D2A357", "#6F7772"
 ] as const;
 
+export function ganttTextColor(background: string): string {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(background);
+  if (!match) return "#FFFFFF";
+  const linear = match.slice(1).map((channel) => {
+    const value = parseInt(channel, 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2] > 0.179
+    ? "#252B28" : "#FFFFFF";
+}
+
 export interface MilestoneLabelLayout {
   id: string;
   name: string;
