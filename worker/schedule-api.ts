@@ -6,13 +6,14 @@ import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
   type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type HierarchyMoveInput, type Mutation,
-  type ProductChangeHistoryCursor, type ScheduleRepository, type StageCreateMutation, type StageInput } from "./schedule-repository";
+  type ProductChangeHistoryCursor, type ScheduleRepository, type StageCreateMutation, type StageDateInput,
+  type StageInput } from "./schedule-repository";
 
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|change-history|targets|disciplines|root-activities)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const eventCursorId = /^[a-z][a-z0-9_-]*:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const color = /^#[0-9a-f]{6}$/i;
-type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "hierarchy_move" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "product_change_history" | "targets" | "target" | "disciplines" | "stages" | "activities" | "root_activities" | "activity_dates" | "activity_history" | "activity_working_plan";
+type Route = { workspaceId: string; productId: string; kind: "hierarchy" | "hierarchy_move" | "deletion_preview" | "deletion_execute" | "calendar_impact" | "calendar_impact_apply" | "calendar_reschedule_history" | "calendar_reschedule_reverse" | "product_change_history" | "targets" | "target" | "disciplines" | "stages" | "stage_dates" | "activities" | "root_activities" | "activity_dates" | "activity_history" | "activity_working_plan";
   disciplineId?: string; stageId?: string; activityId?: string; targetId?: string; operationId?: string;
   rootActivity?: true };
 export type ScheduleRepositoryFactory = (environment: WorkerEnvironment) => ScheduleRepository;
@@ -61,6 +62,8 @@ function parseRoute(pathname: string): Route | null {
   if (parts[1] !== "stages") return null;
   if (parts.length === 2) return { workspaceId, productId, disciplineId: parts[0], kind: "stages" };
   if (parts.length === 3) return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], kind: "stages" };
+  if (parts.length === 4 && parts[3] === "dates")
+    return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], kind: "stage_dates" };
   if (parts[3] !== "activities") return null;
   if (parts.length === 4) return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], kind: "activities" };
   if (parts.length === 5) return { workspaceId, productId, disciplineId: parts[0], stageId: parts[2], activityId: parts[4], kind: "activities" };
@@ -181,15 +184,37 @@ function disciplineInput(value: Record<string, unknown>, editing: boolean): { in
     displayOrder: value["displayOrder"] as number, description },
     ...(editing ? { version: value["version"] as number } : {}) };
 }
-function stageInput(value: Record<string, unknown>, editing: boolean): { input: StageInput; version?: number } | null {
-  if (!only(value, ["code", "color", "displayName", "displayOrder", ...(editing ? ["version"] : [])])) return null;
+function stageInput(value: Record<string, unknown>, editing: boolean):
+  { input: StageInput; version?: number; datePlan?: StageDateInput } | null {
+  const dateKeys = editing ? [] : ["plannedStart", "plannedEnd", "reason"];
+  if (!only(value, ["code", "color", "displayName", "displayOrder", ...dateKeys,
+    ...(editing ? ["version"] : [])])) return null;
   const code = label(value["code"], 24);
   const displayName = label(value["displayName"], 200);
   if (!code || !displayName || !color.test(String(value["color"])) || !order(value["displayOrder"]) ||
       (editing && !version(value["version"]))) return null;
+  let datePlan: StageDateInput | undefined;
+  if (!editing) {
+    const rawStart = value["plannedStart"];
+    const rawEnd = value["plannedEnd"];
+    const plannedStart = rawStart === undefined ? null : rawStart;
+    const plannedEnd = rawEnd === undefined ? null : rawEnd;
+    const rawReason = value["reason"];
+    const reason = rawReason === undefined || rawReason === null || rawReason === ""
+      ? null : label(rawReason, 2000);
+    if ((plannedStart !== null && !civilDate(plannedStart)) ||
+        (plannedEnd !== null && !civilDate(plannedEnd)) ||
+        (plannedStart !== null && plannedEnd !== null && plannedStart > plannedEnd) ||
+        (reason === null && rawReason !== undefined && rawReason !== null && rawReason !== "") ||
+        ((plannedStart !== null || plannedEnd !== null) && (!reason || reason.length < 10)) ||
+        (plannedStart === null && plannedEnd === null && reason !== null)) return null;
+    if (plannedStart !== null || plannedEnd !== null)
+      datePlan = { plannedStart, plannedEnd, reason: reason! };
+  }
   return { input: { code, color: String(value["color"]).toUpperCase(),
     displayName, displayOrder: value["displayOrder"] as number },
-    ...(editing ? { version: value["version"] as number } : {}) };
+    ...(editing ? { version: value["version"] as number } : {}),
+    ...(datePlan ? { datePlan } : {}) };
 }
 
 function civilDate(value: unknown): value is string {
@@ -211,6 +236,19 @@ function dateChangeInput(value: Record<string, unknown>):
   if (reason && reason.length < 10) return null;
   return { start: value["plannedStart"], end: value["plannedEnd"], reason,
     version: value["version"] as number };
+}
+function stageDateChangeInput(value: Record<string, unknown>):
+  { input: StageDateInput; version: number } | null {
+  if (!only(value, ["plannedStart", "plannedEnd", "reason", "version"]) ||
+      !("plannedStart" in value) || !("plannedEnd" in value) ||
+      (value["plannedStart"] !== null && !civilDate(value["plannedStart"])) ||
+      (value["plannedEnd"] !== null && !civilDate(value["plannedEnd"])) ||
+      (value["plannedStart"] !== null && value["plannedEnd"] !== null &&
+        String(value["plannedStart"]) > String(value["plannedEnd"])) || !version(value["version"])) return null;
+  const reason = label(value["reason"], 2000);
+  if (!reason || reason.length < 10) return null;
+  return { input: { plannedStart: value["plannedStart"] as string | null,
+    plannedEnd: value["plannedEnd"] as string | null, reason }, version: value["version"] as number };
 }
 function activityInput(value: Record<string, unknown>, editing: boolean, allowColorOnCreate = false):
   { input: ActivityInput | ActivityMetadataInput; version?: number;
@@ -316,6 +354,8 @@ function mutation<T>(result: Mutation<T>, noun: string, created = false): Respon
   return response({ error: "O item foi alterado. Atualize os dados e tente novamente." }, 409);
 }
 function stageCreateMutation(result: StageCreateMutation): Response {
+  if (result.status === "ok") return response({ stage: result.value,
+    ...(result.operationId ? { operationId: result.operationId } : {}) }, 201);
   if (result.status === "duplicate") {
     const conflict = result.conflict;
     const error = conflict
@@ -332,7 +372,18 @@ function stageCreateMutation(result: StageCreateMutation): Response {
       : "O código informado já possui outra cor neste espaço de trabalho.";
     return response({ error, code: "stage_definition_color_conflict", ...(definition ? { definition } : {}) }, 409);
   }
-  return mutation(result, "stage", true);
+  if (result.status === "invalid") return response({ error: "Dados ou justificativa invÃ¡lidos para a etapa." }, 400);
+  if (result.status === "forbidden") return response({ error: "Acesso nÃ£o autorizado." }, 403);
+  return response({ error: "Etapa nÃ£o encontrada." }, 404);
+}
+function stageDateMutation(result: Awaited<ReturnType<ScheduleRepository["changeStageDates"]>>): Response {
+  if (result.status === "updated" || result.status === "unchanged")
+    return response({ stage: result.stage, changed: result.status === "updated",
+      operationId: result.operationId }, 200);
+  if (result.status === "not_found") return response({ error: "Etapa nÃ£o encontrada." }, 404);
+  if (result.status === "forbidden") return response({ error: "Acesso nÃ£o autorizado." }, 403);
+  if (result.status === "invalid") return response({ error: "Informe datas e justificativa vÃ¡lidas." }, 400);
+  return response({ error: "A etapa foi alterada. Atualize os dados e tente novamente." }, 409);
 }
 function targetMutation(result: Mutation<unknown>, created = false): Response {
   if (result.status === "ok") return response({ target: result.value }, created ? 201 : 200);
@@ -659,6 +710,12 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     if (request.method === "POST" && !stageId) {
       const value = await body(request); const parsed = value && stageInput(value, false);
       if (!parsed) return response({ error: "Dados inválidos." }, 400);
+      if (parsed.datePlan) {
+        const dates = { ...parsed.datePlan, operationId: crypto.randomUUID() };
+        try { return stageCreateMutation(await repository.createStageWithDates(
+          ws, productId, disciplineId, identity.subject, parsed.input, dates)); }
+        catch { return response({ error: "NÃ£o foi possÃ­vel salvar a etapa. Tente novamente." }, 503); }
+      }
       return stageCreateMutation(await repository.createStage(ws, productId, disciplineId, identity.subject, parsed.input));
     }
     if (request.method === "PATCH" && stageId) {
@@ -666,6 +723,15 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       if (!parsed || !parsed.version) return response({ error: "Dados inválidos." }, 400);
       return mutation(await repository.updateStage(ws, productId, disciplineId, stageId, identity.subject, parsed.input, parsed.version), "stage");
     }
+  }
+  if (route.kind === "stage_dates" && disciplineId && stageId && request.method === "PATCH") {
+    const value = await body(request); const parsed = value && stageDateChangeInput(value);
+    if (!parsed) return response({ error: "Informe datas, versÃ£o e justificativa vÃ¡lidas." }, 400);
+    try {
+      const result = await repository.changeStageDates(ws, productId, disciplineId, stageId,
+        identity.subject, parsed.input, parsed.version, crypto.randomUUID());
+      return stageDateMutation(result);
+    } catch { return response({ error: "NÃ£o foi possÃ­vel salvar as datas da etapa. Tente novamente." }, 503); }
   }
   if (route.kind === "activities" && disciplineId && stageId) {
     if (request.method === "GET" && !activityId) return response({ activities: await repository.listActivities(ws, productId, disciplineId, stageId) }, 200);

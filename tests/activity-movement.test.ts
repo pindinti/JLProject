@@ -9,13 +9,13 @@ const tree: ScheduleTree = {
     displayOrder: 0, colorOverride: "#AA5577", version: 2 }],
   disciplines: [{ id: "discipline-a", name: "Design", shortCode: "DS", color: "#223344", displayOrder: 0,
     stages: [{ id: "stage-a", displayName: "Concept", code: "EC", color: "#336699", displayOrder: 0,
-      derivedStart: null, derivedEnd: null, activities: [
+      plannedStart: null, plannedEnd: null, derivedStart: null, derivedEnd: null, activities: [
         { id: "activity-a", name: "A", plannedStart: "2026-01-01", plannedEnd: "2026-01-02",
           displayOrder: 1, colorOverride: null, version: 3 },
         { id: "activity-b", name: "B", plannedStart: null, plannedEnd: null,
           displayOrder: 0, colorOverride: "#BB6677", version: 5 }
       ] }, { id: "stage-empty", displayName: "Empty", code: "EP", color: "#778899", displayOrder: 1,
-      derivedStart: null, derivedEnd: null, activities: [] }] }]
+      plannedStart: null, plannedEnd: null, derivedStart: null, derivedEnd: null, activities: [] }] }]
 };
 
 describe("activity hierarchy move request", () => {

@@ -24,7 +24,8 @@ const environment = { NEON_AUTH_BASE_URL: "https://auth.example.neon.tech/neondb
 const d = { id: discipline, productId: product, name: "Arquitetura", shortCode: "ARQ",
   color: "#112233", displayOrder: 0, description: null, version: 1 };
 const s = { id: stage, disciplineId: discipline, code: "EC", color: "#445566",
-  displayName: "Estudo conceitual", displayOrder: 0, version: 1, derivedStart: null, derivedEnd: null };
+  displayName: "Estudo conceitual", displayOrder: 0, version: 1,
+  plannedStart: null, plannedEnd: null, derivedStart: null, derivedEnd: null };
 const a = { id: activity, stageId: stage, name: "Tarefa sintética", activityType: null,
   plannedStart: "2026-11-01", plannedEnd: "2026-11-05", displayOrder: 0, notes: null, version: 1,
   colorOverride: null, planningMode: "manual" as const, workingDayDuration: null, planningCalendarVersion: null };
@@ -50,7 +51,15 @@ function repository(): ScheduleRepository {
     listDisciplines: vi.fn(async () => [d]), createDiscipline: vi.fn(async () => ({ status: "ok" as const, value: d })),
     updateDiscipline: vi.fn(async () => ({ status: "ok" as const, value: { ...d, version: 2 } })),
     listStages: vi.fn(async () => [s]), createStage: vi.fn(async () => ({ status: "ok" as const, value: s })),
+    createStageWithDates: vi.fn(async (_ws, _product, _discipline, _actor, input, dates) => ({
+      status: "ok" as const, value: { ...s, ...input, plannedStart: dates.plannedStart,
+        plannedEnd: dates.plannedEnd, version: 2 }, operationId: dates.operationId
+    })),
     updateStage: vi.fn(async () => ({ status: "ok" as const, value: { ...s, version: 2 } })),
+    changeStageDates: vi.fn(async (_ws, _product, _discipline, _stage, _actor, input, _version, operationId) => ({
+      status: "updated" as const, stage: { ...s, plannedStart: input.plannedStart,
+        plannedEnd: input.plannedEnd, version: 2 }, operationId
+    })),
     listActivities: vi.fn(async () => [a]), listRootActivities: vi.fn(async () => []),
     createActivity: vi.fn(async () => ({ status: "ok" as const, value: a })),
     listWorkingPlans: vi.fn(async () => []),
@@ -703,6 +712,75 @@ describe("schedule hierarchy API", () => {
       { ...activityInput, activityType: null, notes: null });
   });
 
+  it("creates an empty stage with full or partial audited dates and preserves legacy creation", async () => {
+    const repo = repository();
+    const baseInput = { code: "EC", color: "#445566", displayName: "Estudo conceitual", displayOrder: 0 };
+    const full = { ...baseInput, plannedStart: "2026-11-01", plannedEnd: "2026-11-12",
+      reason: "Synthetic approved stage plan" };
+    const fullResponse = await call(request(stages, "POST", full), "editor", repo);
+    expect(fullResponse.status).toBe(201);
+    await expect(fullResponse.json()).resolves.toMatchObject({ stage: {
+      plannedStart: full.plannedStart, plannedEnd: full.plannedEnd, version: 2
+    }, operationId: expect.any(String) });
+    expect(repo.createStageWithDates).toHaveBeenCalledWith(ws, product, discipline, actor, baseInput,
+      { plannedStart: full.plannedStart, plannedEnd: full.plannedEnd,
+        reason: full.reason, operationId: expect.any(String) });
+
+    const partial = { ...baseInput, plannedStart: "2026-11-03", plannedEnd: null,
+      reason: "Synthetic partial stage plan" };
+    expect((await call(request(stages, "POST", partial), "admin", repo)).status).toBe(201);
+    expect(repo.createStageWithDates).toHaveBeenLastCalledWith(ws, product, discipline, actor, baseInput,
+      { plannedStart: partial.plannedStart, plannedEnd: null,
+        reason: partial.reason, operationId: expect.any(String) });
+
+    expect((await call(request(stages, "POST", baseInput), "editor", repo)).status).toBe(201);
+    expect(repo.createStage).toHaveBeenCalledWith(ws, product, discipline, actor, baseInput);
+    expect(repo.createActivity).not.toHaveBeenCalled();
+  });
+
+  it("validates stage intervals, requires a reason for explicit dates, and rejects unauthorized date changes", async () => {
+    const repo = repository();
+    const createInput = { code: "EC", color: "#445566", displayName: "Estudo conceitual", displayOrder: 0 };
+    for (const input of [
+      { ...createInput, plannedStart: "2026-11-13", plannedEnd: "2026-11-12", reason: "Synthetic stage plan" },
+      { ...createInput, plannedStart: "2026-02-30", plannedEnd: null, reason: "Synthetic stage plan" },
+      { ...createInput, plannedStart: "2026-11-01" },
+      { ...createInput, plannedStart: null, plannedEnd: null, reason: "Synthetic stage plan" }
+    ]) expect((await call(request(stages, "POST", input), "editor", repo)).status).toBe(400);
+    expect(repo.createStageWithDates).not.toHaveBeenCalled();
+
+    const path = `${stages}/${stage}/dates`;
+    const partial = { plannedStart: null, plannedEnd: "2026-11-12",
+      reason: "Synthetic partial correction", version: 1 };
+    expect((await call(request(path, "PATCH", partial), "viewer", repo)).status).toBe(403);
+    expect((await call(request(path, "PATCH", partial), "editor", repo, false)).status).toBe(403);
+    expect((await call(request(path.replace(ws, otherWs), "PATCH", partial), "admin", repo)).status).toBe(403);
+    expect((await call(request(path, "PATCH", partial), "editor", {
+      ...repo, stageExists: async () => false
+    })).status).toBe(404);
+
+    const changed = await call(request(path, "PATCH", partial), "editor", repo);
+    expect(changed.status).toBe(200);
+    await expect(changed.json()).resolves.toMatchObject({ changed: true, stage: {
+      plannedStart: null, plannedEnd: partial.plannedEnd, version: 2
+    } });
+    expect(repo.changeStageDates).toHaveBeenCalledWith(ws, product, discipline, stage, actor,
+      { plannedStart: null, plannedEnd: partial.plannedEnd, reason: partial.reason }, 1, expect.any(String));
+    for (const invalid of [
+      { ...partial, plannedStart: "2026-11-13" },
+      { ...partial, reason: "short" },
+      { ...partial, version: 0 },
+      { ...partial, plannedEnd: "2026-02-30" },
+      { ...partial, extra: true }
+    ]) expect((await call(request(path, "PATCH", invalid), "admin", repo)).status).toBe(400);
+    expect((await call(request(path, "PATCH", partial), "admin", {
+      ...repo, changeStageDates: async () => ({ status: "stale" })
+    })).status).toBe(409);
+    const anonymous = await handleRequest(request(path, "PATCH", partial), environment,
+      async () => null, () => membership("editor"), undefined, undefined, () => repo);
+    expect(anonymous.status).toBe(401);
+  });
+
   it("returns the conflicting stage when a stage code is already used in the discipline", async () => {
     const conflict = { code: "MV", displayName: "Imagens de Vendas", deleted: false };
     const input = { code: "MV", color: "#8D9A89", displayName: "Maquete Física", displayOrder: 1 };
@@ -1036,7 +1114,8 @@ describe("hierarchy assembly", () => {
     const baseRow = { disciplineId: discipline, disciplineName: "Arquitetura", disciplineCode: "ARQ",
       disciplineColor: "#112233", disciplineOrder: 0, disciplineDescription: null, disciplineVersion: 1,
       stageId: stage, stageCode: "EC", stageColor: "#445566", stageName: "Estudo", stageOrder: 0,
-      stageVersion: 1, activityType: null, activityNotes: null, activityColorOverride: null, activityVersion: 1 };
+      stageVersion: 1, stagePlannedStart: null, stagePlannedEnd: null,
+      activityType: null, activityNotes: null, activityColorOverride: null, activityVersion: 1 };
     const rows = [
       { ...baseRow, activityId: activity, activityName: "Primeira", activityOrder: 0,
         plannedStart: "2026-11-05", plannedEnd: "2026-11-12" },
@@ -1052,6 +1131,21 @@ describe("hierarchy assembly", () => {
     expect(tree?.disciplines[0].stages[1]).toMatchObject({ derivedStart: null, derivedEnd: null, activities: [] });
     expect(assembleHierarchy(product, [{ disciplineId: null }])).toEqual({
       productId: product, rootActivities: [], disciplines: []
+    });
+  });
+
+  it("keeps explicit stage dates separate from activity-derived dates", () => {
+    const tree = assembleHierarchy(product, [{
+      disciplineId: discipline, disciplineName: "Arquitetura", disciplineCode: "ARQ",
+      disciplineColor: "#112233", disciplineOrder: 0, disciplineDescription: null, disciplineVersion: 1,
+      stageId: stage, stageCode: "EC", stageColor: "#445566", stageName: "Estudo", stageOrder: 0,
+      stageVersion: 2, stagePlannedStart: "2026-12-01", stagePlannedEnd: null,
+      activityId: activity, activityName: "Atividade sintética", activityType: null, activityOrder: 0,
+      plannedStart: "2026-11-01", plannedEnd: "2026-11-12", activityNotes: null,
+      activityColorOverride: null, activityVersion: 1
+    }]);
+    expect(tree?.disciplines[0]?.stages[0]).toMatchObject({
+      plannedStart: "2026-12-01", plannedEnd: null, derivedStart: "2026-11-01", derivedEnd: "2026-11-12"
     });
   });
 

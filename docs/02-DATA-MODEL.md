@@ -100,7 +100,7 @@ The additive `0011_product_cloning.sql` makes `initial_schedule_revisions.import
 3. Each schedule version belongs to one product; its dates, dependencies, and targets cannot reference another product.
 4. Use opaque stable IDs (UUID/ULID). Names and abbreviations are display values, not global primary keys.
 5. Enforce `start_date <= end_date`. Store civil dates without time or timezone conversion.
-6. A stage has no independent start/end fields: for a selected version, `start = MIN(child.start_date)` and `end = MAX(child.end_date)`.
+6. A stage may have independent nullable planned start/end fields. If both are null, its interval is derived from child activity dates; if either is explicit, only explicit boundaries define its interval and a missing boundary remains unset.
 7. Official business targets are separate from source Excel rows whose `Tipo` is `Meta`; avoid duplicates.
 8. For MVP, dependencies cannot be self-referential, cyclic, or cross-product. Cross-**discipline** links within one product are allowed.
 9. A scenario or revision created from an existing version gets an independent logical copy of its relevant date, target, dependency, and activity states, without mutating the parent.
@@ -108,6 +108,14 @@ The additive `0011_product_cloning.sql` makes `initial_schedule_revisions.import
 11. Every schedule edit transaction commits adjusted dates and complete audit trail together, or rolls back together.
 12. Check version/ETag/optimistic tokens to prevent lost updates; reject a stale preview and require revalidation.
 13. Archiving/removing tasks must preserve referenced snapshots and audit history. Avoid physical deletion of historically referenced entities.
+
+### P0-A independent stage dates
+
+The current working schedule stores nullable `planned_start` and `planned_end` on each stage instance. The API returns these explicit planned values separately from activity-derived `derivedStart` and `derivedEnd`. When both planned fields are null, the legacy stage interval remains the minimum and maximum date boundaries among its activities. When either field is non-null, the stage interval uses only the explicitly stored boundaries; a missing boundary stays null and is never supplied from activities. An explicit end earlier than an explicit start is invalid. Activity edits do not overwrite explicit stage dates, and a stage may be created with dates before it has activities.
+
+Every actual stage date change is a single version-checked operation that stores the new values and appends an immutable actor, UTC timestamp, operation ID, previous values, new values, and justification record together. Explicit dates supplied at stage creation also produce an initial audit event. Cloning carries explicit dates into the cloned working hierarchy and that clone's R00 snapshot. Existing R00 snapshots are not rewritten. This contract applies to the current working schedule and its baseline snapshot; revision-specific and scenario-specific stage states and histories remain future model work.
+
+This approved rule supersedes only the stage date clauses in D027 and D060; those decisions remain in the historical decision log.
 
 ## Published revisions versus scenarios
 

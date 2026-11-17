@@ -19,6 +19,8 @@ const product: ExecutiveProduct = {
       id: `s${index}`, productId: "p", disciplineId: id, code: "EC", displayName: "Same stage",
       color: index ? "#BB3366" : "#33AA88", displayOrder: 0,
       start: index ? "2024-03-02" : "2024-03-01", end: index ? "2024-03-04" : "2024-03-03",
+      plannedStart: null, plannedEnd: null,
+      derivedStart: index ? "2024-03-02" : "2024-03-01", derivedEnd: index ? "2024-03-04" : "2024-03-03",
       activities: [{ id: `a${index}`, productId: "p", disciplineId: id, stageId: `s${index}`,
         name: `Activity ${index}`, activityType: null, displayOrder: 0,
         plannedStart: "2024-03-02", plannedEnd: "2024-03-03", colorOverride: null, color: "#99AABB" }] }] })),

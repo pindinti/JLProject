@@ -193,6 +193,7 @@ export const messages = {
   productHistoryTypeProductCreated: "Produto criado",
   productHistoryTypeImport: "Cronograma importado",
   productHistoryTypeActivityDates: "Datas da atividade alteradas",
+  productHistoryTypeStageDates: "Datas da etapa alteradas",
   productHistoryTypeTargetDate: "Data da meta alterada",
   productHistoryTypeCalendarReschedule: "Reprogramação pelo calendário",
   productHistoryTypeCalendarReversal: "Reversão de reprogramação",

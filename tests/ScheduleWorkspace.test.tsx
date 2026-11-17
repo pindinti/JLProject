@@ -11,7 +11,8 @@ vi.mock("../src/auth", () => ({ authenticatedFetch: auth.fetch }));
 const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic discipline",
   shortCode: "SD", color: "#225588", displayOrder: 0,
   stages: [{ id: "stage", displayName: "Synthetic stage", code: "EC", color: "#336699",
-    displayOrder: 0, derivedStart: "2026-11-01", derivedEnd: "2028-01-17",
+    displayOrder: 0, plannedStart: null, plannedEnd: null,
+    derivedStart: "2026-11-01", derivedEnd: "2028-01-17",
     activities: [{ id: "activity", name: "Synthetic activity", plannedStart: "2026-11-01",
       plannedEnd: "2028-01-17", displayOrder: 0, colorOverride: null }] }] }] };
 const targets = [{ id: "target", name: "Synthetic target", targetDate: "2026-11-07",

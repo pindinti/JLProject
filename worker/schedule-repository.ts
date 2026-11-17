@@ -6,6 +6,8 @@ export interface DisciplineInput {
   name: string; shortCode: string; color: string; displayOrder: number; description: string | null;
 }
 export interface StageInput { code: string; color: string; displayName: string; displayOrder: number }
+export interface StageDateInput { plannedStart: string | null; plannedEnd: string | null; reason: string }
+export interface StageCreateDateInput extends StageDateInput { operationId: string }
 export interface ActivityInput {
   name: string; activityType: string | null; plannedStart: string | null;
   plannedEnd: string | null; displayOrder: number; notes: string | null;
@@ -21,6 +23,7 @@ export type ActivityMetadataInput = Omit<ActivityInput, "plannedStart" | "planne
 export interface Discipline extends DisciplineInput { id: string; productId: string; version: number }
 export interface Stage extends StageInput {
   id: string; disciplineId: string; version: number;
+  plannedStart: string | null; plannedEnd: string | null;
   derivedStart: string | null; derivedEnd: string | null;
 }
 export interface Activity extends ActivityInput {
@@ -38,10 +41,12 @@ export interface ScheduleHierarchy {
 export interface StageDefinition { id: string; code: string; color: string }
 export interface StageCodeConflict { code: string; displayName: string; deleted: boolean }
 export interface StageDefinitionColorConflict { code: string; color: string }
-export type StageCreateMutation = { status: "ok"; value: Stage } |
+export type StageCreateMutation = { status: "ok"; value: Stage; operationId?: string } |
   { status: "duplicate"; conflict?: StageCodeConflict } |
   { status: "conflict"; definition?: StageDefinitionColorConflict } |
-  { status: "not_found" };
+  { status: "not_found" | "invalid" | "forbidden" };
+export type StageDateChangeResult = { status: "updated" | "unchanged"; stage: Stage; operationId: string } |
+  { status: "not_found" | "stale" | "invalid" | "forbidden" };
 export type StageDefinitionColorMutation = { status: "ok"; value: StageDefinition } |
   { status: "not_found" } | { status: "stale" };
 export interface BusinessTarget { id: string; name: string; description: string | null; color: string;
@@ -78,7 +83,7 @@ export interface CalendarRescheduleHistoryOperation {
 export type CalendarRescheduleHistoryResult = { status: "ok"; operations: CalendarRescheduleHistoryOperation[] } |
   { status: "not_found" | "forbidden" | "invalid" };
 export type ProductChangeEventType = "product_created" | "schedule_imported" | "activity_dates_changed" |
-  "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
+  "stage_dates_changed" | "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
   "schedule_hierarchy_deleted" | "hierarchy_moved";
 export interface ProductChangeHistoryCursor { occurredAt: string; eventId: string }
 export interface ProductChangeHistoryItem {
@@ -138,7 +143,11 @@ export interface ScheduleRepository {
   updateDiscipline(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: DisciplineInput, version: number): Promise<Mutation<Discipline>>;
   listStages(workspaceId: string, productId: string, disciplineId: string): Promise<Stage[]>;
   createStage(workspaceId: string, productId: string, disciplineId: string, actorId: string, input: StageInput): Promise<StageCreateMutation>;
+  createStageWithDates(workspaceId: string, productId: string, disciplineId: string, actorId: string,
+    input: StageInput, dates: StageCreateDateInput): Promise<StageCreateMutation>;
   updateStage(workspaceId: string, productId: string, disciplineId: string, stageId: string, actorId: string, input: StageInput, version: number): Promise<Mutation<Stage>>;
+  changeStageDates(workspaceId: string, productId: string, disciplineId: string, stageId: string,
+    actorId: string, input: StageDateInput, version: number, operationId: string): Promise<StageDateChangeResult>;
   listActivities(workspaceId: string, productId: string, disciplineId: string, stageId: string): Promise<Activity[]>;
   listRootActivities(workspaceId: string, productId: string): Promise<Activity[]>;
   listWorkingPlans(workspaceId: string, productId: string): Promise<CalendarImpactCandidate[]>;
@@ -176,7 +185,7 @@ export interface ScheduleRepository {
 const text = (value: unknown) => String(value);
 const nullable = (value: unknown) => value === null || value === undefined ? null : String(value);
 const productChangeEventTypes = new Set<ProductChangeEventType>([
-  "product_created", "schedule_imported", "activity_dates_changed", "business_target_date_changed",
+  "product_created", "schedule_imported", "activity_dates_changed", "stage_dates_changed", "business_target_date_changed",
   "calendar_rescheduled", "calendar_reschedule_reversed", "schedule_hierarchy_deleted", "hierarchy_moved"
 ]);
 
@@ -236,6 +245,7 @@ function stage(row: Record<string, unknown>): Stage {
   return { id: text(row["id"]), disciplineId: text(row["disciplineId"]),
     code: text(row["code"]), color: text(row["color"]), displayName: text(row["displayName"]),
     displayOrder: Number(row["displayOrder"]), version: Number(row["version"]),
+    plannedStart: nullable(row["plannedStart"]), plannedEnd: nullable(row["plannedEnd"]),
     derivedStart: nullable(row["derivedStart"]), derivedEnd: nullable(row["derivedEnd"]) };
 }
 function activity(row: Record<string, unknown>): Activity {
@@ -279,6 +289,7 @@ export function assembleHierarchy(productId: string, rows: Record<string, unknow
       currentStage = { id: stageId, disciplineId, code: text(row["stageCode"]),
         color: text(row["stageColor"]), displayName: text(row["stageName"]),
         displayOrder: Number(row["stageOrder"]), version: Number(row["stageVersion"]),
+        plannedStart: nullable(row["stagePlannedStart"]), plannedEnd: nullable(row["stagePlannedEnd"]),
         derivedStart: null, derivedEnd: null, activities: [] };
       stages.set(stageId, currentStage);
       currentDiscipline.stages.push(currentStage);
@@ -366,7 +377,9 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
   async function listStages(ws: string, productId: string, disciplineId: string): Promise<Stage[]> {
     const rows = await sql`SELECT s.id::text AS id, s.discipline_id::text AS "disciplineId",
       def.code, def.color, s.display_name AS "displayName", s.display_order AS "displayOrder",
-      s.version, to_char(min(a.planned_start), 'YYYY-MM-DD') AS "derivedStart",
+      s.version, to_char(s.planned_start, 'YYYY-MM-DD') AS "plannedStart",
+      to_char(s.planned_end, 'YYYY-MM-DD') AS "plannedEnd",
+      to_char(min(a.planned_start), 'YYYY-MM-DD') AS "derivedStart",
       to_char(max(a.planned_end), 'YYYY-MM-DD') AS "derivedEnd"
       FROM public.discipline_stages AS s
       JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = s.workspace_id
@@ -380,7 +393,9 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
   async function findStage(ws: string, productId: string, disciplineId: string, stageId: string) {
     const rows = await sql`SELECT s.id::text AS id, s.discipline_id::text AS "disciplineId",
       def.code, def.color, s.display_name AS "displayName", s.display_order AS "displayOrder",
-      s.version, to_char(min(a.planned_start), 'YYYY-MM-DD') AS "derivedStart",
+      s.version, to_char(s.planned_start, 'YYYY-MM-DD') AS "plannedStart",
+      to_char(s.planned_end, 'YYYY-MM-DD') AS "plannedEnd",
+      to_char(min(a.planned_start), 'YYYY-MM-DD') AS "derivedStart",
       to_char(max(a.planned_end), 'YYYY-MM-DD') AS "derivedEnd"
       FROM public.discipline_stages AS s
       JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = s.workspace_id
@@ -432,6 +447,38 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         AND stage_id IS NOT DISTINCT FROM ${stageId}::uuid
         AND id = ${activityId}::uuid AND deleted_at IS NULL LIMIT 1`;
     return rows[0] ? activity(rows[0]) : null;
+  }
+
+  async function stageCreateResult(ws: string, productId: string, disciplineId: string,
+    input: StageInput, result: string, operationId?: string): Promise<StageCreateMutation> {
+    if (result === "duplicate") {
+      const conflicts = await sql`SELECT def.code, s.display_name AS "displayName",
+          (s.deleted_at IS NOT NULL) AS deleted
+        FROM public.discipline_stages AS s
+        JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = s.workspace_id
+        WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
+          AND s.discipline_id = ${disciplineId}::uuid AND lower(def.code) = lower(${input.code})
+        ORDER BY s.deleted_at NULLS FIRST, s.display_order, s.id LIMIT 1`;
+      const conflict = conflicts[0];
+      return { status: "duplicate", ...(conflict ? { conflict: {
+        code: text(conflict["code"]), displayName: text(conflict["displayName"]),
+        deleted: conflict["deleted"] === true
+      } } : {}) };
+    }
+    if (result === "conflict") {
+      const definitions = await sql`SELECT code, color FROM public.stage_definitions
+        WHERE workspace_id = ${ws}::uuid AND lower(code) = lower(${input.code}) LIMIT 1`;
+      const definition = definitions[0];
+      return { status: "conflict", ...(definition ? { definition: {
+        code: text(definition["code"]), color: text(definition["color"])
+      } } : {}) };
+    }
+    if (result === "not_found" || result === "invalid" || result === "forbidden")
+      return { status: result };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(result))
+      throw new Error("Unexpected stage creation result.");
+    const value = await findStage(ws, productId, disciplineId, result);
+    return value ? { status: "ok", value, ...(operationId ? { operationId } : {}) } : { status: "not_found" };
   }
 
   return {
@@ -536,31 +583,15 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${actorId}::uuid,
         ${input.code}, ${input.color}, ${input.displayName}, ${input.displayOrder}) AS result`;
       const result = text(rows[0]?.["result"]);
-      if (result === "duplicate") {
-        const conflicts = await sql`SELECT def.code, s.display_name AS "displayName",
-            (s.deleted_at IS NOT NULL) AS deleted
-          FROM public.discipline_stages AS s
-          JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = s.workspace_id
-          WHERE s.workspace_id = ${ws}::uuid AND s.product_id = ${productId}::uuid
-            AND s.discipline_id = ${disciplineId}::uuid AND lower(def.code) = lower(${input.code})
-          ORDER BY s.deleted_at NULLS FIRST, s.display_order, s.id LIMIT 1`;
-        const conflict = conflicts[0];
-        return { status: "duplicate", ...(conflict ? { conflict: {
-          code: text(conflict["code"]), displayName: text(conflict["displayName"]),
-          deleted: conflict["deleted"] === true
-        } } : {}) };
-      }
-      if (result === "conflict") {
-        const definitions = await sql`SELECT code, color FROM public.stage_definitions
-          WHERE workspace_id = ${ws}::uuid AND lower(code) = lower(${input.code}) LIMIT 1`;
-        const definition = definitions[0];
-        return { status: "conflict", ...(definition ? { definition: {
-          code: text(definition["code"]), color: text(definition["color"])
-        } } : {}) };
-      }
-      if (result === "not_found") return { status: "not_found" };
-      const value = await findStage(ws, productId, disciplineId, result);
-      return value ? { status: "ok", value } : { status: "not_found" };
+      return stageCreateResult(ws, productId, disciplineId, input, result);
+    },
+    async createStageWithDates(ws, productId, disciplineId, actorId, input, dates) {
+      const rows = await sql`SELECT public.create_discipline_stage_with_dates(
+        ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${actorId}::uuid,
+        ${dates.operationId}::uuid, ${input.code}, ${input.color}, ${input.displayName},
+        ${input.displayOrder}, ${dates.plannedStart}::date, ${dates.plannedEnd}::date,
+        ${dates.reason}) AS result`;
+      return stageCreateResult(ws, productId, disciplineId, input, text(rows[0]?.["result"]), dates.operationId);
     },
     async updateStage(ws, productId, disciplineId, stageId, actorId, input, version) {
       const rows = await sql`SELECT public.update_discipline_stage(
@@ -571,6 +602,19 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       if (result !== "updated") return { status: result as "not_found" | "duplicate" | "stale" | "conflict" };
       const value = await findStage(ws, productId, disciplineId, stageId);
       return value ? { status: "ok", value } : { status: "not_found" };
+    },
+    async changeStageDates(ws, productId, disciplineId, stageId, actorId, input, version, operationId) {
+      const rows = await sql`SELECT public.change_discipline_stage_dates(
+        ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
+        ${actorId}::uuid, ${operationId}::uuid, ${input.plannedStart}::date,
+        ${input.plannedEnd}::date, ${input.reason}, ${version}::bigint) AS result`;
+      const result = rows[0]?.["result"] as { status?: string } | undefined;
+      if (!result || !["updated", "unchanged", "not_found", "stale", "invalid", "forbidden"]
+        .includes(result.status ?? "")) throw new Error("Unexpected stage date change result.");
+      if (result.status !== "updated" && result.status !== "unchanged")
+        return { status: result.status as "not_found" | "stale" | "invalid" | "forbidden" };
+      const value = await findStage(ws, productId, disciplineId, stageId);
+      return value ? { status: result.status, stage: value, operationId } : { status: "not_found" };
     },
     listActivities,
     listRootActivities,
@@ -698,15 +742,16 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           return { status: result.status as "not_found" | "forbidden" | "invalid" };
         throw new Error("Unexpected product change history result.");
       }
-      if (!Array.isArray(result.events)) throw new Error("Invalid product change history result.");
+      if (!Array.isArray(result.events) || result.events.length > limit)
+        throw new Error("Invalid product change history result.");
+      const events = result.events.map(productChangeEvent);
       let nextCursor: ProductChangeHistoryCursor | null = null;
       if (result.nextCursor !== null) {
-        const rawCursor = result.nextCursor;
-        if (!rawCursor || typeof rawCursor["occurredAt"] !== "string" ||
-            typeof rawCursor["eventId"] !== "string") throw new Error("Invalid product change history cursor.");
-        nextCursor = { occurredAt: rawCursor["occurredAt"], eventId: rawCursor["eventId"] };
+        const value = jsonRecord(result.nextCursor);
+        if (!value || typeof value["occurredAt"] !== "string" || typeof value["eventId"] !== "string")
+          throw new Error("Invalid product change history cursor.");
+        nextCursor = { occurredAt: value["occurredAt"], eventId: value["eventId"] };
       }
-      const events = result.events.map(productChangeEvent);
       const actorIds = [...new Set(events.map((event) => event.actorId))];
       const actorNames = new Map<string, string>();
       if (actorIds.length > 0) {
@@ -874,6 +919,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         d.version AS "disciplineVersion",
         s.id::text AS "stageId", def.code AS "stageCode", def.color AS "stageColor",
         s.display_name AS "stageName", s.display_order AS "stageOrder", s.version AS "stageVersion",
+        to_char(s.planned_start, 'YYYY-MM-DD') AS "stagePlannedStart",
+        to_char(s.planned_end, 'YYYY-MM-DD') AS "stagePlannedEnd",
         a.id::text AS "activityId", a.name AS "activityName", a.activity_type AS "activityType",
         to_char(a.planned_start, 'YYYY-MM-DD') AS "plannedStart",
         to_char(a.planned_end, 'YYYY-MM-DD') AS "plannedEnd",

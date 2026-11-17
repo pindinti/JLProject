@@ -24,7 +24,8 @@ interface Activity {
 }
 interface Stage {
   id: string; disciplineId: string; code: string; color: string; displayName: string;
-  displayOrder: number; derivedStart: string | null; derivedEnd: string | null;
+  displayOrder: number; plannedStart: string | null; plannedEnd: string | null;
+  derivedStart: string | null; derivedEnd: string | null;
   version: number; activities: Activity[];
 }
 interface Discipline {

@@ -14,6 +14,8 @@ const products: ExecutiveProduct[] = [{
       id: `s${index}`, productId: "p", disciplineId: id, code: "EC", displayName: "Repeated stage",
       color: index ? "#AA5577" : "#22AA88", displayOrder: 0,
       start: index ? null : "2024-03-01", end: index ? null : "2024-03-03",
+      plannedStart: null, plannedEnd: null,
+      derivedStart: index ? null : "2024-03-01", derivedEnd: index ? null : "2024-03-03",
       activities: [{ id: `a${index}`, productId: "p", disciplineId: id, stageId: `s${index}`,
         name: `Activity ${index}`, activityType: null, displayOrder: 0,
         plannedStart: index ? null : "2024-03-01", plannedEnd: index ? null : "2024-03-03",

@@ -102,4 +102,26 @@ describe("product change history repository", () => {
       .resolves.toEqual({ status: "ok", events: [], nextCursor: null });
     expect(sql).toHaveBeenCalledTimes(1);
   });
+
+  it("maps stage date events from the existing product feed and preserves its keyset cursor", async () => {
+    const stageEvent = { ...event("stage-date:a5555555-5555-4555-8555-555555555555",
+      occurredAt, "stage_dates_changed"), item: { kind: "stage", id: "a5555555-5555-4555-8555-555555555555",
+      name: "Synthetic stage", hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage" } },
+      before: { plannedStart: null, plannedEnd: null },
+      after: { plannedStart: "2026-11-01", plannedEnd: null } };
+    sql.mockResolvedValueOnce([{ result: { status: "ok", events: [stageEvent],
+      nextCursor: { occurredAt, eventId: stageEvent.id } } }])
+      .mockResolvedValueOnce([{ id: actorId, name: "Synthetic actor" }]);
+
+    const result = await createScheduleRepository({ DATABASE_URL: "postgresql://example.invalid" })
+      .listProductChangeHistory(workspaceId, productId, actorId, 1, null);
+
+    expect(result).toMatchObject({ status: "ok", events: [{ id: stageEvent.id,
+      eventType: "stage_dates_changed", item: { kind: "stage", name: "Synthetic stage" },
+      before: { plannedStart: null }, after: { plannedStart: "2026-11-01" },
+      actorName: "Synthetic actor" }], nextCursor: { occurredAt, eventId: stageEvent.id } });
+    const query = sql.mock.calls[0]?.[0] as TemplateStringsArray;
+    expect(query.join("?")).toContain("list_product_change_history");
+    expect(query.join("?")).not.toContain("list_stage_date_change_history");
+  });
 });

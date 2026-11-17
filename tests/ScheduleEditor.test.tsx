@@ -16,7 +16,8 @@ const activity = { id: "cd960302-0b68-4621-95ed-7d4f57f8eedc", stageId: "7130dfd
   displayOrder: 0, notes: null, colorOverride: null, version: 1, planningMode: "manual" as const,
   workingDayDuration: null, planningCalendarVersion: null };
 const stage = { id: activity.stageId, disciplineId: "bba53e18-f13f-4b2d-a02e-65a0d95627e6", code: "EC",
-  color: "#336699", displayName: "Synthetic stage", displayOrder: 0, derivedStart: "2026-11-01",
+  color: "#336699", displayName: "Synthetic stage", displayOrder: 0,
+  plannedStart: null, plannedEnd: null, derivedStart: "2026-11-01",
   derivedEnd: "2026-11-08", version: 1, activities: [activity] };
 const discipline = { id: stage.disciplineId, productId: product.id, name: "Synthetic discipline",
   shortCode: "ENG", color: "#225588", description: null, displayOrder: 0, version: 1, stages: [stage] };
@@ -32,7 +33,8 @@ const rootTree = { productId: product.id, disciplines: [discipline], rootActivit
 const secondActivity = { ...activity, id: "02eb3d51-f256-4b9a-b939-a44ec2149906", name: "Second activity",
   displayOrder: 1, version: 2 };
 const emptyStage = { ...stage, id: "f419b025-91db-4f0d-9720-45732e88a9c2", code: "EP",
-  displayName: "Empty stage", displayOrder: 1, derivedStart: null, derivedEnd: null, activities: [] };
+  displayName: "Empty stage", displayOrder: 1, plannedStart: null, plannedEnd: null,
+  derivedStart: null, derivedEnd: null, activities: [] };
 const moveTree = { productId: product.id, rootActivities: [rootActivity], disciplines: [{ ...discipline,
   stages: [{ ...stage, activities: [activity, secondActivity] }, emptyStage] }] };
 const destinationDiscipline = { ...discipline, id: "c4ed7846-d610-4b96-b146-6dc58b19a27e",

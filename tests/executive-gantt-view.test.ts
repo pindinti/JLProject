@@ -7,7 +7,8 @@ import { ganttTextColor } from "../src/design/gantt-colors";
 
 const stage = (id: string, start: string | null, end: string | null): ExecutiveStage => ({
   id, productId: "product", disciplineId: "discipline", code: "EC", displayName: "Same name",
-  color: "#123456", displayOrder: 0, start, end, activities: []
+  color: "#123456", displayOrder: 0, start, end, plannedStart: null, plannedEnd: null,
+  derivedStart: start, derivedEnd: end, activities: []
 });
 const product = (): ExecutiveProduct => ({ id: "product", name: "Product", active: true,
   start: null, end: null, rootActivities: [], targets: [], disciplines: [] });

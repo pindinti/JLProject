@@ -17,12 +17,14 @@ const projection: ExecutiveProduct[] = [
       { id: "d1", productId: "current", name: "Architecture", shortCode: "A", color: "#123456",
         displayOrder: 0, start: "2024-12-30", end: "2025-01-03", stages: [
           { id: "s1", productId: "current", disciplineId: "d1", code: "EC", displayName: "Repeated stage",
-            color: "#AA5577", displayOrder: 0, start: "2024-12-30", end: "2025-01-03", activities: [] }
+            color: "#AA5577", displayOrder: 0, start: "2024-12-30", end: "2025-01-03",
+            plannedStart: null, plannedEnd: null, derivedStart: "2024-12-30", derivedEnd: "2025-01-03", activities: [] }
         ] },
       { id: "d2", productId: "current", name: "Engineering", shortCode: "E", color: "#654321",
         displayOrder: 1, start: "2025-01-01", end: "2025-01-04", stages: [
           { id: "s2", productId: "current", disciplineId: "d2", code: "EC", displayName: "Repeated stage",
-            color: "#22AA88", displayOrder: 0, start: "2025-01-01", end: "2025-01-04", activities: [] }
+            color: "#22AA88", displayOrder: 0, start: "2025-01-01", end: "2025-01-04",
+            plannedStart: null, plannedEnd: null, derivedStart: "2025-01-01", derivedEnd: "2025-01-04", activities: [] }
         ] }
     ],
     targets: [

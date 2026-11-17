@@ -1,19 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateAtPosition,
-  timelineInterval, timelinePosition, visibleScheduleRows,
+  scheduleStageInterval, timelineInterval, timelinePosition, visibleScheduleRows,
   type ScheduleTree, type ScheduleTarget } from "../domain/schedule-workspace";
 
 const tree: ScheduleTree = { disciplines: [{ id: "d", name: "Design", shortCode: "DS", color: "#123456", displayOrder: 0,
   stages: [{ id: "s", displayName: "Concept", code: "EC", color: "#334455", displayOrder: 0,
-    derivedStart: "2026-11-01", derivedEnd: "2026-11-12", activities: [
+    plannedStart: null, plannedEnd: null, derivedStart: "2026-11-01", derivedEnd: "2026-11-12", activities: [
       { id: "a", name: "First", plannedStart: "2026-11-01", plannedEnd: "2026-11-08", displayOrder: 0, colorOverride: null },
       { id: "b", name: "Overlap", plannedStart: "2026-11-05", plannedEnd: "2026-11-12", displayOrder: 1, colorOverride: "#AABBCC" }
     ] }, { id: "empty", displayName: "Empty", code: "EP", color: "#445566", displayOrder: 1,
-    derivedStart: null, derivedEnd: null, activities: [] }] }] };
+    plannedStart: null, plannedEnd: null, derivedStart: null, derivedEnd: null, activities: [] }] }] };
 const targets: ScheduleTarget[] = [{ id: "t", name: "Target", description: null, color: "#AA4557",
   targetDate: "2026-11-10", operationalDate: null, displayOrder: 0, version: 1 }];
 
 describe("schedule workspace model", () => {
+  it("keeps explicit stage boundaries separate and does not fill a partial interval from activities", () => {
+    expect(scheduleStageInterval(tree.disciplines[0]!.stages[0]!)).toEqual({
+      start: "2026-11-01", end: "2026-11-12", source: "derived"
+    });
+    expect(scheduleStageInterval({ ...tree.disciplines[0]!.stages[0]!,
+      plannedStart: "2026-12-01", plannedEnd: "2026-12-12" })).toEqual({
+      start: "2026-12-01", end: "2026-12-12", source: "planned"
+    });
+    expect(scheduleStageInterval({ ...tree.disciplines[0]!.stages[0]!,
+      plannedStart: "2026-12-01", plannedEnd: null })).toEqual({
+      start: "2026-12-01", end: null, source: "planned"
+    });
+    expect(scheduleStageInterval({ ...tree.disciplines[0]!.stages[0]!,
+      plannedStart: null, plannedEnd: "2026-12-12" })).toEqual({
+      start: null, end: "2026-12-12", source: "planned"
+    });
+  });
+
   it("flattens expanded hierarchy once and keeps empty stages visible", () => {
     const rows = visibleScheduleRows({ id: "p", name: "Product" }, tree, new Set(["d"]), new Set(["s"]));
     expect(rows.map((row) => row.key)).toEqual(["product:p", "discipline:d", "stage:s", "activity:a", "activity:b", "stage:empty"]);

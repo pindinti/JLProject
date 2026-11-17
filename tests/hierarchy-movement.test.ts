@@ -7,7 +7,8 @@ const activity = { id: "activity-a", stageId: "stage-a", name: "Synthetic activi
   colorOverride: null, version: 1, planningMode: "manual" as const, workingDayDuration: null,
   planningCalendarVersion: null };
 const stageA = { id: "stage-a", disciplineId: "discipline-a", code: "A", color: "#123456",
-  displayName: "Stage A", displayOrder: 0, derivedStart: activity.plannedStart,
+  displayName: "Stage A", displayOrder: 0, plannedStart: null, plannedEnd: null,
+  derivedStart: activity.plannedStart,
   derivedEnd: activity.plannedEnd, version: 3, activities: [activity] };
 const stageB = { ...stageA, id: "stage-b", disciplineId: "discipline-b", code: "B",
   displayName: "Stage B", displayOrder: 0, activities: [] };

@@ -71,6 +71,22 @@ describe("executive Gantt projection", () => {
     expect(second.stages[0].activities[0].color).toBe("#FEDCBA");
   });
 
+  it("returns planned and derived values separately without changing the legacy Gantt interval", () => {
+    const data = rows();
+    data.stages.find((stage) => stage.id === stageB)!.plannedStart = "2025-01-10";
+    data.stages.push({ id: "a5555555-5555-4555-8555-555555555557", productId: product,
+      disciplineId: disciplineB, code: "EP", displayName: "Empty stage", color: "#334455",
+      displayOrder: 1, plannedStart: null, plannedEnd: "2025-02-01" });
+    const [current] = assembleExecutiveGantt(data);
+    const explicit = current.disciplines[1].stages[0];
+    const empty = current.disciplines[1].stages[1];
+
+    expect(explicit).toMatchObject({ plannedStart: "2025-01-10", plannedEnd: null,
+      derivedStart: "2025-01-01", derivedEnd: "2025-01-05", start: "2025-01-01", end: "2025-01-05" });
+    expect(empty).toMatchObject({ plannedStart: null, plannedEnd: "2025-02-01",
+      derivedStart: null, derivedEnd: null, start: null, end: null, activities: [] });
+  });
+
   it("preserves same-date targets, civil dates, and missing boundaries without inventing dates", () => {
     const data = rows();
     data.activities = [{ id: root, productId: product, disciplineId: null, stageId: null,
@@ -97,6 +113,8 @@ describe("executive Gantt projection", () => {
       { text: string; values: unknown[] }[], { isolationLevel: string; readOnly: boolean }
     ];
     expect(queries).toHaveLength(5);
+    expect(queries[2].text).toContain("planned_start");
+    expect(queries[2].text).toContain("planned_end");
     expect(options).toEqual({ isolationLevel: "RepeatableRead", readOnly: true });
     for (const query of queries) {
       expect(query.text.trim()).toMatch(/^SELECT /);

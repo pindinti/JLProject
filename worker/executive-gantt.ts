@@ -11,7 +11,10 @@ export interface ExecutiveActivity {
 }
 export interface ExecutiveStage extends ExecutiveInterval {
   id: string; productId: string; disciplineId: string; code: string;
-  displayName: string; color: string; displayOrder: number; activities: ExecutiveActivity[];
+  displayName: string; color: string; displayOrder: number;
+  plannedStart: string | null; plannedEnd: string | null;
+  derivedStart: string | null; derivedEnd: string | null;
+  activities: ExecutiveActivity[];
 }
 export interface ExecutiveDiscipline extends ExecutiveInterval {
   id: string; productId: string; name: string; shortCode: string;
@@ -73,7 +76,8 @@ export function assembleExecutiveGantt(rows: ExecutiveRows): ExecutiveProduct[] 
     const stage: ExecutiveStage = { id: value(row, "id"), productId: discipline.productId,
       disciplineId: discipline.id, code: value(row, "code"), displayName: value(row, "displayName"),
       color: value(row, "color"), displayOrder: number(row, "displayOrder"),
-      start: null, end: null, activities: [] };
+      plannedStart: optional(row, "plannedStart"), plannedEnd: optional(row, "plannedEnd"),
+      derivedStart: null, derivedEnd: null, start: null, end: null, activities: [] };
     stages.set(stage.id, stage);
     discipline.stages.push(stage);
   }
@@ -93,11 +97,18 @@ export function assembleExecutiveGantt(rows: ExecutiveRows): ExecutiveProduct[] 
       color: colorOverride ?? stage?.color ?? rootActivityDefaultColor };
     if (stage) {
       stage.activities.push(activity);
-      include(stage, activity);
+      const derived = { start: stage.derivedStart, end: stage.derivedEnd };
+      include(derived, activity);
+      stage.derivedStart = derived.start;
+      stage.derivedEnd = derived.end;
       const discipline = disciplines.get(stage.disciplineId)!;
       include(discipline, activity);
     } else product.rootActivities.push(activity);
     include(product, activity);
+  }
+  for (const stage of stages.values()) {
+    stage.start = stage.derivedStart;
+    stage.end = stage.derivedEnd;
   }
   for (const row of rows.targets) {
     const product = products.get(value(row, "productId"));
@@ -134,7 +145,9 @@ export function createExecutiveGanttRepository(environment: WorkerEnvironment): 
           AND deleted_at IS NULL ORDER BY product_id, display_order, id`,
         sql`SELECT s.id::text AS id, s.product_id::text AS "productId",
           s.discipline_id::text AS "disciplineId", d.code, d.color,
-          s.display_name AS "displayName", s.display_order AS "displayOrder"
+          s.display_name AS "displayName", s.display_order AS "displayOrder",
+          to_char(s.planned_start, 'YYYY-MM-DD') AS "plannedStart",
+          to_char(s.planned_end, 'YYYY-MM-DD') AS "plannedEnd"
           FROM public.discipline_stages AS s
           JOIN public.product_disciplines AS pd ON pd.id = s.discipline_id
             AND pd.workspace_id = s.workspace_id AND pd.product_id = s.product_id AND pd.deleted_at IS NULL

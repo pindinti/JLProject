@@ -244,7 +244,7 @@ Preferred field order: **Name → Discipline/Stage → Dates → Owner/Execution
 
 - Display start/end side by side and reject end dates earlier than start dates.
 - Keep date editing auditable: previous value, new value, reason, outcome, and history.
-- Stage dates derived from child activities must not be independently overridden. Any future stage-wide rescheduling must preview its activity-level impact before confirmation.
+- Stage date fields may be independently planned. If both planned boundaries are null, derive the stage interval from its activities. If either boundary is explicit, use only explicit boundaries and leave a missing boundary unset; never fill it from activity dates. Show the explicit planned values separately from derived values in details. A date edit requires a reason, a current version, and a saved audit event. Activity edits do not silently change explicit stage dates. The stage bar uses the explicit interval whenever either explicit boundary exists; otherwise it uses the derived interval. P0-A establishes persistence and API behavior; Gantt controls and visual presentation require the separate P0-B phase approval.
 - Show importer validation by source row/column. Error downloads may be added separately.
 - Use the existing contextual drawer rather than placing forms at the bottom of long schedules.
 

@@ -5,7 +5,15 @@ export interface ScheduleActivity {
 export const rootActivityDefaultColor = "#8D9A89";
 export interface ScheduleStage {
   id: string; displayName: string; code: string; color: string; displayOrder: number;
+  plannedStart: string | null; plannedEnd: string | null;
   derivedStart: string | null; derivedEnd: string | null; version?: number; activities: ScheduleActivity[];
+}
+export type ScheduleStageInterval = { start: string | null; end: string | null; source: "planned" | "derived" };
+export function scheduleStageInterval(stage: Pick<ScheduleStage,
+  "plannedStart" | "plannedEnd" | "derivedStart" | "derivedEnd">): ScheduleStageInterval {
+  if (stage.plannedStart !== null || stage.plannedEnd !== null)
+    return { start: stage.plannedStart, end: stage.plannedEnd, source: "planned" };
+  return { start: stage.derivedStart, end: stage.derivedEnd, source: "derived" };
 }
 export interface ScheduleDiscipline {
   id: string; name: string; shortCode: string; color: string; displayOrder: number; version?: number; stages: ScheduleStage[];

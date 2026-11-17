@@ -81,6 +81,22 @@ describe("ProductChangeHistoryDialog", () => {
       .toEqual(["Atividade movida"]);
   });
 
+  it("renders audited stage date events with the stage-specific event label", async () => {
+    const stageDateEvent = { ...activityEvent, id: "stage-date:00000000-0000-4000-8000-000000000004",
+      eventType: "stage_dates_changed", item: { kind: "stage", id: "stage-1",
+        name: "Synthetic stage", hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage" } },
+      before: { plannedStart: null, plannedEnd: null },
+      after: { plannedStart: "2026-11-03", plannedEnd: null } };
+    auth.fetch.mockResolvedValue(json({ events: [stageDateEvent], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    const stageCard = within(dialog).getByText("Synthetic stage").closest("li")!;
+    expect(within(stageCard).getByText("Datas da etapa alteradas")).toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Datas da etapa alteradas" })).toHaveValue("stage_dates_changed");
+    fireEvent.click(within(stageCard).getByText("Ver antes e depois"));
+    expect(stageCard.querySelector(".product-history__value-columns")).toHaveTextContent("03/11/2026");
+  });
+
   it("renders stage moves and discipline reordering as single hierarchy events", async () => {
     const stageMove = { ...movementEvent, id: "hierarchy-movement:stage", item: { kind: "stage", id: "stage-1",
       name: "Synthetic stage", hierarchy: { discipline: "New discipline", stage: "Synthetic stage" } },

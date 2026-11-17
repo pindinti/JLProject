@@ -5,7 +5,7 @@ import { ChangeHistoryDialog } from "./ChangeHistoryDialog";
 import { messages } from "./locales/pt-BR";
 
 type ProductHistoryEventType = "product_created" | "schedule_imported" | "activity_dates_changed" |
-  "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
+  "stage_dates_changed" | "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
   "schedule_hierarchy_deleted" | "hierarchy_moved";
 interface ProductHistoryItem {
   kind: string; id: string; name: string | null;
@@ -29,12 +29,13 @@ const historyTime = new Intl.DateTimeFormat("pt-BR", {
   hour: "2-digit", minute: "2-digit"
 });
 const eventTypes: ProductHistoryEventType[] = ["product_created", "schedule_imported", "activity_dates_changed",
-  "business_target_date_changed", "calendar_rescheduled", "calendar_reschedule_reversed",
+  "stage_dates_changed", "business_target_date_changed", "calendar_rescheduled", "calendar_reschedule_reversed",
   "schedule_hierarchy_deleted", "hierarchy_moved"];
 const eventLabels: Record<ProductHistoryEventType, string> = {
   product_created: messages.productHistoryTypeProductCreated,
   schedule_imported: messages.productHistoryTypeImport,
   activity_dates_changed: messages.productHistoryTypeActivityDates,
+  stage_dates_changed: messages.productHistoryTypeStageDates,
   business_target_date_changed: messages.productHistoryTypeTargetDate,
   calendar_rescheduled: messages.productHistoryTypeCalendarReschedule,
   calendar_reschedule_reversed: messages.productHistoryTypeCalendarReversal,
