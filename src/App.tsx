@@ -403,7 +403,8 @@ export function App() {
         )}
 
         {view === "products" && currentWorkspace && (
-          <Products workspace={currentWorkspace} userId={authenticatedUserId} onAccessLost={refreshSession} />
+          <Products key={currentWorkspace.id} workspace={currentWorkspace}
+            userId={authenticatedUserId} onAccessLost={refreshSession} />
         )}
         {view === "settings" && currentWorkspace && (
           <Settings workspace={currentWorkspace} adminWorkspace={adminWorkspace} onAccessLost={refreshSession} onBack={() => {

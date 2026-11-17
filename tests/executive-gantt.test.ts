@@ -41,9 +41,9 @@ function rows(): ExecutiveRows {
         plannedStart: "2025-01-01", plannedEnd: "2025-01-05", colorOverride: "#FEDCBA" }
     ],
     targets: [
-      { id: "target-b", productId: product, name: "Second", color: "#222222", displayOrder: 1,
+      { id: "target-b", productId: product, name: "Second", description: null, color: "#222222", displayOrder: 1,
         targetDate: "2025-01-04", operationalDate: null },
-      { id: "target-a", productId: product, name: "First", color: "#111111", displayOrder: 0,
+      { id: "target-a", productId: product, name: "First", description: "Target detail", color: "#111111", displayOrder: 0,
         targetDate: "2025-01-04", operationalDate: "2025-01-06" }
     ]
   };
@@ -84,6 +84,7 @@ describe("executive Gantt projection", () => {
       ["target-a", "2025-01-04"], ["target-b", "2025-01-04"]
     ]);
     expect(current.targets[0].operationalDate).toBe("2025-01-06");
+    expect(current.targets[0].description).toBe("Target detail");
   });
 
   it("uses a fixed read-only transaction with five workspace-scoped queries", async () => {

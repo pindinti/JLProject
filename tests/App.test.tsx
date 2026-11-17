@@ -168,6 +168,25 @@ describe("products UI", () => {
     auth.authenticatedFetch.mockResolvedValue(new Response(JSON.stringify({ products: [product] }), { status: 200 }));
   });
 
+  it("opens the full Executive Gantt from Home and supports its direct route", async () => {
+    const first = render(<App />);
+    const action = await screen.findByRole("button", { name: "Abrir cronograma executivo" });
+    expect(action).toBeEnabled();
+    fireEvent.click(action);
+    expect(window.location.pathname).toBe("/produtos/cronograma-executivo");
+    expect(await screen.findByRole("heading", { name: "Cronograma executivo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Etapas" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Voltar aos produtos" }));
+    expect(window.location.pathname).toBe("/produtos");
+    expect(await screen.findByRole("button", { name: "Abrir cronograma executivo" })).toBeEnabled();
+    first.unmount();
+    auth.authenticatedFetch.mockClear();
+    window.history.replaceState(null, "", "/produtos/cronograma-executivo");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Cronograma executivo" })).toBeInTheDocument();
+    expect(auth.authenticatedFetch.mock.calls.some(([path]) => String(path).endsWith("/products"))).toBe(false);
+  });
+
   it("loads products and creates one through the same-origin API", async () => {
     render(<App />);
     expect(await screen.findByRole("link", { name: /Synthetic product/ })).toBeInTheDocument();

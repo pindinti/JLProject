@@ -3,6 +3,7 @@ import { authenticatedFetch, type WorkspaceSummary } from "./auth";
 import { messages } from "./locales/pt-BR";
 import { ScheduleEditor } from "./ScheduleEditor";
 import { ExecutiveGanttHome } from "./ExecutiveGanttHome";
+import { ExecutiveGanttFull } from "./ExecutiveGanttFull";
 
 const ImportPreview = lazy(() => import("./ImportPreview").then((module) => ({ default: module.ImportPreview })));
 
@@ -48,6 +49,10 @@ export function Products({ workspace, userId, onAccessLost }: {
     window.location.pathname.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null
   );
   const [showImport, setShowImport] = useState(() => window.location.pathname === "/produtos/importar");
+  const [showExecutive, setShowExecutive] = useState(() =>
+    window.location.pathname === "/produtos/cronograma-executivo");
+  const [scheduleReturnToExecutive, setScheduleReturnToExecutive] = useState(() =>
+    window.history.state?.returnToExecutive === true);
   const canEdit = workspace.role === "admin" || workspace.role === "editor";
   const endpoint = `/api/workspaces/${workspace.id}/products`;
   const selected = products.find((product) => product.id === selectedId) ?? null;
@@ -111,7 +116,19 @@ export function Products({ workspace, userId, onAccessLost }: {
     setCountsLoading(false);
   }, [endpoint, onAccessLost, products]);
 
-  useEffect(() => { queueMicrotask(() => void load()); }, [load]);
+  useEffect(() => { if (!showExecutive) queueMicrotask(() => void load()); }, [load, showExecutive]);
+
+  useEffect(() => {
+    const syncRoute = () => {
+      const path = window.location.pathname;
+      setShowExecutive(path === "/produtos/cronograma-executivo");
+      setShowImport(path === "/produtos/importar");
+      setScheduleProductId(path.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null);
+      setScheduleReturnToExecutive(window.history.state?.returnToExecutive === true);
+    };
+    window.addEventListener("popstate", syncRoute);
+    return () => window.removeEventListener("popstate", syncRoute);
+  }, []);
 
   function selectProduct(product: Product) {
     setCreating(false);
@@ -124,6 +141,7 @@ export function Products({ workspace, userId, onAccessLost }: {
   function openSchedule(product: Product) {
     window.history.pushState(null, "", `/produtos/${product.id}/cronograma`);
     setScheduleProductId(product.id);
+    setScheduleReturnToExecutive(false);
     setSelectedId(null);
     setOpenMenuProductId(null);
   }
@@ -238,6 +256,7 @@ export function Products({ workspace, userId, onAccessLost }: {
       onImported={(productId) => {
         window.history.pushState(null, "", `/produtos/${productId}/cronograma`);
         setScheduleProductId(productId);
+        setScheduleReturnToExecutive(false);
         setShowImport(false);
         void load();
       }}
@@ -247,8 +266,10 @@ export function Products({ workspace, userId, onAccessLost }: {
   if (scheduleProductId) {
     const scheduleProduct = products.find((item) => item.id === scheduleProductId);
     const backToProducts = () => {
-      window.history.pushState(null, "", "/produtos");
+      window.history.pushState(null, "", scheduleReturnToExecutive
+        ? "/produtos/cronograma-executivo" : "/produtos");
       setScheduleProductId(null);
+      setShowExecutive(scheduleReturnToExecutive);
     };
     if (state === "loading") return <p role="status">{messages.productsLoading}</p>;
     if (state === "error") return <div role="alert"><p>{messages.productsError}</p>
@@ -259,6 +280,19 @@ export function Products({ workspace, userId, onAccessLost }: {
       : <div role="alert"><p>{messages.scheduleNotFound}</p>
           <button type="button" onClick={backToProducts}>{messages.backToProducts}</button></div>;
   }
+
+  if (showExecutive) return <ExecutiveGanttFull key={workspace.id} workspaceId={workspace.id}
+    onAccessLost={onAccessLost}
+    onBack={() => {
+      window.history.pushState(null, "", "/produtos");
+      setShowExecutive(false);
+    }}
+    onOpenProduct={(productId) => {
+      window.history.pushState({ returnToExecutive: true }, "", `/produtos/${productId}/cronograma`);
+      setScheduleReturnToExecutive(true);
+      setScheduleProductId(productId);
+      setShowExecutive(false);
+    }} />;
 
   return (
     <section className="products" aria-labelledby="products-title">
@@ -272,7 +306,11 @@ export function Products({ workspace, userId, onAccessLost }: {
           }}>{messages.importTitle}</button>
         </div>}
       </div>
-      <ExecutiveGanttHome key={workspace.id} workspaceId={workspace.id} onAccessLost={onAccessLost} />
+      <ExecutiveGanttHome key={workspace.id} workspaceId={workspace.id} onAccessLost={onAccessLost}
+        onOpenFull={() => {
+          window.history.pushState(null, "", "/produtos/cronograma-executivo");
+          setShowExecutive(true);
+        }} />
       {state === "loading" && <p role="status">{messages.productsLoading}</p>}
       {state === "error" && <div role="alert"><p>{messages.productsError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && products.length === 0 && <p>{messages.productsEmpty}</p>}

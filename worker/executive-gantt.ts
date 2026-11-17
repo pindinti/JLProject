@@ -18,7 +18,8 @@ export interface ExecutiveDiscipline extends ExecutiveInterval {
   color: string; displayOrder: number; stages: ExecutiveStage[];
 }
 export interface ExecutiveTarget {
-  id: string; productId: string; name: string; color: string; displayOrder: number;
+  id: string; productId: string; name: string; description: string | null;
+  color: string; displayOrder: number;
   targetDate: string; operationalDate: string | null;
 }
 export interface ExecutiveProduct extends ExecutiveInterval {
@@ -102,6 +103,7 @@ export function assembleExecutiveGantt(rows: ExecutiveRows): ExecutiveProduct[] 
     const product = products.get(value(row, "productId"));
     if (!product) continue;
     product.targets.push({ id: value(row, "id"), productId: product.id, name: value(row, "name"),
+      description: optional(row, "description"),
       color: value(row, "color"), displayOrder: number(row, "displayOrder"),
       targetDate: value(row, "targetDate"), operationalDate: optional(row, "operationalDate") });
   }
@@ -155,7 +157,7 @@ export function createExecutiveGanttRepository(environment: WorkerEnvironment): 
               OR (s.id IS NOT NULL AND d.id IS NOT NULL AND s.discipline_id = d.id))
           ORDER BY a.product_id, a.discipline_id NULLS FIRST, a.stage_id NULLS FIRST,
             a.display_order, a.id`,
-        sql`SELECT id::text AS id, product_id::text AS "productId", name, color,
+        sql`SELECT id::text AS id, product_id::text AS "productId", name, description, color,
           display_order AS "displayOrder", to_char(target_date, 'YYYY-MM-DD') AS "targetDate",
           to_char(operational_date, 'YYYY-MM-DD') AS "operationalDate"
           FROM public.business_targets WHERE workspace_id = ${workspaceId}::uuid

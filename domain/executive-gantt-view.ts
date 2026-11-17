@@ -1,4 +1,4 @@
-import { dayNumber, makeTimeline, type TimelineScale } from "./schedule-workspace";
+import { dayNumber, makeTimeline, type TimelineScale, type Zoom } from "./schedule-workspace";
 import type { ExecutiveDiscipline, ExecutiveProduct, ExecutiveStage, ExecutiveTarget } from "../worker/executive-gantt";
 
 export interface PositionedExecutiveStage {
@@ -102,7 +102,7 @@ export function groupExecutiveTargets(targets: readonly ExecutiveTarget[]): Exec
       left.displayOrder - right.displayOrder || left.id.localeCompare(right.id)) }));
 }
 
-export function makeExecutiveTimeline(products: readonly ExecutiveProduct[], zoom: "week" | "month",
+export function makeExecutiveTimeline(products: readonly ExecutiveProduct[], zoom: Zoom,
   today: string): TimelineScale {
   const activities = products.flatMap((product) => [
     ...product.rootActivities,

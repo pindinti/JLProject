@@ -26,9 +26,9 @@ const projection: ExecutiveProduct[] = [
         ] }
     ],
     targets: [
-      { id: "t1", productId: "current", name: "Target one", color: "#112233", displayOrder: 0,
+      { id: "t1", productId: "current", name: "Target one", description: null, color: "#112233", displayOrder: 0,
         targetDate: "2025-01-02", operationalDate: null },
-      { id: "t2", productId: "current", name: "Target two", color: "#445566", displayOrder: 1,
+      { id: "t2", productId: "current", name: "Target two", description: null, color: "#445566", displayOrder: 1,
         targetDate: "2025-01-02", operationalDate: null }
     ] },
   { id: "archived", name: "Archived product", active: false, start: null, end: null,

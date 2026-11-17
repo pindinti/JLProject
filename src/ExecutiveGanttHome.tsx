@@ -30,9 +30,10 @@ function milestoneDetail(target: ExecutiveTarget): string {
   return messages.targetDetail(target.name, formatCivilDate(target.targetDate));
 }
 
-export function ExecutiveGanttHome({ workspaceId, onAccessLost }: {
+export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
   workspaceId: string;
   onAccessLost: () => void;
+  onOpenFull?: () => void;
 }) {
   const [products, setProducts] = useState<ExecutiveProduct[]>([]);
   const [loadedWorkspaceId, setLoadedWorkspaceId] = useState(workspaceId);
@@ -166,7 +167,8 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost }: {
         {messages.executiveShowTargets}</label>
       <div className="executive-gantt__toolbar-actions">
         <button type="button" className="back-button" onClick={() => void load()}>{messages.executiveRefresh}</button>
-        <button type="button" disabled title={messages.executiveGanttFullPending}>{messages.openExecutiveGantt}</button>
+        <button type="button" disabled={!onOpenFull} onClick={onOpenFull}
+          title={onOpenFull ? undefined : messages.executiveGanttFullPending}>{messages.openExecutiveGantt}</button>
       </div>
     </div>
     {displayStatus === "loading" && <p role="status">{messages.executiveLoading}</p>}

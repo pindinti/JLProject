@@ -12,7 +12,7 @@ const stage = (id: string, start: string | null, end: string | null): ExecutiveS
 const product = (): ExecutiveProduct => ({ id: "product", name: "Product", active: true,
   start: null, end: null, rootActivities: [], targets: [], disciplines: [] });
 const target = (id: string, date: string, order: number): ExecutiveTarget => ({
-  id, productId: "product", name: id, color: "#ABCDEF", displayOrder: order,
+  id, productId: "product", name: id, description: null, color: "#ABCDEF", displayOrder: order,
   targetDate: date, operationalDate: null
 });
 
