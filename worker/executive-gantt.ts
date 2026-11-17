@@ -13,6 +13,7 @@ export interface ExecutiveStage extends ExecutiveInterval {
   id: string; productId: string; disciplineId: string; code: string;
   displayName: string; color: string; displayOrder: number;
   plannedStart: string | null; plannedEnd: string | null;
+  dateSource: "planned" | "derived";
   derivedStart: string | null; derivedEnd: string | null;
   activities: ExecutiveActivity[];
 }
@@ -51,6 +52,11 @@ function include(interval: ExecutiveInterval, activity: ExecutiveActivity): void
     interval.end = activity.plannedEnd;
 }
 
+function includeBounds(interval: ExecutiveInterval, start: string | null, end: string | null): void {
+  if (start && (!interval.start || start < interval.start)) interval.start = start;
+  if (end && (!interval.end || end > interval.end)) interval.end = end;
+}
+
 export function assembleExecutiveGantt(rows: ExecutiveRows): ExecutiveProduct[] {
   const products = new Map<string, ExecutiveProduct>();
   const disciplines = new Map<string, ExecutiveDiscipline>();
@@ -77,6 +83,7 @@ export function assembleExecutiveGantt(rows: ExecutiveRows): ExecutiveProduct[] 
       disciplineId: discipline.id, code: value(row, "code"), displayName: value(row, "displayName"),
       color: value(row, "color"), displayOrder: number(row, "displayOrder"),
       plannedStart: optional(row, "plannedStart"), plannedEnd: optional(row, "plannedEnd"),
+      dateSource: row["plannedStart"] != null || row["plannedEnd"] != null ? "planned" : "derived",
       derivedStart: null, derivedEnd: null, start: null, end: null, activities: [] };
     stages.set(stage.id, stage);
     discipline.stages.push(stage);
@@ -107,8 +114,12 @@ export function assembleExecutiveGantt(rows: ExecutiveRows): ExecutiveProduct[] 
     include(product, activity);
   }
   for (const stage of stages.values()) {
-    stage.start = stage.derivedStart;
-    stage.end = stage.derivedEnd;
+    stage.start = stage.dateSource === "planned" ? stage.plannedStart : stage.derivedStart;
+    stage.end = stage.dateSource === "planned" ? stage.plannedEnd : stage.derivedEnd;
+    const discipline = disciplines.get(stage.disciplineId);
+    const product = products.get(stage.productId);
+    if (discipline) includeBounds(discipline, stage.start, stage.end);
+    if (product) includeBounds(product, stage.start, stage.end);
   }
   for (const row of rows.targets) {
     const product = products.get(value(row, "productId"));

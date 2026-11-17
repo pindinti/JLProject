@@ -12,7 +12,7 @@ interface ProductHistoryItem {
   hierarchy?: { scope?: string; discipline?: string | null; stage?: string | null };
 }
 interface ProductHistoryEvent {
-  id: string; occurredAt: string; actorName: string | null; eventType: ProductHistoryEventType;
+  id: string; occurredAt: string; actorId: string; actorName: string | null; eventType: ProductHistoryEventType;
   item: ProductHistoryItem | null; justification: string | null;
   before: Record<string, unknown> | null; after: Record<string, unknown> | null;
   affectedItems: Record<string, unknown>[];
@@ -64,6 +64,7 @@ function isEvent(value: unknown): value is ProductHistoryEvent {
   const hierarchy = detailItem?.hierarchy === undefined ? null : record(detailItem.hierarchy);
   return !!item && typeof item.id === "string" && typeof item.occurredAt === "string" &&
     !Number.isNaN(Date.parse(item.occurredAt)) &&
+    typeof item.actorId === "string" &&
     (item.actorName === null || typeof item.actorName === "string") &&
     eventTypes.includes(item.eventType as ProductHistoryEventType) &&
     (item.item === null || (!!detailItem && typeof detailItem.kind === "string" &&
@@ -208,12 +209,30 @@ function ActivityDateComparison({ event }: { event: ProductHistoryEvent }) {
   </ul>;
 }
 
+function StageDateComparison({ event }: { event: ProductHistoryEvent }) {
+  const dateValue = (value: Record<string, unknown> | null, key: "plannedStart" | "plannedEnd") => {
+    const date = value?.[key];
+    return typeof date === "string" ? displayScalar(date, key) ?? messages.noDate : messages.noDate;
+  };
+  return <div className="product-history__value-columns product-history__stage-date-comparison">
+    <section><h3>{messages.calendarBefore}</h3><dl>
+      <div><dt>{messages.productHistoryStart}</dt><dd>{dateValue(event.before, "plannedStart")}</dd></div>
+      <div><dt>{messages.productHistoryEnd}</dt><dd>{dateValue(event.before, "plannedEnd")}</dd></div>
+    </dl></section>
+    <section><h3>{messages.calendarAfter}</h3><dl>
+      <div><dt>{messages.productHistoryStart}</dt><dd>{dateValue(event.after, "plannedStart")}</dd></div>
+      <div><dt>{messages.productHistoryEnd}</dt><dd>{dateValue(event.after, "plannedEnd")}</dd></div>
+    </dl></section>
+  </div>;
+}
+
 function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
   const itemHierarchy = hierarchyLabel(event.item);
   const affected = event.affectedItems.filter((item) => typeof item.name === "string");
   const beforeRows = detailRows(event.before);
   const afterRows = detailRows(event.after);
   const hasMovement = event.eventType === "hierarchy_moved";
+  const hasStageDates = event.eventType === "stage_dates_changed";
   const hasActivityDates = activityChanges(event.before).length > 0 || activityChanges(event.after).length > 0;
   const genericDetails = beforeRows.length > 0 || afterRows.length > 0;
   return <li className="product-history__event">
@@ -221,7 +240,7 @@ function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
       <div className="product-history__event-main">
         <strong className="product-history__item-name">{eventItemName(event)}</strong>
         <time dateTime={event.occurredAt}>{historyTime.format(new Date(event.occurredAt))}</time>
-        <span>{event.actorName ?? messages.calendarRescheduleActorUnavailable}</span>
+        <span>{event.actorName ?? messages.stageDateActor(event.actorId)}</span>
       </div>
         <span className="product-history__event-type">{movementEventLabel(event)}</span>
     </header>
@@ -236,9 +255,10 @@ function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
         {hierarchyLabel(item) && <span className="product-history__hierarchy">{hierarchyLabel(item)}</span>}
       </li>)}</ul>
     </details>}
-    {(genericDetails || hasActivityDates || hasMovement) && <details className="product-history__details">
+    {(genericDetails || hasActivityDates || hasMovement || hasStageDates) && <details className="product-history__details">
       <summary>{messages.productHistoryBeforeAfter}</summary>
-      {hasMovement ? <MovementComparison event={event} /> : hasActivityDates ? <ActivityDateComparison event={event} /> : <div className="product-history__value-columns">
+      {hasMovement ? <MovementComparison event={event} /> : hasActivityDates ? <ActivityDateComparison event={event} /> : hasStageDates
+        ? <StageDateComparison event={event} /> : <div className="product-history__value-columns">
         {beforeRows.length > 0 && <section><h3>{messages.calendarBefore}</h3><dl>{beforeRows.map(([label, value]) => <div key={label}>
           <dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>}
         {afterRows.length > 0 && <section><h3>{messages.calendarAfter}</h3><dl>{afterRows.map(([label, value]) => <div key={label}>

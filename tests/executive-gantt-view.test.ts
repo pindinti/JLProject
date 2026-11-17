@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { executiveStageBarLabel, groupExecutiveOverflow, groupExecutiveTargets, makeExecutiveTimeline,
   packExecutiveStages } from "../domain/executive-gantt-view";
 import type { ExecutiveProduct, ExecutiveStage, ExecutiveTarget } from "../worker/executive-gantt";
-import { timelineInterval, timelinePosition } from "../domain/schedule-workspace";
+import { dayNumber, timelineInterval, timelinePosition } from "../domain/schedule-workspace";
 import { ganttTextColor } from "../src/design/gantt-colors";
 
 const stage = (id: string, start: string | null, end: string | null): ExecutiveStage => ({
   id, productId: "product", disciplineId: "discipline", code: "EC", displayName: "Same name",
   color: "#123456", displayOrder: 0, start, end, plannedStart: null, plannedEnd: null,
-  derivedStart: start, derivedEnd: end, activities: []
+  dateSource: "derived", derivedStart: start, derivedEnd: end, activities: []
 });
 const product = (): ExecutiveProduct => ({ id: "product", name: "Product", active: true,
   start: null, end: null, rootActivities: [], targets: [], disciplines: [] });
@@ -18,6 +18,19 @@ const target = (id: string, date: string, order: number): ExecutiveTarget => ({
 });
 
 describe("compact executive Gantt layout", () => {
+  it("includes explicit stage dates in its timeline extent, including zero-activity partial stages", () => {
+    const planned: ExecutiveStage = { ...stage("planned-only", null, null),
+      start: "2030-02-28", plannedStart: "2030-02-28", dateSource: "planned" };
+    const value: ExecutiveProduct = { ...product(), disciplines: [{ id: "discipline", productId: "product",
+      name: "Discipline", shortCode: "D", color: "#112233", displayOrder: 0, start: planned.start, end: planned.end,
+      stages: [planned] }] };
+    const scale = makeExecutiveTimeline([value], "month", "2026-11-07");
+    expect(scale.startDay).toBe(dayNumber("2026-11-07") - 14);
+    expect(scale.endDay).toBe(dayNumber("2030-02-28") + 14);
+    expect(timelineInterval(scale, planned.start, planned.end)).toBeNull();
+    expect(timelinePosition(scale, planned.start!)).toBeGreaterThan(0);
+  });
+
   it("labels stage bars by discipline and stage while tolerating missing discipline metadata", () => {
     expect(executiveStageBarLabel({ name: "Architecture", shortCode: "A" },
       { code: "EC", displayName: "Executive Concept" }, true)).toBe("A – EC");

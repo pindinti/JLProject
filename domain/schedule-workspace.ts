@@ -9,11 +9,27 @@ export interface ScheduleStage {
   derivedStart: string | null; derivedEnd: string | null; version?: number; activities: ScheduleActivity[];
 }
 export type ScheduleStageInterval = { start: string | null; end: string | null; source: "planned" | "derived" };
+export interface StageDateDiscrepancy {
+  activityId: string; activityName: string; boundary: "start" | "end";
+  activityDate: string; stageDate: string;
+}
 export function scheduleStageInterval(stage: Pick<ScheduleStage,
   "plannedStart" | "plannedEnd" | "derivedStart" | "derivedEnd">): ScheduleStageInterval {
   if (stage.plannedStart !== null || stage.plannedEnd !== null)
     return { start: stage.plannedStart, end: stage.plannedEnd, source: "planned" };
   return { start: stage.derivedStart, end: stage.derivedEnd, source: "derived" };
+}
+export function stageDateDiscrepancies(stage: Pick<ScheduleStage,
+  "plannedStart" | "plannedEnd" | "activities">): StageDateDiscrepancy[] {
+  if (stage.plannedStart === null && stage.plannedEnd === null) return [];
+  return stage.activities.flatMap((activity) => [
+    ...(stage.plannedStart && activity.plannedStart && activity.plannedStart < stage.plannedStart
+      ? [{ activityId: activity.id, activityName: activity.name, boundary: "start" as const,
+        activityDate: activity.plannedStart, stageDate: stage.plannedStart }] : []),
+    ...(stage.plannedEnd && activity.plannedEnd && activity.plannedEnd > stage.plannedEnd
+      ? [{ activityId: activity.id, activityName: activity.name, boundary: "end" as const,
+        activityDate: activity.plannedEnd, stageDate: stage.plannedEnd }] : [])
+  ]);
 }
 export interface ScheduleDiscipline {
   id: string; name: string; shortCode: string; color: string; displayOrder: number; version?: number; stages: ScheduleStage[];
@@ -26,7 +42,8 @@ export interface ScheduleTarget { id: string; name: string; description: string 
   targetDate: string; operationalDate: string | null; displayOrder: number; version: number }
 export type VisibleRow = { key: string; kind: "product" | "discipline" | "stage" | "activity";
   id: string; disciplineId?: string; stageId?: string; label: string; code?: string;
-  color?: string; start: string | null; end: string | null; hasChildren: boolean; expanded: boolean };
+  color?: string; start: string | null; end: string | null; dateSource?: "planned" | "derived";
+  stageDateDiscrepancies?: StageDateDiscrepancy[]; hasChildren: boolean; expanded: boolean };
 export type Zoom = "day" | "week" | "month";
 
 const dayMilliseconds = 86_400_000;
@@ -53,7 +70,11 @@ export function visibleScheduleRows(product: { id: string; name: string }, tree:
   const stageActivities = tree.disciplines.flatMap((discipline) =>
     discipline.stages.flatMap((stage) => stage.activities));
   const allActivities = [...rootActivities, ...stageActivities];
-  const productDates = extent(allActivities.flatMap((activity) => [activity.plannedStart, activity.plannedEnd]));
+  const stageIntervals = tree.disciplines.flatMap((discipline) => discipline.stages.map(scheduleStageInterval));
+  const productDates = extent([
+    ...allActivities.flatMap((activity) => [activity.plannedStart, activity.plannedEnd]),
+    ...stageIntervals.flatMap((interval) => [interval.start, interval.end])
+  ]);
   const rows: VisibleRow[] = [{ key: `product:${product.id}`, kind: "product", id: product.id,
     label: product.name, start: productDates.start, end: productDates.end,
     hasChildren: rootActivities.length > 0 || tree.disciplines.length > 0, expanded: productExpanded }];
@@ -64,8 +85,14 @@ export function visibleScheduleRows(product: { id: string; name: string }, tree:
       start: activity.plannedStart, end: activity.plannedEnd, hasChildren: false, expanded: false });
   }
   for (const discipline of tree.disciplines) {
-    const dates = extent(discipline.stages.flatMap((stage) => stage.activities.flatMap((activity) =>
-      [activity.plannedStart, activity.plannedEnd])));
+    const dates = extent([
+      ...discipline.stages.flatMap((stage) => stage.activities.flatMap((activity) =>
+        [activity.plannedStart, activity.plannedEnd])),
+      ...discipline.stages.flatMap((stage) => {
+        const interval = scheduleStageInterval(stage);
+        return [interval.start, interval.end];
+      })
+    ]);
     const disciplineExpanded = openDisciplines.has(discipline.id);
     rows.push({ key: `discipline:${discipline.id}`, kind: "discipline", id: discipline.id,
       disciplineId: discipline.id, label: discipline.name, code: discipline.shortCode,
@@ -74,9 +101,11 @@ export function visibleScheduleRows(product: { id: string; name: string }, tree:
     if (!disciplineExpanded) continue;
     for (const stage of discipline.stages) {
       const stageExpanded = openStages.has(stage.id);
+      const interval = scheduleStageInterval(stage);
       rows.push({ key: `stage:${stage.id}`, kind: "stage", id: stage.id,
         disciplineId: discipline.id, stageId: stage.id, label: stage.displayName, code: stage.code,
-        color: stage.color, start: stage.derivedStart, end: stage.derivedEnd,
+        color: stage.color, start: interval.start, end: interval.end, dateSource: interval.source,
+        stageDateDiscrepancies: stageDateDiscrepancies(stage),
         hasChildren: stage.activities.length > 0, expanded: stageExpanded });
       if (!stageExpanded) continue;
       for (const activity of stage.activities) {
@@ -101,6 +130,10 @@ export function makeTimeline(tree: ScheduleTree, targets: readonly Pick<Schedule
   const activities = [...(tree.rootActivities ?? []), ...tree.disciplines.flatMap((discipline) =>
     discipline.stages.flatMap((stage) => stage.activities))];
   const dates = [...activities.flatMap((activity) => [activity.plannedStart, activity.plannedEnd]),
+    ...tree.disciplines.flatMap((discipline) => discipline.stages.flatMap((stage) => {
+      const interval = scheduleStageInterval(stage);
+      return [interval.start, interval.end];
+    })),
     ...targets.map((target) => target.targetDate), today].filter((date): date is string => date !== null);
   const startDay = Math.min(Math.min(...dates.map(dayNumber)) - 14, previous?.startDay ?? Infinity);
   const endDay = Math.max(Math.max(...dates.map(dayNumber)) + 14, previous?.endDay ?? -Infinity);

@@ -121,5 +121,7 @@ export function makeExecutiveTimeline(products: readonly ExecutiveProduct[], zoo
     ...product.disciplines.flatMap((discipline) => discipline.stages.flatMap((stage) => stage.activities))
   ]);
   const targets = products.flatMap((product) => product.targets);
-  return makeTimeline({ disciplines: [], rootActivities: activities }, targets, zoom, today);
+  const stages = products.flatMap((product) => product.disciplines.flatMap((discipline) => discipline.stages));
+  return makeTimeline({ disciplines: [{ id: "executive-timeline", name: "", shortCode: "", color: "",
+    displayOrder: 0, stages }], rootActivities: activities }, targets, zoom, today);
 }

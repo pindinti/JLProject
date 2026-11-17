@@ -71,7 +71,7 @@ describe("executive Gantt projection", () => {
     expect(second.stages[0].activities[0].color).toBe("#FEDCBA");
   });
 
-  it("returns planned and derived values separately without changing the legacy Gantt interval", () => {
+  it("uses explicit planned boundaries while retaining the activity-derived interval separately", () => {
     const data = rows();
     data.stages.find((stage) => stage.id === stageB)!.plannedStart = "2025-01-10";
     data.stages.push({ id: "a5555555-5555-4555-8555-555555555557", productId: product,
@@ -82,9 +82,12 @@ describe("executive Gantt projection", () => {
     const empty = current.disciplines[1].stages[1];
 
     expect(explicit).toMatchObject({ plannedStart: "2025-01-10", plannedEnd: null,
-      derivedStart: "2025-01-01", derivedEnd: "2025-01-05", start: "2025-01-01", end: "2025-01-05" });
+      derivedStart: "2025-01-01", derivedEnd: "2025-01-05", dateSource: "planned",
+      start: "2025-01-10", end: null });
     expect(empty).toMatchObject({ plannedStart: null, plannedEnd: "2025-02-01",
-      derivedStart: null, derivedEnd: null, start: null, end: null, activities: [] });
+      derivedStart: null, derivedEnd: null, dateSource: "planned", start: null, end: "2025-02-01", activities: [] });
+    expect(current.disciplines[1]).toMatchObject({ start: "2025-01-01", end: "2025-02-01" });
+    expect(current).toMatchObject({ start: "2024-02-29", end: "2025-02-01" });
   });
 
   it("preserves same-date targets, civil dates, and missing boundaries without inventing dates", () => {

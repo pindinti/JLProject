@@ -4,7 +4,7 @@ import { visibleExecutiveFullRows, type ExecutiveCollapsed, type ExecutiveDetail
 import { executiveStageBarLabel, groupExecutiveTargets, makeExecutiveTimeline, packExecutiveStages } from "../domain/executive-gantt-view";
 import { nonWorkingDayRanges } from "../domain/non-working-day-ranges";
 import { civilFromDay, dayNumber, saoPauloCivilDate, timelineInterval, timelinePosition,
-  type TimelineScale, type Zoom } from "../domain/schedule-workspace";
+  stageDateDiscrepancies, type TimelineScale, type Zoom } from "../domain/schedule-workspace";
 import { parseCivilDate, type CalendarExceptionDates } from "../domain/working-calendar";
 import type { ExecutiveProduct, ExecutiveTarget } from "../worker/executive-gantt";
 import { authenticatedFetch } from "./auth";
@@ -54,13 +54,25 @@ function TargetMarkers({ product, scale, top, onOpen }: {
 function RowBar({ row, scale }: { row: ExecutiveFullRow; scale: TimelineScale }) {
   const interval = timelineInterval(scale, row.start, row.end);
   const anchor = row.start ?? row.end;
-  const title = messages.executiveFullRowDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end));
-  if (interval) return <span className={`executive-full__bar executive-full__bar--${row.kind}`}
+  const sourceLabel = row.kind === "stage" && row.stage
+    ? row.stage.dateSource === "planned" ? messages.stageDateSourcePlanned : messages.stageDateSourceDerived : "";
+  const discrepancyText = row.kind === "stage" && row.stage ? stageDateDiscrepancies(row.stage).map((warning) =>
+    warning.boundary === "start"
+      ? messages.stageDateActivityBeforeStart(warning.activityName, formatCivilDate(warning.activityDate),
+        formatCivilDate(warning.stageDate))
+      : messages.stageDateActivityAfterEnd(warning.activityName, formatCivilDate(warning.activityDate),
+        formatCivilDate(warning.stageDate))) : [];
+  const title = [messages.executiveFullRowDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end)),
+    sourceLabel, ...discrepancyText].filter(Boolean).join(". ");
+  const sourceClass = row.kind === "stage" && row.stage ? ` executive-full__bar--${row.stage.dateSource}` : "";
+  if (interval) return <span className={`executive-full__bar executive-full__bar--${row.kind}${sourceClass}`}
     data-entity-id={row.id} role="img" tabIndex={0} aria-label={title} title={title}
+    data-date-source={row.kind === "stage" ? row.stage?.dateSource : undefined}
     style={{ left: interval.left, width: Math.max(4, interval.width),
       backgroundColor: row.color ?? "var(--jl-primary)", color: row.color ? ganttTextColor(row.color) : "#FFFFFF" }} />;
-  if (anchor) return <span className="executive-full__bar executive-full__bar--partial"
+  if (anchor) return <span className={`executive-full__bar executive-full__bar--partial${sourceClass}`}
     data-entity-id={row.id} role="img" tabIndex={0} aria-label={title} title={title}
+    data-date-source={row.kind === "stage" ? row.stage?.dateSource : undefined}
     style={{ left: timelinePosition(scale, anchor), backgroundColor: row.color ?? "var(--jl-primary)" }} />;
   return null;
 }
@@ -316,12 +328,20 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
                 style={timelineInterval(timeline, row.start, row.end)!} />}
               {productStages?.stages.map(({ stage, discipline, lane, anchorDate, partial }) => {
                 const interval = partial ? null : timelineInterval(timeline, stage.start, stage.end);
-                const title = messages.executiveStageDetail(stage.displayName?.trim() || stage.code || messages.executiveStageUnavailable,
+                const discrepancyText = stageDateDiscrepancies(stage).map((warning) => warning.boundary === "start"
+                  ? messages.stageDateActivityBeforeStart(warning.activityName, formatCivilDate(warning.activityDate),
+                    formatCivilDate(warning.stageDate))
+                  : messages.stageDateActivityAfterEnd(warning.activityName, formatCivilDate(warning.activityDate),
+                    formatCivilDate(warning.stageDate)));
+                const title = [messages.executiveStageDetail(stage.displayName?.trim() || stage.code || messages.executiveStageUnavailable,
                   discipline?.name?.trim() || discipline?.shortCode?.trim() || messages.executiveDisciplineUnavailable,
-                  formatCivilDate(stage.start), formatCivilDate(stage.end));
+                  formatCivilDate(stage.start), formatCivilDate(stage.end)),
+                  stage.dateSource === "planned" ? messages.stageDateSourcePlanned : messages.stageDateSourceDerived,
+                  ...discrepancyText].join(". ");
                 const barLabel = executiveStageBarLabel(discipline, stage);
-                return <span key={stage.id} className={`executive-full__product-stage${partial ? " is-partial" : ""}`}
+                return <span key={stage.id} className={`executive-full__product-stage executive-full__product-stage--${stage.dateSource}${partial ? " is-partial" : ""}`}
                   data-stage-id={stage.id} data-lane={lane} role="img" tabIndex={0} title={title} aria-label={title}
+                  data-date-source={stage.dateSource}
                   style={{ left: interval?.left ?? timelinePosition(timeline, anchorDate),
                     top: 11 + lane * 20, width: partial ? 6 : interval?.width ?? 0,
                     backgroundColor: stage.color, color: ganttTextColor(stage.color) }}>

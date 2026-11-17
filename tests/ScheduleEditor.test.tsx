@@ -915,6 +915,188 @@ describe("schedule editor", () => {
     );
   });
 
+  it("creates an activity-free stage with one planned civil-date boundary and an audited reason", async () => {
+    const emptyDiscipline = { ...discipline, stages: [] };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [emptyDiscipline] };
+    const created = { ...emptyStage, id: "planned-only-stage", disciplineId: discipline.id,
+      code: "P1", displayName: "Planned only", plannedStart: "2028-02-29", plannedEnd: null,
+      derivedStart: null, derivedEnd: null, activities: [] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/stage-definitions")) return Promise.resolve(json({ stageDefinitions: definitions }));
+      if (path.endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST") {
+        currentTree = { ...currentTree, disciplines: [{ ...emptyDiscipline, stages: [created] }] };
+        return Promise.resolve(json({ stage: created }, 201));
+      }
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount("editor");
+    await screen.findByRole("button", { name: "Adicionar etapa" });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "P1" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Planned only" } });
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "29/02/2028" } });
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"), {
+      target: { value: "Planejamento inicial aprovado" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(await screen.findByText("Planned only (P1)", { selector: ".workspace-row-name" })).toBeInTheDocument();
+    const createCall = api.fetch.mock.calls.find(([path, options]) =>
+      String(path).endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST")!;
+    expect(JSON.parse(createCall[1]?.body as string)).toMatchObject({
+      code: "P1", displayName: "Planned only", plannedStart: "2028-02-29", plannedEnd: null,
+      reason: "Planejamento inicial aprovado"
+    });
+    expect(created.activities).toEqual([]);
+  });
+
+  it("creates an undated empty stage through the compatible stage-creation request", async () => {
+    setup({ productId: product.id, disciplines: [{ ...discipline, stages: [] }] });
+    mount("editor");
+    await screen.findByRole("button", { name: "Adicionar etapa" });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "U1" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Undated empty stage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path, options]) =>
+      String(path).endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST")).toBe(true));
+    const createCall = api.fetch.mock.calls.find(([path, options]) =>
+      String(path).endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST")!;
+    const payload = JSON.parse(createCall[1]?.body as string);
+    expect(payload).not.toHaveProperty("plannedStart");
+    expect(payload).not.toHaveProperty("plannedEnd");
+    expect(payload).not.toHaveProperty("reason");
+  });
+
+  it("creates a full planned interval with a required justification", async () => {
+    setup({ productId: product.id, disciplines: [{ ...discipline, stages: [] }] });
+    mount("editor");
+    await screen.findByRole("button", { name: "Adicionar etapa" });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "FULL" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "Full interval" } });
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "28/02/2028" } });
+    fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "01/03/2028" } });
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"), { target: { value: "Intervalo inicial aprovado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path, options]) =>
+      String(path).endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST")).toBe(true));
+    const createCall = api.fetch.mock.calls.find(([path, options]) =>
+      String(path).endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST")!;
+    expect(JSON.parse(createCall[1]?.body as string)).toMatchObject({
+      plannedStart: "2028-02-28", plannedEnd: "2028-03-01", reason: "Intervalo inicial aprovado"
+    });
+  });
+
+  it("accepts an end-only planned date for a stage without activities", async () => {
+    const emptyDiscipline = { ...discipline, stages: [] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith("/hierarchy")
+      ? Promise.resolve(json({ hierarchy: { productId: product.id, disciplines: [emptyDiscipline] } }))
+      : path.endsWith("/targets") ? Promise.resolve(json({ targets: [] }))
+        : path.endsWith("/stage-definitions") ? Promise.resolve(json({ stageDefinitions: definitions }))
+          : path.endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST"
+            ? Promise.resolve(json({ stage: { ...emptyStage, plannedStart: null, plannedEnd: "2026-11-12", activities: [] } }, 201))
+            : Promise.resolve(json({ stageDefinitions: definitions })));
+    mount("editor");
+    await screen.findByRole("button", { name: "Adicionar etapa" });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar etapa" }));
+    fireEvent.change(screen.getByLabelText("Código da etapa"), { target: { value: "END" } });
+    fireEvent.change(screen.getByLabelText("Nome da etapa"), { target: { value: "End only" } });
+    fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "12/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"), { target: { value: "Definição do término" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(api.fetch.mock.calls.some(([path, options]) =>
+      String(path).endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST")).toBe(true));
+    const createCall = api.fetch.mock.calls.find(([path, options]) =>
+      String(path).endsWith(`/disciplines/${discipline.id}/stages`) && options?.method === "POST")!;
+    expect(JSON.parse(createCall[1]?.body as string)).toMatchObject({ plannedStart: null,
+      plannedEnd: "2026-11-12", reason: "Definição do término" });
+  });
+
+  it("edits and clears planned stage dates through the audited versioned route", async () => {
+    let currentStage = { ...stage, plannedStart: null as string | null, plannedEnd: null as string | null };
+    let currentTree: EditorTree = { productId: product.id, disciplines: [{ ...discipline, stages: [currentStage] }] };
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.endsWith("/hierarchy")) return Promise.resolve(json({ hierarchy: currentTree }));
+      if (path.endsWith("/targets")) return Promise.resolve(json({ targets: [] }));
+      if (path.endsWith("/stage-definitions")) return Promise.resolve(json({ stageDefinitions: definitions }));
+      if (path.endsWith(`/stages/${stage.id}/dates`) && options?.method === "PATCH") {
+        const body = JSON.parse(options.body as string) as { plannedStart: string | null; plannedEnd: string | null; version: number };
+        currentStage = { ...currentStage, plannedStart: body.plannedStart, plannedEnd: body.plannedEnd, version: currentStage.version + 1 };
+        currentTree = { productId: product.id, disciplines: [{ ...discipline, stages: [currentStage] }] };
+        return Promise.resolve(json({ stage: currentStage, changed: true }));
+      }
+      return Promise.resolve(json({ stageDefinitions: definitions }));
+    });
+    mount("editor");
+    await screen.findByText("Synthetic activity");
+    const row = document.querySelector<HTMLElement>(`[data-row-key="stage:${stage.id}"]`)!;
+    fireEvent.click(within(row).getByRole("button", { name: "Editar etapa" }));
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "03/11/2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas da etapa" }));
+    expect(await screen.findByText("Informe uma justificativa com pelo menos 10 caracteres para alterar as datas.")).toBeInTheDocument();
+    expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith(`/stages/${stage.id}/dates`))).toBe(false);
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"), { target: { value: "Ajuste de início aprovado" } });
+    fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "02/11/2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas da etapa" }));
+    expect(await screen.findByText("Informe datas válidas e mantenha o fim no mesmo dia ou depois do início.")).toBeInTheDocument();
+    expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith(`/stages/${stage.id}/dates`))).toBe(false);
+    fireEvent.change(screen.getByLabelText("Fim planejado"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas da etapa" }));
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) =>
+      String(path).endsWith(`/stages/${stage.id}/dates`))).toHaveLength(1));
+    let dateCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith(`/stages/${stage.id}/dates`))!;
+    expect(JSON.parse(dateCall[1]?.body as string)).toEqual({ plannedStart: "2026-11-03", plannedEnd: null,
+      reason: "Ajuste de início aprovado", version: 1 });
+    expect(await screen.findByText("Datas da etapa atualizadas e registradas no histórico.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"), { target: { value: "Remoção do início aprovado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas da etapa" }));
+    await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) =>
+      String(path).endsWith(`/stages/${stage.id}/dates`))).toHaveLength(2));
+    dateCall = api.fetch.mock.calls.filter(([path]) => String(path).endsWith(`/stages/${stage.id}/dates`))[1]!;
+    expect(JSON.parse(dateCall[1]?.body as string)).toEqual({ plannedStart: null, plannedEnd: null,
+      reason: "Remoção do início aprovado", version: 2 });
+  });
+
+  it("keeps a stage-date editor stale after a concurrency conflict", async () => {
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith(`/stages/${stage.id}/dates`) &&
+      options?.method === "PATCH" ? Promise.resolve(json({ code: "stale_version" }, 409))
+      : path.endsWith("/hierarchy") ? Promise.resolve(json({ hierarchy: { productId: product.id, disciplines: [discipline] } }))
+        : path.endsWith("/targets") ? Promise.resolve(json({ targets: [] }))
+          : path.endsWith("/stage-definitions") ? Promise.resolve(json({ stageDefinitions: definitions }))
+            : Promise.resolve(json({ stageDefinitions: definitions })));
+    mount("editor");
+    await screen.findByText("Synthetic activity");
+    const row = document.querySelector<HTMLElement>(`[data-row-key="stage:${stage.id}"]`)!;
+    fireEvent.click(within(row).getByRole("button", { name: "Editar etapa" }));
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "03/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"), { target: { value: "Ajuste concorrente" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas da etapa" }));
+    expect(await screen.findByText("Este item foi alterado ou já existe. Atualize os dados e tente novamente.")).toBeInTheDocument();
+    expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith(`/stages/${stage.id}/dates`))).toHaveLength(1);
+    expect(screen.getByLabelText("Início planejado")).toHaveValue("03/11/2026");
+  });
+
+  it("routes server authorization denial through the workspace access boundary", async () => {
+    api.fetch.mockImplementation((path: string, options?: RequestInit) => path.endsWith(`/stages/${stage.id}/dates`) &&
+      options?.method === "PATCH" ? Promise.resolve(json({ error: "Forbidden" }, 403))
+      : path.endsWith("/hierarchy") ? Promise.resolve(json({ hierarchy: { productId: product.id, disciplines: [discipline] } }))
+        : path.endsWith("/targets") ? Promise.resolve(json({ targets: [] }))
+          : path.endsWith("/stage-definitions") ? Promise.resolve(json({ stageDefinitions: definitions }))
+            : Promise.resolve(json({ stageDefinitions: definitions })));
+    const onAccessLost = mount("editor");
+    await screen.findByText("Synthetic activity");
+    const row = document.querySelector<HTMLElement>(`[data-row-key="stage:${stage.id}"]`)!;
+    fireEvent.click(within(row).getByRole("button", { name: "Editar etapa" }));
+    fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "03/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Justificativa da alteração"), { target: { value: "Ajuste autorizado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar datas da etapa" }));
+    await waitFor(() => expect(onAccessLost).toHaveBeenCalledOnce());
+  });
+
   it("reveals a created stage under a collapsed discipline and preserves other expansion choices across refresh and reload", async () => {
     const unrelatedStage = { ...emptyStage, id: "unrelated-stage", displayName: "Unrelated stage" };
     const unrelatedDiscipline = { ...discipline, id: "unrelated-discipline", name: "Unrelated discipline",

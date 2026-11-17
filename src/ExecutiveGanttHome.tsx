@@ -3,7 +3,7 @@ import { groupExecutiveOverflow, groupExecutiveTargets, makeExecutiveTimeline,
   packExecutiveStages, executiveStageBarLabel } from "../domain/executive-gantt-view";
 import { nonWorkingDayRanges } from "../domain/non-working-day-ranges";
 import { parseCivilDate, type CalendarExceptionDates } from "../domain/working-calendar";
-import { civilFromDay, dayNumber, saoPauloCivilDate, timelineInterval, timelinePosition } from "../domain/schedule-workspace";
+import { civilFromDay, dayNumber, saoPauloCivilDate, stageDateDiscrepancies, timelineInterval, timelinePosition } from "../domain/schedule-workspace";
 import type { ExecutiveDiscipline, ExecutiveProduct, ExecutiveStage, ExecutiveTarget } from "../worker/executive-gantt";
 import { authenticatedFetch } from "./auth";
 import { formatCivilDate } from "./civil-date";
@@ -220,14 +220,22 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
             <span className="executive-gantt__today-line" aria-hidden="true" style={{ left: todayLeft }} />
             {visibleStages.map(({ stage, discipline, lane, anchorDate, partial }) => {
               const interval = partial ? null : timelineInterval(timeline, stage.start, stage.end);
-              const stageLabel = messages.executiveStageDetail(stage.displayName?.trim() || stage.code || messages.executiveStageUnavailable,
+              const discrepancyText = stageDateDiscrepancies(stage).map((warning) => warning.boundary === "start"
+                ? messages.stageDateActivityBeforeStart(warning.activityName, formatCivilDate(warning.activityDate),
+                  formatCivilDate(warning.stageDate))
+                : messages.stageDateActivityAfterEnd(warning.activityName, formatCivilDate(warning.activityDate),
+                  formatCivilDate(warning.stageDate)));
+              const stageLabel = [messages.executiveStageDetail(stage.displayName?.trim() || stage.code || messages.executiveStageUnavailable,
                 discipline?.name?.trim() || discipline?.shortCode?.trim() || messages.executiveDisciplineUnavailable,
-                formatCivilDate(stage.start), formatCivilDate(stage.end));
+                formatCivilDate(stage.start), formatCivilDate(stage.end)),
+                stage.dateSource === "planned" ? messages.stageDateSourcePlanned : messages.stageDateSourceDerived,
+                ...discrepancyText].join(". ");
               const barLabel = executiveStageBarLabel(discipline, stage, true);
               const width = partial ? 6 : interval?.width ?? 0;
               return <span key={stage.id} data-stage-id={stage.id} data-lane={lane}
-                className={`executive-gantt__stage${partial ? " executive-gantt__stage--partial" : ""}${!partial &&
+                className={`executive-gantt__stage executive-gantt__stage--${stage.dateSource}${partial ? " executive-gantt__stage--partial" : ""}${!partial &&
                   interval && interval.width < 74 ? " executive-gantt__stage--short" : ""}`}
+                data-date-source={stage.dateSource}
                 role="img" tabIndex={0} aria-label={stageLabel} title={stageLabel}
                 style={{ top: 5 + lane * 19, left: interval?.left ?? timelinePosition(timeline, anchorDate),
                   width, backgroundColor: stage.color,
@@ -278,6 +286,14 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
           <span className="executive-gantt__detail-color" style={{ backgroundColor: stage.color }} aria-hidden="true" />
           <span><strong>{stage.displayName}</strong><small>{stage.code} · {discipline.name}</small>
             <small>{formatCivilDate(stage.start)} – {formatCivilDate(stage.end)}</small>
+            <small>{stage.dateSource === "planned" ? messages.stageDateSourcePlanned : messages.stageDateSourceDerived}</small>
+            {stageDateDiscrepancies(stage).map((warning) => <small key={`${warning.activityId}:${warning.boundary}`}>
+              {warning.boundary === "start"
+                ? messages.stageDateActivityBeforeStart(warning.activityName, formatCivilDate(warning.activityDate),
+                  formatCivilDate(warning.stageDate))
+                : messages.stageDateActivityAfterEnd(warning.activityName, formatCivilDate(warning.activityDate),
+                  formatCivilDate(warning.stageDate))}
+            </small>)}
             <small>{messages.scheduleColor(stage.color)}</small></span>
         </li>)}</ul>
       </div>

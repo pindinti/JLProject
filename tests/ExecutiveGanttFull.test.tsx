@@ -19,7 +19,7 @@ const product: ExecutiveProduct = {
       id: `s${index}`, productId: "p", disciplineId: id, code: "EC", displayName: "Same stage",
       color: index ? "#BB3366" : "#33AA88", displayOrder: 0,
       start: index ? "2024-03-02" : "2024-03-01", end: index ? "2024-03-04" : "2024-03-03",
-      plannedStart: null, plannedEnd: null,
+      plannedStart: null, plannedEnd: null, dateSource: "derived",
       derivedStart: index ? "2024-03-02" : "2024-03-01", derivedEnd: index ? "2024-03-04" : "2024-03-03",
       activities: [{ id: `a${index}`, productId: "p", disciplineId: id, stageId: `s${index}`,
         name: `Activity ${index}`, activityType: null, displayOrder: 0,
@@ -45,6 +45,30 @@ beforeEach(() => {
 });
 
 describe("full Executive Gantt", () => {
+  it("shows planned full and partial intervals with their source at stage detail level", async () => {
+    const planned = structuredClone(product);
+    const stage = { ...planned.disciplines[1].stages[0], id: "planned-only", displayName: "Planned only",
+      start: "2030-02-28", end: "2030-03-02", plannedStart: "2030-02-28", plannedEnd: "2030-03-02",
+      dateSource: "planned" as const, derivedStart: null, derivedEnd: null, activities: [] };
+    const partial = { ...stage, id: "planned-partial", start: null, end: "2030-03-05",
+      plannedStart: null, plannedEnd: "2030-03-05" };
+    planned.disciplines[1] = { ...planned.disciplines[1], start: "2030-02-28", end: "2030-03-05",
+      stages: [stage, partial] };
+    planned.start = "2024-02-29";
+    planned.end = "2030-03-05";
+    auth.fetch.mockResolvedValue(response([planned, archived]));
+    const { container } = render(<ExecutiveGanttFull {...props} />);
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    fireEvent.click(screen.getByRole("button", { name: "Etapas" }));
+    const bar = container.querySelector<HTMLElement>('[data-row-key="stage:planned-only"] [data-entity-id="planned-only"]')!;
+    const marker = container.querySelector<HTMLElement>('[data-row-key="stage:planned-partial"] [data-entity-id="planned-partial"]')!;
+    expect(bar).toHaveAttribute("data-date-source", "planned");
+    expect(bar).toHaveClass("executive-full__bar--planned");
+    expect(bar).toHaveAttribute("title", expect.stringContaining("28/02/2030"));
+    expect(marker).toHaveClass("executive-full__bar--partial", "executive-full__bar--planned");
+    expect(marker).toHaveAttribute("data-date-source", "planned");
+  });
+
   it("defaults to products and month and keeps detail independent from temporal zoom", async () => {
     const { container } = render(<ExecutiveGanttFull {...props} />);
     const table = await screen.findByRole("table", { name: "Cronograma executivo" });

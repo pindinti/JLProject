@@ -771,6 +771,13 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
           {rows.map((row) => {
             const isDropTarget = dropTarget?.rowKey === row.key;
             const dropClass = isDropTarget ? ` drop-${dropTarget.position}` : "";
+            const dateWarnings = (row.stageDateDiscrepancies ?? []).map((warning) =>
+              warning.boundary === "start"
+                ? messages.stageDateActivityBeforeStart(warning.activityName,
+                  formatCivilDate(warning.activityDate), formatCivilDate(warning.stageDate))
+                : messages.stageDateActivityAfterEnd(warning.activityName,
+                  formatCivilDate(warning.activityDate), formatCivilDate(warning.stageDate)));
+            const dateWarningText = dateWarnings.join(" ");
             return <div key={row.key} className={`workspace-table-row row-${row.kind}${selected === row.key ? " selected" : ""}${hoveredRowKey === row.key ? " is-hovered" : ""}${dropClass}`}
               data-row-key={row.key} role="row" aria-selected={selected === row.key}
               onMouseEnter={() => enterRow(row.key)} onMouseLeave={() => leaveRow(row.key)}
@@ -875,6 +882,14 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
                 onDoubleClick={() => { if (canEdit) { setSelected(row.key); onEdit(row); } }}>
                 {row.label}{row.code ? ` (${row.code})` : ""}
               </button>
+              {row.kind === "stage" && (row.start !== null || row.end !== null) && <span
+                className={`workspace-stage-date-source workspace-stage-date-source--${row.dateSource ?? "derived"}`}
+                title={row.dateSource === "planned" ? messages.stageDateSourcePlanned : messages.stageDateSourceDerived}>
+                {row.dateSource === "planned" ? messages.stageDateSourcePlanned : messages.stageDateSourceDerived}
+              </span>}
+              {row.kind === "stage" && dateWarningText && <span className="workspace-stage-date-warning"
+                role="note" aria-label={`${messages.stageDateWarningCount(dateWarnings.length)} ${dateWarningText}`}
+                title={`${messages.stageDateWarningCount(dateWarnings.length)} ${dateWarningText}`}>!</span>}
               {draggedActivityId && row.kind === "product" && <span className="workspace-drop-hint">{messages.activityMoveRootTarget}</span>}
               {draggedActivityId && row.kind === "stage" && <span className="workspace-drop-hint">{messages.activityMoveStageTarget}</span>}
               {draggedStructureItem?.kind === "stage" && row.kind === "discipline" &&
@@ -900,7 +915,7 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
             }
           }} />
         <div ref={chartRef} className="workspace-chart-scroll" onScroll={() => syncScroll("chart")}
-          onClick={(event) => { if (!(event.target as Element).closest(".timeline-bar")) selectDate(event); }}
+          onClick={(event) => { if (!(event.target as Element).closest(".timeline-bar, .timeline-boundary-marker")) selectDate(event); }}
           aria-label={messages.scheduleGantt}>
           <div className="workspace-chart-content" style={{ width: scale.width, backgroundSize: `${scale.dayWidth}px 100%` }}>
             <div className="timeline-nonworking-days" aria-hidden="true">
@@ -924,18 +939,38 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
               const impact = row.kind === "activity" ? impactByActivity.get(row.id) : undefined;
               const proposedInterval = impact
                 ? timelineInterval(scale, impact.proposedStartDate, impact.proposedEndDate) : null;
+              const dateWarnings = (row.stageDateDiscrepancies ?? []).map((warning) =>
+                warning.boundary === "start"
+                  ? messages.stageDateActivityBeforeStart(warning.activityName,
+                    formatCivilDate(warning.activityDate), formatCivilDate(warning.stageDate))
+                  : messages.stageDateActivityAfterEnd(warning.activityName,
+                    formatCivilDate(warning.activityDate), formatCivilDate(warning.stageDate)));
+              const sourceLabel = row.kind === "stage"
+                ? row.dateSource === "planned" ? messages.stageDateSourcePlanned : messages.stageDateSourceDerived : "";
+              const stageDetail = row.kind === "stage"
+                ? [messages.scheduleBarDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end)),
+                  sourceLabel, ...dateWarnings].join(". ") : "";
               return <div key={row.key} className={`workspace-chart-row row-${row.kind}${selected === row.key ? " selected" : ""}${hoveredRowKey === row.key ? " is-hovered" : ""}`}
                 data-row-key={row.key}
+                data-date-source={row.kind === "stage" ? row.dateSource : undefined}
                 onMouseEnter={() => enterRow(row.key)} onMouseLeave={() => leaveRow(row.key)}
                 onClick={() => setSelected(row.key)}>
-                {interval && <button type="button" className={`timeline-bar bar-${row.kind}`}
+                {interval && <button type="button" className={`timeline-bar bar-${row.kind}${row.kind === "stage" ? ` timeline-bar--${row.dateSource ?? "derived"}` : ""}`}
                   style={{ left: interval.left, width: interval.width, backgroundColor: row.color ?? "var(--jl-gantt-line-fallback)" }}
-                  title={messages.scheduleBarDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end))}
-                  aria-label={messages.scheduleBarDetail(row.label, formatCivilDate(row.start), formatCivilDate(row.end))}
+                  title={row.kind === "stage" ? stageDetail : messages.scheduleBarDetail(row.label,
+                    formatCivilDate(row.start), formatCivilDate(row.end))}
+                  aria-label={row.kind === "stage" ? stageDetail : messages.scheduleBarDetail(row.label,
+                    formatCivilDate(row.start), formatCivilDate(row.end))}
                   onClick={() => setSelected(row.key)} />}
+                {!interval && row.kind === "stage" && (row.start !== null || row.end !== null) && <span
+                  className={`timeline-boundary-marker timeline-boundary-marker--${row.dateSource ?? "derived"}`}
+                  data-date={row.start ?? row.end} role="img" aria-label={stageDetail} title={stageDetail}
+                  style={{ left: timelinePosition(scale, (row.start ?? row.end)!) - 6,
+                    borderColor: row.color, color: row.color }} />}
                 {proposedInterval && <span className="timeline-proposed-bar" data-activity-id={row.id}
                   aria-hidden="true" style={{ left: proposedInterval.left, width: proposedInterval.width }} />}
-                {!interval && row.kind === "stage" && <span className="workspace-no-date">{messages.noActivities}</span>}
+                {!interval && row.kind === "stage" && row.start === null && row.end === null &&
+                  <span className="workspace-no-date">{messages.noActivities}</span>}
               </div>;
             })}
           </div>

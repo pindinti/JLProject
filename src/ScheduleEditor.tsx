@@ -43,18 +43,24 @@ function previewMatches(preview: WorkingPreview | null, start: string, duration:
   return !!preview && !!parsedStart && preview.startDate === parsedStart &&
     /^\d+$/.test(duration) && preview.workingDays === Number(duration);
 }
-interface DateDraft {
+interface ActivityDateDraft {
+  kind: "activity";
   originalStart: string; originalEnd: string; plannedStart: string; plannedEnd: string; reason: string;
   version: number; planningMode: "manual" | "working_days"; workingDays: string;
   originalPlanningMode: "manual" | "working_days"; originalWorkingDays: number | null;
   originalCalendarVersion: number | null;
 }
+interface StageDateDraft {
+  kind: "stage"; originalStart: string | null; originalEnd: string | null;
+  plannedStart: string; plannedEnd: string; reason: string; version: number;
+}
+type DateDraft = ActivityDateDraft | StageDateDraft;
 interface CalendarImpactResponse { calendarVersion: number; impacts: ActivityCalendarImpact[] }
 type DraftKind = "discipline" | "stage" | "activity";
 interface Draft {
   kind: DraftKind; id?: string; disciplineId?: string; stageId?: string; rootActivity: boolean; version?: number;
   name: string; shortCode: string; code: string; color: string; displayName: string;
-  displayOrder: string; description: string; activityType: string;
+  displayOrder: string; description: string; activityType: string; dateReason: string;
   plannedStart: string; plannedEnd: string; notes: string; definitionId: string;
   planningMode: "manual" | "working_days"; workingDays: string;
   colorOverride: string | null; stageColor: string; colorSelected: boolean;
@@ -64,7 +70,7 @@ const newDefinition = "new";
 function initialDraft(kind: DraftKind): Draft {
   return { kind, rootActivity: false, name: "", shortCode: "", code: "", color: "#336699", displayName: "",
     displayOrder: "0", description: "", activityType: "", plannedStart: "", plannedEnd: "",
-    notes: "", definitionId: newDefinition, planningMode: "manual", workingDays: "",
+    dateReason: "", notes: "", definitionId: newDefinition, planningMode: "manual", workingDays: "",
     colorOverride: null, stageColor: "#336699", colorSelected: false };
 }
 
@@ -329,7 +335,9 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
   }
   function startStage(disciplineId: string, item?: Stage) {
     rememberFocus();
-    setDateDraft(null);
+    setDateDraft(item ? { kind: "stage", originalStart: item.plannedStart, originalEnd: item.plannedEnd,
+      plannedStart: item.plannedStart ? formatCivilDate(item.plannedStart) : "",
+      plannedEnd: item.plannedEnd ? formatCivilDate(item.plannedEnd) : "", reason: "", version: item.version } : null);
     clearWorkingPreview();
     const match = item && definitions.find((definition) => definition.code.toLowerCase() === item.code.toLowerCase());
     setFeedback("");
@@ -342,7 +350,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     rememberFocus();
     setFeedback("");
     clearWorkingPreview();
-    setDateDraft(item ? { originalStart: formatCivilDate(item.plannedStart),
+    setDateDraft(item ? { kind: "activity", originalStart: formatCivilDate(item.plannedStart),
       originalEnd: formatCivilDate(item.plannedEnd), plannedStart: item.plannedStart ? formatCivilDate(item.plannedStart) : "",
       plannedEnd: item.plannedEnd ? formatCivilDate(item.plannedEnd) : "", reason: "", version: item.version,
       planningMode: item.planningMode, workingDays: item.workingDayDuration?.toString() ?? "",
@@ -382,7 +390,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         draft.color.toUpperCase() !== selectedStageDefinition.color.toUpperCase()) {
       setFeedback(messages.saveSharedColorFirst); return;
     }
-    if (draft.kind === "activity" && draft.id && dateDraft &&
+    if (draft.kind === "activity" && draft.id && dateDraft?.kind === "activity" &&
         (dateDraft.plannedStart !== (draft.plannedStart === messages.noDate ? "" : draft.plannedStart) ||
          dateDraft.plannedEnd !== (draft.plannedEnd === messages.noDate ? "" : draft.plannedEnd))) {
       setFeedback(messages.saveDatesSeparately); return;
@@ -393,6 +401,23 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     }
     const plannedStart = draft.plannedStart ? parseBrazilianDate(draft.plannedStart) : null;
     const plannedEnd = draft.plannedEnd ? parseBrazilianDate(draft.plannedEnd) : null;
+    let stageDatePlan: { plannedStart: string | null; plannedEnd: string | null } | null = null;
+    if (draft.kind === "stage" && !draft.id) {
+      const startEntered = draft.plannedStart.trim().length > 0;
+      const endEntered = draft.plannedEnd.trim().length > 0;
+      if ((startEntered && !plannedStart) || (endEntered && !plannedEnd) ||
+          (plannedStart !== null && plannedEnd !== null && plannedStart > plannedEnd)) {
+        setFeedback(messages.stageDateInvalidInterval); return;
+      }
+      if (plannedStart !== null || plannedEnd !== null) {
+        const reason = draft.dateReason.trim();
+        if (reason.length < 10 || reason.length > 2000 ||
+            Array.from(reason).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
+          setFeedback(messages.stageDateReasonRequired); return;
+        }
+        stageDatePlan = { plannedStart, plannedEnd };
+      }
+    }
     if (draft.kind === "activity" && !draft.id) {
       if (draft.planningMode === "manual" &&
           ((!!draft.plannedStart !== !!draft.plannedEnd) ||
@@ -415,6 +440,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     } else if (draft.kind === "stage") {
       path += `/${draft.disciplineId}/stages`;
       data = { code: draft.code, color: draft.color, displayName: draft.displayName, displayOrder };
+      if (stageDatePlan) data = { ...data, ...stageDatePlan, reason: draft.dateReason.trim() };
       if (draft.id) path += `/${draft.id}`;
     } else {
       if (draft.rootActivity) {
@@ -496,8 +522,54 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
 
   async function saveDates(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft?.id || (!draft.rootActivity && (!draft.disciplineId || !draft.stageId)) ||
-        !dateDraft || !canEdit || busy) return;
+    if (!draft?.id || !dateDraft || !canEdit || busy) return;
+    if (dateDraft.kind === "stage") {
+      if (draft.kind !== "stage" || !draft.disciplineId) return;
+      const startText = dateDraft.plannedStart.trim();
+      const endText = dateDraft.plannedEnd.trim();
+      const start = startText ? parseBrazilianDate(startText) : null;
+      const end = endText ? parseBrazilianDate(endText) : null;
+      if ((startText && !start) || (endText && !end) ||
+          (start !== null && end !== null && start > end)) {
+        setFeedback(messages.stageDateInvalidInterval); return;
+      }
+      const changed = start !== dateDraft.originalStart || end !== dateDraft.originalEnd;
+      if (!changed) { setFeedback(messages.dateChangeUnchanged); return; }
+      const reason = dateDraft.reason.trim();
+      if (reason.length < 10 || reason.length > 2000 ||
+          Array.from(reason).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
+        setFeedback(messages.dateChangeReasonRequired); return;
+      }
+      setBusy(true);
+      setFeedback("");
+      try {
+        const result = await authenticatedFetch(
+          `${base}/disciplines/${draft.disciplineId}/stages/${draft.id}/dates`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ plannedStart: start, plannedEnd: end, reason, version: dateDraft.version })
+          });
+        if (result.status === 401 || result.status === 403) { onAccessLost(); return; }
+        if (result.status === 409) { setFeedback(messages.scheduleConflict); return; }
+        if (result.status === 404) { setFeedback(messages.scheduleNotFound); return; }
+        if (result.status === 400) { setFeedback(messages.dateChangeInvalid); return; }
+        if (!result.ok) { setFeedback(messages.scheduleSaveError); return; }
+        const payload = await result.json() as { stage?: Stage; changed?: boolean };
+        const updated = payload.stage;
+        if (!updated || typeof updated.version !== "number") { setFeedback(messages.scheduleSaveError); return; }
+        setDraft((previous) => previous?.kind === "stage"
+          ? { ...previous, version: updated.version } : previous);
+        setDateDraft({ kind: "stage", originalStart: updated.plannedStart, originalEnd: updated.plannedEnd,
+          plannedStart: updated.plannedStart ? formatCivilDate(updated.plannedStart) : "",
+          plannedEnd: updated.plannedEnd ? formatCivilDate(updated.plannedEnd) : "",
+          reason: "", version: updated.version });
+        if (!await load(false)) setFeedback(messages.scheduleSavedRefreshError);
+        else setFeedback(payload.changed ? messages.stageDateChangeSaved : messages.dateChangeUnchanged);
+      } catch { setFeedback(messages.scheduleSaveError); }
+      finally { setBusy(false); }
+      return;
+    }
+    if (draft.kind !== "activity" || dateDraft.kind !== "activity" ||
+        (!draft.rootActivity && (!draft.disciplineId || !draft.stageId))) return;
     const start = parseBrazilianDate(dateDraft.plannedStart);
     const workingMode = dateDraft.planningMode === "working_days";
     const end = workingMode && previewMatches(workingPreview, dateDraft.plannedStart, dateDraft.workingDays)
@@ -553,7 +625,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
       setDateDraft({ originalStart: formatCivilDate(updated.plannedStart), originalEnd: formatCivilDate(updated.plannedEnd),
         plannedStart: updated.plannedStart ? formatCivilDate(updated.plannedStart) : "",
         plannedEnd: updated.plannedEnd ? formatCivilDate(updated.plannedEnd) : "", reason: "", version: updated.version,
-        planningMode: updated.planningMode, workingDays: updated.workingDayDuration?.toString() ?? "",
+      kind: "activity", planningMode: updated.planningMode, workingDays: updated.workingDayDuration?.toString() ?? "",
         originalPlanningMode: updated.planningMode, originalWorkingDays: updated.workingDayDuration,
         originalCalendarVersion: updated.planningCalendarVersion });
       clearWorkingPreview();
@@ -1035,6 +1107,21 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
           <label htmlFor="stage-name">{messages.stageName}</label>
           <input id="stage-name" required maxLength={200} value={draft.displayName}
             onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} />
+          {!draft.id && <fieldset className="stage-date-planning">
+            <legend>{messages.stageDatePlanning}</legend>
+            <p>{messages.stageDatePlanningHint}</p>
+            <label htmlFor="stage-planned-start">{messages.plannedStart}</label>
+            <DatePickerField id="stage-planned-start" label={messages.plannedStart} value={draft.plannedStart}
+              onChange={(plannedStart) => setDraft({ ...draft, plannedStart })} />
+            <label htmlFor="stage-planned-end">{messages.plannedEnd}</label>
+            <DatePickerField id="stage-planned-end" label={messages.plannedEnd} value={draft.plannedEnd}
+              onChange={(plannedEnd) => setDraft({ ...draft, plannedEnd })} />
+            {(draft.plannedStart.trim() || draft.plannedEnd.trim()) && <>
+              <label htmlFor="stage-date-reason">{messages.dateChangeReason}</label>
+              <textarea id="stage-date-reason" required minLength={10} maxLength={2000}
+                value={draft.dateReason} onChange={(event) => setDraft({ ...draft, dateReason: event.target.value })} />
+            </>}
+          </fieldset>}
           {stageCodeFeedback && <p id="stage-code-feedback" role="alert" className="feedback">{stageCodeFeedback}</p>}
         </>}
         {draft.kind === "activity" && <>
@@ -1100,7 +1187,32 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
           <button type="button" className="back-button" onClick={closeDraft} disabled={busy}>{messages.cancel}</button>
         </footer>
       </form>}
-      {draft?.kind === "activity" && draft.id && dateDraft && canEdit && <form className="schedule-date-form"
+      {draft?.kind === "stage" && draft.id && dateDraft?.kind === "stage" && canEdit && <form className="schedule-date-form stage-date-form"
+        onSubmit={(event) => void saveDates(event)}>
+        <h4>{messages.stageDatePlanning}</h4>
+        <p>{messages.stageDatePlanningHint}</p>
+        <p>{messages.originalDates}: {messages.dateRange(formatCivilDate(dateDraft.originalStart),
+          formatCivilDate(dateDraft.originalEnd))}</p>
+        <label htmlFor="stage-date-start">{messages.plannedStart}</label>
+        <DatePickerField id="stage-date-start" label={messages.plannedStart} value={dateDraft.plannedStart}
+          onChange={(plannedStart) => setDateDraft({ ...dateDraft, plannedStart })} />
+        <label htmlFor="stage-date-end">{messages.plannedEnd}</label>
+        <DatePickerField id="stage-date-end" label={messages.plannedEnd} value={dateDraft.plannedEnd}
+          onChange={(plannedEnd) => setDateDraft({ ...dateDraft, plannedEnd })} />
+        <label htmlFor="stage-date-reason-edit">{messages.dateChangeReason}</label>
+        <textarea id="stage-date-reason-edit" maxLength={2000} value={dateDraft.reason}
+          onChange={(event) => setDateDraft({ ...dateDraft, reason: event.target.value })} />
+        <footer className="schedule-drawer__footer">
+          <button type="submit" disabled={busy}>{messages.saveStageDates}</button>
+          <button type="button" className="back-button" onClick={() => {
+            setDateDraft((previous) => previous?.kind === "stage" ? { ...previous,
+              plannedStart: previous.originalStart ? formatCivilDate(previous.originalStart) : "",
+              plannedEnd: previous.originalEnd ? formatCivilDate(previous.originalEnd) : "", reason: "" } : previous);
+            setFeedback("");
+          }} disabled={busy}>{messages.cancel}</button>
+        </footer>
+      </form>}
+      {draft?.kind === "activity" && draft.id && dateDraft?.kind === "activity" && canEdit && <form className="schedule-date-form"
         onSubmit={(event) => void saveDates(event)}>
         <h4>{messages.proposedDates}</h4>
         <p>{messages.originalDates}: {messages.dateRange(dateDraft.originalStart, dateDraft.originalEnd)}</p>
@@ -1108,7 +1220,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         <label htmlFor="date-planning-mode">{messages.activityPlanningMode}</label>
         <select id="date-planning-mode" value={dateDraft.planningMode} onChange={(event) => {
           clearWorkingPreview();
-          setDateDraft({ ...dateDraft, planningMode: event.target.value as DateDraft["planningMode"] });
+          setDateDraft({ ...dateDraft, planningMode: event.target.value as ActivityDateDraft["planningMode"] });
         }}>
           <option value="manual">{messages.manualPlanning}</option>
           <option value="working_days">{messages.workingDaysPlanning}</option>
@@ -1136,9 +1248,9 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         <footer className="schedule-drawer__footer">
           <button type="submit" disabled={busy}>{messages.saveActivityDates}</button>
           <button type="button" className="back-button" onClick={() => {
-            setDateDraft((previous) => previous ? { ...previous,
+            setDateDraft((previous) => previous?.kind === "activity" ? { ...previous,
               plannedStart: previous.originalStart === messages.noDate ? "" : previous.originalStart,
-              plannedEnd: previous.originalEnd === messages.noDate ? "" : previous.originalEnd, reason: "" } : null);
+              plannedEnd: previous.originalEnd === messages.noDate ? "" : previous.originalEnd, reason: "" } : previous);
             setFeedback("");
           }} disabled={busy}>{messages.cancel}</button>
         </footer>

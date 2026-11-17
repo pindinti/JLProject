@@ -18,8 +18,9 @@ const tree: ScheduleTree = { disciplines: [{ id: "discipline", name: "Synthetic 
 const targets = [{ id: "target", name: "Synthetic target", targetDate: "2026-11-07",
   description: null, color: "#AA4557", operationalDate: null, displayOrder: 0, version: 1 }];
 
-function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[], workspaceId?: string) {
-  return render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
+function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[], workspaceId?: string,
+  scheduleTree: ScheduleTree = tree) {
+  return render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={scheduleTree}
     targets={targets} workspaceId={workspaceId} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])}
     calendarImpacts={calendarImpacts}
     canEdit={canEdit} onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()}
@@ -30,6 +31,28 @@ function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[], works
 }
 
 describe("schedule workspace refinements", () => {
+  it("renders explicit stage dates and names out-of-interval activities without moving either schedule", () => {
+    const planned: ScheduleTree = { disciplines: [{ ...tree.disciplines[0]!, stages: [{
+      ...tree.disciplines[0]!.stages[0]!, plannedStart: "2026-11-03", plannedEnd: "2027-01-10",
+      activities: [{ ...tree.disciplines[0]!.stages[0]!.activities[0]!, plannedStart: "2026-11-01",
+        plannedEnd: "2028-01-17" }]
+    }] }] };
+    const { container } = mount(true, undefined, undefined, planned);
+    const tableStage = container.querySelector<HTMLElement>('[data-row-key="stage:stage"]')!;
+    const chartStage = container.querySelector<HTMLElement>('.workspace-chart-row[data-row-key="stage:stage"]')!;
+    const bar = chartStage.querySelector<HTMLElement>(".timeline-bar")!;
+    expect(tableStage.querySelectorAll(".workspace-date-cell")[0]).toHaveTextContent("03/11/2026");
+    expect(tableStage.querySelectorAll(".workspace-date-cell")[1]).toHaveTextContent("10/01/2027");
+    expect(tableStage.querySelector(".workspace-stage-date-source")).toHaveTextContent("Planejada para a etapa");
+    expect(tableStage.querySelector(".workspace-stage-date-warning")).toHaveAttribute("aria-label",
+      expect.stringContaining("Synthetic activity"));
+    expect(bar).toHaveClass("timeline-bar--planned");
+    expect(bar).toHaveAttribute("aria-label", expect.stringContaining("começa em 01/11/2026"));
+    expect(bar).toHaveAttribute("aria-label", expect.stringContaining("termina em 17/01/2028"));
+    expect(container.querySelector('[data-row-key="activity:activity"] .workspace-date-cell'))
+      .toHaveTextContent("01/11/2026");
+  });
+
   it("keeps product history, activity history, and rescheduling history accessible to editors", () => {
     const onHistory = vi.fn();
     const onProductHistory = vi.fn();

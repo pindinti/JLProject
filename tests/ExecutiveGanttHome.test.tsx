@@ -18,13 +18,13 @@ const projection: ExecutiveProduct[] = [
         displayOrder: 0, start: "2024-12-30", end: "2025-01-03", stages: [
           { id: "s1", productId: "current", disciplineId: "d1", code: "EC", displayName: "Repeated stage",
             color: "#AA5577", displayOrder: 0, start: "2024-12-30", end: "2025-01-03",
-            plannedStart: null, plannedEnd: null, derivedStart: "2024-12-30", derivedEnd: "2025-01-03", activities: [] }
+            plannedStart: null, plannedEnd: null, dateSource: "derived", derivedStart: "2024-12-30", derivedEnd: "2025-01-03", activities: [] }
         ] },
       { id: "d2", productId: "current", name: "Engineering", shortCode: "E", color: "#654321",
         displayOrder: 1, start: "2025-01-01", end: "2025-01-04", stages: [
           { id: "s2", productId: "current", disciplineId: "d2", code: "EC", displayName: "Repeated stage",
             color: "#22AA88", displayOrder: 0, start: "2025-01-01", end: "2025-01-04",
-            plannedStart: null, plannedEnd: null, derivedStart: "2025-01-01", derivedEnd: "2025-01-04", activities: [] }
+            plannedStart: null, plannedEnd: null, dateSource: "derived", derivedStart: "2025-01-01", derivedEnd: "2025-01-04", activities: [] }
         ] }
     ],
     targets: [
@@ -46,6 +46,27 @@ beforeEach(() => {
 });
 
 describe("compact Executive Gantt Home", () => {
+  it("renders a planned-only partial stage with a distinct source and timeline position", async () => {
+    const planned = structuredClone(projection);
+    const stage: ExecutiveProduct["disciplines"][number]["stages"][number] = {
+      ...planned[0].disciplines[0].stages[0], id: "planned-only", displayName: "Planned only",
+      start: "2030-02-28", end: null, plannedStart: "2030-02-28", plannedEnd: null,
+      dateSource: "planned", derivedStart: null, derivedEnd: null, activities: []
+    };
+    planned[0].disciplines = [{ ...planned[0].disciplines[0], start: "2030-02-28", end: null, stages: [stage] }];
+    planned[0].start = "2030-02-28";
+    planned[0].end = null;
+    auth.fetch.mockResolvedValue(response(planned));
+    const { container } = render(<ExecutiveGanttHome workspaceId={workspace} onAccessLost={vi.fn()} />);
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    const marker = container.querySelector<HTMLElement>('[data-stage-id="planned-only"]')!;
+    expect(marker).toHaveClass("executive-gantt__stage--partial", "executive-gantt__stage--planned");
+    expect(marker).toHaveAttribute("data-date-source", "planned");
+    expect(marker).toHaveAttribute("title", expect.stringContaining("Planejada para a etapa"));
+    expect(marker).toHaveAttribute("title", expect.stringContaining("28/02/2030"));
+    expect(container.querySelector('[data-product-id="current"]')).toHaveTextContent("28/02/2030");
+  });
+
   it("shows one row per product with overlapping stage lanes, colors, and distinct disciplines", async () => {
     const { container } = render(<ExecutiveGanttHome workspaceId={workspace} onAccessLost={vi.fn()} />);
     expect(await screen.findByRole("table", { name: "Cronograma executivo" })).toBeInTheDocument();

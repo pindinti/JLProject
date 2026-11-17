@@ -83,6 +83,7 @@ describe("ProductChangeHistoryDialog", () => {
 
   it("renders audited stage date events with the stage-specific event label", async () => {
     const stageDateEvent = { ...activityEvent, id: "stage-date:00000000-0000-4000-8000-000000000004",
+      actorName: null,
       eventType: "stage_dates_changed", item: { kind: "stage", id: "stage-1",
         name: "Synthetic stage", hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage" } },
       before: { plannedStart: null, plannedEnd: null },
@@ -92,9 +93,16 @@ describe("ProductChangeHistoryDialog", () => {
     const dialog = await screen.findByRole("dialog");
     const stageCard = within(dialog).getByText("Synthetic stage").closest("li")!;
     expect(within(stageCard).getByText("Datas da etapa alteradas")).toBeInTheDocument();
+    expect(stageCard).toHaveTextContent("Usuário (ID: actor)");
+    expect(stageCard).toHaveTextContent("Synthetic date correction");
+    expect(stageCard.querySelector("time")).toHaveAttribute("dateTime", stageDateEvent.occurredAt);
     expect(within(dialog).getByRole("option", { name: "Datas da etapa alteradas" })).toHaveValue("stage_dates_changed");
     fireEvent.click(within(stageCard).getByText("Ver antes e depois"));
-    expect(stageCard.querySelector(".product-history__value-columns")).toHaveTextContent("03/11/2026");
+    const comparison = stageCard.querySelector(".product-history__stage-date-comparison")!;
+    expect(comparison).toHaveTextContent("Sem data");
+    expect(comparison).toHaveTextContent("03/11/2026");
+    expect(comparison).toHaveTextContent("Início");
+    expect(comparison).toHaveTextContent("Fim");
   });
 
   it("renders stage moves and discipline reordering as single hierarchy events", async () => {

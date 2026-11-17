@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { civilFromDay, dayNumber, makeTimeline, saoPauloCivilDate, timelineDateAtPosition,
   scheduleStageInterval, timelineInterval, timelinePosition, visibleScheduleRows,
+  stageDateDiscrepancies,
   type ScheduleTree, type ScheduleTarget } from "../domain/schedule-workspace";
 
 const tree: ScheduleTree = { disciplines: [{ id: "d", name: "Design", shortCode: "DS", color: "#123456", displayOrder: 0,
@@ -43,6 +44,31 @@ describe("schedule workspace model", () => {
       .map((row) => row.key)).toEqual(["product:p", "discipline:d"]);
     expect(visibleScheduleRows({ id: "p", name: "Product" }, tree, new Set(["d"]), new Set(["s"]), false)
       .map((row) => row.key)).toEqual(["product:p"]);
+  });
+
+  it("uses explicit stage bounds for parent ranges and timeline extent without filling partial dates", () => {
+    const plannedOnly: ScheduleTree = { disciplines: [{ ...tree.disciplines[0]!, stages: [
+      { ...tree.disciplines[0]!.stages[1]!, plannedStart: "2027-02-10", plannedEnd: "2027-02-12" },
+      { ...tree.disciplines[0]!.stages[0]!, plannedStart: "2027-03-01", plannedEnd: null }
+    ] }] };
+    const rows = visibleScheduleRows({ id: "p", name: "Product" }, plannedOnly, new Set(["d"]), new Set(["empty"]));
+    expect(rows[0]).toMatchObject({ start: "2026-11-01", end: "2027-03-01" });
+    expect(rows.find((row) => row.kind === "discipline")).toMatchObject({ start: "2026-11-01", end: "2027-03-01" });
+    expect(rows.find((row) => row.key === "stage:empty")).toMatchObject({ start: "2027-02-10", end: "2027-02-12", dateSource: "planned" });
+    expect(rows.find((row) => row.key === "stage:s")).toMatchObject({ start: "2027-03-01", end: null, dateSource: "planned" });
+    const scale = makeTimeline(plannedOnly, [], "day", "2026-11-07");
+    expect(civilFromDay(scale.endDay - 14)).toBe("2027-03-01");
+  });
+
+  it("reports activities outside only explicitly defined stage boundaries", () => {
+    const stage = { ...tree.disciplines[0]!.stages[0]!, plannedStart: "2026-11-03", plannedEnd: "2026-11-10" };
+    expect(stageDateDiscrepancies(stage)).toEqual([
+      { activityId: "a", activityName: "First", boundary: "start", activityDate: "2026-11-01", stageDate: "2026-11-03" },
+      { activityId: "b", activityName: "Overlap", boundary: "end", activityDate: "2026-11-12", stageDate: "2026-11-10" }
+    ]);
+    expect(stageDateDiscrepancies({ ...stage, plannedStart: "2026-11-01", plannedEnd: null })).toEqual([]);
+    expect(stageDateDiscrepancies({ ...stage, plannedStart: null, plannedEnd: "2026-11-12" })).toEqual([]);
+    expect(stageDateDiscrepancies(tree.disciplines[0]!.stages[0]!)).toEqual([]);
   });
 
   it("positions overlapping intervals and targets by exact UTC civil days", () => {

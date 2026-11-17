@@ -15,6 +15,7 @@ const products: ExecutiveProduct[] = [{
       color: index ? "#AA5577" : "#22AA88", displayOrder: 0,
       start: index ? null : "2024-03-01", end: index ? null : "2024-03-03",
       plannedStart: null, plannedEnd: null,
+      dateSource: "derived",
       derivedStart: index ? null : "2024-03-01", derivedEnd: index ? null : "2024-03-03",
       activities: [{ id: `a${index}`, productId: "p", disciplineId: id, stageId: `s${index}`,
         name: `Activity ${index}`, activityType: null, displayOrder: 0,
