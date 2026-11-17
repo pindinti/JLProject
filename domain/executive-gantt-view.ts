@@ -20,6 +20,18 @@ export interface ExecutiveTargetCluster {
   targets: ExecutiveTarget[];
 }
 
+/** Uses short codes in compact rows and full entity names in the full product view. */
+export function executiveStageBarLabel(discipline: Pick<ExecutiveDiscipline, "name" | "shortCode"> | null,
+  stage: Pick<ExecutiveStage, "code" | "displayName">, compact = false): string {
+  const disciplineLabel = compact
+    ? discipline?.shortCode?.trim() || discipline?.name?.trim() || ""
+    : discipline?.name?.trim() || discipline?.shortCode?.trim() || "";
+  const stageLabel = compact ? stage.code?.trim() || stage.displayName?.trim()
+    : stage.displayName?.trim() || stage.code?.trim();
+  return disciplineLabel ? `${disciplineLabel} – ${stageLabel || "Etapa"}`
+    : stageLabel || "Etapa sem identificação";
+}
+
 export interface ExecutiveOverflowGroup {
   left: number;
   width: number;

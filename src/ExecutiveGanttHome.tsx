@@ -1,6 +1,6 @@
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { groupExecutiveOverflow, groupExecutiveTargets, makeExecutiveTimeline,
-  packExecutiveStages } from "../domain/executive-gantt-view";
+  packExecutiveStages, executiveStageBarLabel } from "../domain/executive-gantt-view";
 import { nonWorkingDayRanges } from "../domain/non-working-day-ranges";
 import { parseCivilDate, type CalendarExceptionDates } from "../domain/working-calendar";
 import { civilFromDay, dayNumber, saoPauloCivilDate, timelineInterval, timelinePosition } from "../domain/schedule-workspace";
@@ -193,7 +193,7 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
         </div>
       </div>
       {visibleProducts.map((product) => {
-        const packed = packExecutiveStages(product, Math.ceil(compactStageWidth / timeline.dayWidth));
+        const packed = packExecutiveStages(product);
         const visibleStages = packed.stages.filter((item) => item.lane < compactVisibleLanes);
         const hiddenStages = packed.stages.filter((item) => item.lane >= compactVisibleLanes);
         const overflowGroups = groupExecutiveOverflow(hiddenStages, timeline, compactStageWidth);
@@ -220,16 +220,19 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
             <span className="executive-gantt__today-line" aria-hidden="true" style={{ left: todayLeft }} />
             {visibleStages.map(({ stage, discipline, lane, anchorDate, partial }) => {
               const interval = partial ? null : timelineInterval(timeline, stage.start, stage.end);
-              const stageLabel = messages.executiveStageDetail(stage.displayName, discipline.name,
+              const stageLabel = messages.executiveStageDetail(stage.displayName?.trim() || stage.code || messages.executiveStageUnavailable,
+                discipline?.name?.trim() || discipline?.shortCode?.trim() || messages.executiveDisciplineUnavailable,
                 formatCivilDate(stage.start), formatCivilDate(stage.end));
+              const barLabel = executiveStageBarLabel(discipline, stage, true);
+              const width = partial ? 6 : interval?.width ?? 0;
               return <span key={stage.id} data-stage-id={stage.id} data-lane={lane}
                 className={`executive-gantt__stage${partial ? " executive-gantt__stage--partial" : ""}${!partial &&
                   interval && interval.width < 74 ? " executive-gantt__stage--short" : ""}`}
                 role="img" tabIndex={0} aria-label={stageLabel} title={stageLabel}
                 style={{ top: 5 + lane * 19, left: interval?.left ?? timelinePosition(timeline, anchorDate),
-                  width: Math.max(interval?.width ?? 0, compactStageWidth), backgroundColor: stage.color,
+                  width, backgroundColor: stage.color,
                   color: ganttTextColor(stage.color) }}>
-                {interval && interval.width >= 74 ? stage.displayName : stage.code.slice(0, 2)}</span>;
+                {barLabel}</span>;
             })}
             {overflowGroups.map((group) => <button key={`${group.left}-${group.stages[0].stage.id}`}
               type="button" className="executive-gantt__overflow" data-overflow-count={group.stages.length}

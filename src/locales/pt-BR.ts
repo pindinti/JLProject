@@ -275,6 +275,8 @@ export const messages = {
   executiveCloseDetails: "Fechar detalhes",
   executiveStageDetail: (stage: string, discipline: string, start: string, end: string) =>
     `Etapa ${stage} · Disciplina ${discipline} · Início: ${start} · Fim: ${end}`,
+  executiveDisciplineUnavailable: "Disciplina não informada",
+  executiveStageUnavailable: "Etapa sem identificação",
   executiveTargetCluster: (details: string[]) => details.join("; "),
   executiveFullTitle: "Cronograma executivo",
   executiveFullDescription: "Visão detalhada dos cronogramas de trabalho dos produtos.",

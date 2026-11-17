@@ -306,11 +306,6 @@ export function Products({ workspace, userId, onAccessLost }: {
           }}>{messages.importTitle}</button>
         </div>}
       </div>
-      <ExecutiveGanttHome key={workspace.id} workspaceId={workspace.id} onAccessLost={onAccessLost}
-        onOpenFull={() => {
-          window.history.pushState(null, "", "/produtos/cronograma-executivo");
-          setShowExecutive(true);
-        }} />
       {state === "loading" && <p role="status">{messages.productsLoading}</p>}
       {state === "error" && <div role="alert"><p>{messages.productsError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && products.length === 0 && <p>{messages.productsEmpty}</p>}
@@ -365,6 +360,11 @@ export function Products({ workspace, userId, onAccessLost }: {
           ))}
         </ul>
       )}
+      <ExecutiveGanttHome key={workspace.id} workspaceId={workspace.id} onAccessLost={onAccessLost}
+        onOpenFull={() => {
+          window.history.pushState(null, "", "/produtos/cronograma-executivo");
+          setShowExecutive(true);
+        }} />
       {creating && canEdit && (
         <form className="product-form" onSubmit={(event) => void save(event)}>
           <h3>{messages.newProduct}</h3>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupExecutiveOverflow, groupExecutiveTargets, makeExecutiveTimeline,
+import { executiveStageBarLabel, groupExecutiveOverflow, groupExecutiveTargets, makeExecutiveTimeline,
   packExecutiveStages } from "../domain/executive-gantt-view";
 import type { ExecutiveProduct, ExecutiveStage, ExecutiveTarget } from "../worker/executive-gantt";
 import { timelineInterval, timelinePosition } from "../domain/schedule-workspace";
@@ -17,6 +17,14 @@ const target = (id: string, date: string, order: number): ExecutiveTarget => ({
 });
 
 describe("compact executive Gantt layout", () => {
+  it("labels stage bars by discipline and stage while tolerating missing discipline metadata", () => {
+    expect(executiveStageBarLabel({ name: "Architecture", shortCode: "A" },
+      { code: "EC", displayName: "Executive Concept" }, true)).toBe("A – EC");
+    expect(executiveStageBarLabel({ name: "Architecture", shortCode: "A" },
+      { code: "EC", displayName: "Executive Concept" })).toBe("Architecture – Executive Concept");
+    expect(executiveStageBarLabel(null, { code: "EC", displayName: "Executive Concept" }, true))
+      .toBe("EC");
+  });
   it("packs inclusive overlaps from separate disciplines and reuses lanes deterministically", () => {
     const value = product();
     value.disciplines = [

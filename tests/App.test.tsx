@@ -175,7 +175,8 @@ describe("products UI", () => {
     fireEvent.click(action);
     expect(window.location.pathname).toBe("/produtos/cronograma-executivo");
     expect(await screen.findByRole("heading", { name: "Cronograma executivo" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Etapas" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Produtos" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Mês" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Voltar aos produtos" }));
     expect(window.location.pathname).toBe("/produtos");
     expect(await screen.findByRole("button", { name: "Abrir cronograma executivo" })).toBeEnabled();
@@ -196,8 +197,8 @@ describe("products UI", () => {
       screen.getByRole("button", { name: "Cadastrar produto" }));
     expect(homeHeader?.querySelector(".products-primary-actions")).toContainElement(
       screen.getByRole("button", { name: "Importar planilha" }));
-    expect(homeHeader?.nextElementSibling).toHaveClass("executive-gantt");
-    expect(homeHeader?.nextElementSibling?.nextElementSibling).toHaveClass("product-list");
+    expect(homeHeader?.nextElementSibling).toHaveClass("product-list");
+    expect(homeHeader?.nextElementSibling?.nextElementSibling).toHaveClass("executive-gantt");
     expect(screen.queryByRole("button", { name: "Voltar" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cadastrar produto" }));
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Novo teste" } });

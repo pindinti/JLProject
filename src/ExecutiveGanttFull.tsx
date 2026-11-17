@@ -1,7 +1,7 @@
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { visibleExecutiveFullRows, type ExecutiveCollapsed, type ExecutiveDetailLevel,
   type ExecutiveFullRow } from "../domain/executive-gantt-full";
-import { groupExecutiveTargets, makeExecutiveTimeline, packExecutiveStages } from "../domain/executive-gantt-view";
+import { executiveStageBarLabel, groupExecutiveTargets, makeExecutiveTimeline, packExecutiveStages } from "../domain/executive-gantt-view";
 import { nonWorkingDayRanges } from "../domain/non-working-day-ranges";
 import { civilFromDay, dayNumber, saoPauloCivilDate, timelineInterval, timelinePosition,
   type TimelineScale, type Zoom } from "../domain/schedule-workspace";
@@ -74,8 +74,8 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
   const [products, setProducts] = useState<ExecutiveProduct[]>([]);
   const [loadedWorkspaceId, setLoadedWorkspaceId] = useState(workspaceId);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [level, setLevel] = useState<ExecutiveDetailLevel>("stages");
-  const [zoom, setZoom] = useState<Zoom>("week");
+  const [level, setLevel] = useState<ExecutiveDetailLevel>("products");
+  const [zoom, setZoom] = useState<Zoom>("month");
   const [showArchived, setShowArchived] = useState(true);
   const [showTargets, setShowTargets] = useState(true);
   const [productFilter, setProductFilter] = useState("");
@@ -279,7 +279,7 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
         const productMode = level === "products";
         const productStages = productMode ? packExecutiveStages({ ...row.product,
           disciplines: disciplineFilter ? row.product.disciplines.filter((item) => item.id === disciplineFilter)
-            : row.product.disciplines }, Math.ceil(28 / timeline.dayWidth)) : null;
+            : row.product.disciplines }) : null;
         const height = productMode ? Math.max(58, 12 + (productStages?.laneCount ?? 0) * 20 + 24)
           : row.kind === "product" ? 52 : 38;
         const rowLabel = row.kind === "activity" && !row.stage ? messages.executiveRootActivity :
@@ -316,14 +316,16 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
                 style={timelineInterval(timeline, row.start, row.end)!} />}
               {productStages?.stages.map(({ stage, discipline, lane, anchorDate, partial }) => {
                 const interval = partial ? null : timelineInterval(timeline, stage.start, stage.end);
-                const title = messages.executiveStageDetail(stage.displayName, discipline.name,
+                const title = messages.executiveStageDetail(stage.displayName?.trim() || stage.code || messages.executiveStageUnavailable,
+                  discipline?.name?.trim() || discipline?.shortCode?.trim() || messages.executiveDisciplineUnavailable,
                   formatCivilDate(stage.start), formatCivilDate(stage.end));
+                const barLabel = executiveStageBarLabel(discipline, stage);
                 return <span key={stage.id} className={`executive-full__product-stage${partial ? " is-partial" : ""}`}
                   data-stage-id={stage.id} data-lane={lane} role="img" tabIndex={0} title={title} aria-label={title}
                   style={{ left: interval?.left ?? timelinePosition(timeline, anchorDate),
-                    top: 11 + lane * 20, width: Math.max(28, interval?.width ?? 0),
+                    top: 11 + lane * 20, width: partial ? 6 : interval?.width ?? 0,
                     backgroundColor: stage.color, color: ganttTextColor(stage.color) }}>
-                  {interval && interval.width >= 70 ? stage.displayName : stage.code.slice(0, 2)}</span>;
+                  {barLabel}</span>;
               })}
             </> : <RowBar row={row} scale={timeline} />}
             {row.kind === "product" && showTargets && <TargetMarkers product={row.product} scale={timeline}

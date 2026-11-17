@@ -43,17 +43,24 @@ beforeEach(() => {
 });
 
 describe("full Executive Gantt", () => {
-  it("defaults to stages and keeps detail independent from temporal zoom", async () => {
+  it("defaults to products and month and keeps detail independent from temporal zoom", async () => {
     const { container } = render(<ExecutiveGanttFull {...props} />);
     const table = await screen.findByRole("table", { name: "Cronograma executivo" });
-    expect(within(table).getAllByRole("row")).toHaveLength(7);
-    expect(screen.getByRole("button", { name: "Etapas" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Semana" })).toHaveAttribute("aria-pressed", "true");
-    const stageBars = container.querySelectorAll('[data-entity-id="s0"], [data-entity-id="s1"]');
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Produtos" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Mês" })).toHaveAttribute("aria-pressed", "true");
+    const stageBars = container.querySelectorAll('[data-stage-id="s0"], [data-stage-id="s1"]');
     expect(stageBars).toHaveLength(2);
     expect(stageBars[0]).toHaveStyle({ backgroundColor: "#33AA88" });
     expect(stageBars[1]).toHaveStyle({ backgroundColor: "#BB3366" });
+    expect(stageBars[0]).toHaveTextContent("Discipline 1 – Same stage");
+    expect(stageBars[0]).toHaveAttribute("title", expect.stringContaining("Discipline 1"));
+    expect(stageBars[0]).toHaveAttribute("title", expect.stringContaining("Same stage"));
+    expect(Number.parseFloat((stageBars[0] as HTMLElement).style.width)).toBeLessThan(28);
     expect(container.querySelector('[data-row-key="product:p"]')).toHaveTextContent("29/02/2024");
+    fireEvent.click(screen.getByRole("button", { name: "Etapas" }));
+    expect(within(table).getAllByRole("row")).toHaveLength(7);
+    expect(screen.getByRole("button", { name: "Mês" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Dia" }));
     expect(screen.getByRole("button", { name: "Etapas" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Atividades" }));
@@ -75,6 +82,7 @@ describe("full Executive Gantt", () => {
   it("filters archives and disciplines, collapses groups, and navigates to a product", async () => {
     const { container } = render(<ExecutiveGanttFull {...props} />);
     await screen.findByRole("table", { name: "Cronograma executivo" });
+    fireEvent.click(screen.getByRole("button", { name: "Etapas" }));
     fireEvent.click(screen.getByLabelText("Mostrar arquivados"));
     expect(container.querySelector('[data-row-key="product:archived"]')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Disciplina"), { target: { value: "d2" } });

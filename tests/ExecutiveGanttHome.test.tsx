@@ -57,7 +57,10 @@ describe("compact Executive Gantt Home", () => {
     expect(current.querySelector('[data-stage-id="s2"]')).toHaveAttribute("data-lane", "1");
     expect(current.querySelector('[data-stage-id="s1"]')).toHaveStyle({ backgroundColor: "#AA5577" });
     expect(current.querySelector('[data-stage-id="s2"]')).toHaveStyle({ backgroundColor: "#22AA88" });
+    expect(current.querySelector('[data-stage-id="s1"]')).toHaveTextContent("A – EC");
+    expect(current.querySelector('[data-stage-id="s2"]')).toHaveTextContent("E – EC");
     expect(current.querySelector('[data-stage-id="s1"]')).toHaveAttribute("title", expect.stringContaining("Architecture"));
+    expect(current.querySelector('[data-stage-id="s1"]')).toHaveAttribute("title", expect.stringContaining("Repeated stage"));
     expect(current.querySelector('[data-stage-id="s2"]')).toHaveAttribute("title", expect.stringContaining("Engineering"));
     expect(current.querySelector('[data-stage-id="root"]')).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Abrir cronograma executivo" })).toBeDisabled();
@@ -155,9 +158,11 @@ describe("compact Executive Gantt Home", () => {
     await screen.findByRole("table", { name: "Cronograma executivo" });
     const badge = container.querySelector<HTMLElement>('[data-stage-id="short"]')!;
     expect(badge).toHaveClass("executive-gantt__stage--short");
-    expect(badge).toHaveTextContent("EC");
-    expect(badge).toHaveStyle({ width: "28px" });
-    expect(badge).toHaveAttribute("title", expect.stringContaining("10/01/2025"));
+    expect(badge).toHaveTextContent("A – EC");
+    expect(Number.parseFloat(badge.style.width)).toBeLessThan(28);
+    expect(badge).toHaveAttribute("title", expect.stringContaining("Architecture"));
+    expect(badge).toHaveAttribute("title", expect.stringContaining("One day"));
+    expect(badge).toHaveAttribute("aria-label", badge.getAttribute("title"));
     const toolbar = screen.getByRole("toolbar", { name: "Controles do cronograma executivo" });
     const actions = toolbar.querySelector(".executive-gantt__toolbar-actions")!;
     expect(actions).toContainElement(screen.getByRole("button", { name: "Atualizar cronograma" }));
