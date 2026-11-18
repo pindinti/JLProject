@@ -12,7 +12,7 @@ interface ProductHistoryItem {
   hierarchy?: { scope?: string; discipline?: string | null; stage?: string | null };
 }
 interface ProductHistoryDetail {
-  eventId: string; source: "specialized" | "living_schedule"; eventType: string;
+  id: string; source: "specialized" | "living_schedule"; eventType: string;
   item: ProductHistoryItem | null; justification?: string | null;
   before?: Record<string, unknown> | null; after?: Record<string, unknown> | null;
   affectedItems?: Record<string, unknown>[]; entityType?: string; entityId?: string;
@@ -64,6 +64,9 @@ const detailLabels: Record<string, string> = {
   targetKind: messages.productHistoryItemType,
   workingDays: messages.productHistoryWorkingDays,
   calendarVersion: messages.productHistoryCalendarVersion,
+  planning_calendar_version: messages.productHistoryCalendarVersion,
+  working_day_duration: messages.productHistoryWorkingDays,
+  planning_mode: messages.productHistoryPlanningMode,
   name: messages.productHistoryFieldName,
   description: messages.productHistoryFieldDescription,
   short_code: messages.productHistoryFieldShortCode,
@@ -76,16 +79,17 @@ const detailLabels: Record<string, string> = {
   notes: messages.productHistoryFieldNotes,
   active: messages.productHistoryFieldActive,
   is_active: messages.productHistoryFieldActive,
-  discipline_id: messages.productHistoryFieldDiscipline,
-  stage_id: messages.productHistoryFieldStage,
-  activity_id: messages.productHistoryFieldActivity,
-  originalOperationId: messages.productHistoryOriginalOperation,
-  reversalOfOperationId: messages.productHistoryOriginalOperation
 };
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
+}
+
+const uuidValue = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function recordedName(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 && !uuidValue.test(value.trim())
+    ? value.trim() : null;
 }
 
 function isEvent(value: unknown): value is ProductHistoryEvent {
@@ -96,7 +100,7 @@ function isEvent(value: unknown): value is ProductHistoryEvent {
   const validDetails = (detailRows: unknown[]): boolean => detailRows.every((entry) => {
     const detail = record(entry);
     const detailItem = detail?.item === null || detail?.item === undefined ? null : record(detail.item);
-    return !!detail && typeof detail.eventId === "string" &&
+    return !!detail && typeof detail.id === "string" &&
       (detail.source === "specialized" || detail.source === "living_schedule") &&
       typeof detail.eventType === "string" &&
       (detail.justification === undefined || detail.justification === null || typeof detail.justification === "string") &&
@@ -139,16 +143,29 @@ function decodePage(value: unknown): ProductHistoryPage {
 function hierarchyLabel(item: ProductHistoryItem | Record<string, unknown> | null | undefined): string | null {
   const hierarchy = record(item?.hierarchy);
   if (hierarchy?.scope === "product_root") return messages.productHistoryProductRoot;
-  const parts = [hierarchy?.discipline, hierarchy?.stage]
-    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const discipline = recordedName(hierarchy?.discipline);
+  const stage = recordedName(hierarchy?.stage);
+  const parts = [
+    discipline ?? ("discipline" in (hierarchy ?? {}) ? messages.productHistoryEntityDiscipline : null),
+    stage ?? ("stage" in (hierarchy ?? {}) ? messages.productHistoryEntityStage : null)
+  ].filter((value): value is string => value !== null);
   return parts.length ? parts.join(" › ") : null;
 }
 
 function eventItemName(event: ProductHistoryEvent): string {
-  if (event.item?.name) return event.item.name;
+  const itemName = recordedName(event.item?.name);
+  if (itemName) return itemName;
   if (event.eventType === "calendar_rescheduled") return messages.productHistoryBatchReschedule;
   if (event.eventType === "calendar_reschedule_reversed") return messages.productHistoryBatchReversal;
-  if (event.eventType === "living_schedule_operation") return operationTypeLabel(event.operationType);
+  if (event.eventType === "living_schedule_operation") {
+    const titles = [...new Set((event.details ?? []).map(detailOperationTitle)
+      .filter((title): title is string => title !== null))];
+    if (titles.length === 1) return titles[0]!;
+    const operationTitle = operationTypeLabels[event.operationType ?? ""];
+    if (titles.length === 0 && operationTitle && operationTitle !== messages.productHistoryOperationMetadata)
+      return operationTitle;
+    return messages.productHistoryOperationScheduleChanges;
+  }
   return eventLabels[event.eventType];
 }
 
@@ -180,6 +197,45 @@ function operationTypeLabel(operationType: string | null | undefined): string {
     : messages.productHistoryTypeOperation;
 }
 
+function detailOperationTitle(detail: ProductHistoryDetail): string | null {
+  if (detail.source !== "living_schedule") return null;
+  const before = record(detail.before);
+  const after = record(detail.after);
+  if (!before || !after) return null;
+  const changedKeys = new Set([...Object.keys(before), ...Object.keys(after)]
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key])));
+  if (!["name", "display_name"].some((key) => changedKeys.has(key))) return null;
+  switch (detail.item?.kind) {
+    case "product": return messages.productHistoryOperationRenameProduct;
+    case "discipline": return messages.productHistoryOperationRenameDiscipline;
+    case "stage": return messages.productHistoryOperationRenameStage;
+    case "activity": return messages.productHistoryOperationRenameActivity;
+    case "business_target": return messages.productHistoryOperationRenameTarget;
+    default: return null;
+  }
+}
+
+function entityDescription(kind: string | undefined): string {
+  switch (kind) {
+    case "product": return messages.productHistoryEntityProduct;
+    case "discipline": return messages.productHistoryEntityDiscipline;
+    case "stage": return messages.productHistoryEntityStage;
+    case "activity": return messages.productHistoryEntityActivity;
+    case "business_target": return messages.productHistoryEntityTarget;
+    default: return messages.productHistoryEntityScheduleItem;
+  }
+}
+
+function historicalDetailName(detail: ProductHistoryDetail): string {
+  const candidates = [detail.item?.name, detail.after?.["name"], detail.after?.["display_name"],
+    detail.before?.["name"], detail.before?.["display_name"]];
+  for (const candidate of candidates) {
+    const name = recordedName(candidate);
+    if (name) return name;
+  }
+  return entityDescription(detail.item?.kind);
+}
+
 function affectsActivity(event: ProductHistoryEvent, activityId: string): boolean {
   return (event.item?.kind === "activity" && event.item.id === activityId) ||
     event.affectedItems.some((item) => item.id === activityId);
@@ -187,12 +243,15 @@ function affectsActivity(event: ProductHistoryEvent, activityId: string): boolea
 
 function displayScalar(value: unknown, key: string): string | null {
   if (typeof value === "string") {
+    if (uuidValue.test(value.trim())) return null;
     if (/^(plannedStart|plannedEnd|targetDate|planned_start|planned_end|target_date)$/.test(key) && /^\d{4}-\d{2}-\d{2}$/.test(value))
       return formatCivilDate(value);
     if (key === "targetKind" || key === "target_kind") return value === "activity" ? messages.productHistoryActivityKind :
       value === "stage" ? messages.productHistoryStageKind :
         value === "discipline" ? messages.productHistoryDisciplineKind :
           value === "business_target" ? messages.productHistoryTarget : value;
+    if (key === "planning_mode") return value === "working_days" ? messages.productHistoryPlanningByWorkingDays :
+      value === "manual" ? messages.productHistoryPlanningManual : value;
     return value;
   }
   if (typeof value === "boolean" && (key === "active" || key === "is_active"))
@@ -215,36 +274,67 @@ function detailRows(details: Record<string, unknown> | null): [string, string][]
 
 function recordedParentLabel(value: Record<string, unknown> | undefined): string | null {
   if (!value) return null;
-  const disciplineId = value.disciplineId;
-  const stageId = value.stageId;
+  if (value.scope === "product_root") return messages.productHistoryProductRoot;
+  if (value.scope === "product") return messages.productHistoryProduct;
+  if (value.productId !== undefined) return messages.productHistoryProduct;
+  if (value.disciplineId === null && value.stageId === null) return messages.productHistoryProductRoot;
+  const hasLocation = ["discipline", "disciplineName", "stage", "stageName", "disciplineId", "stageId"]
+    .some((key) => key in value);
+  if (!hasLocation) return null;
   const labels: string[] = [];
-  if (typeof disciplineId === "string") labels.push(`${messages.productHistoryFieldDiscipline}: ${disciplineId}`);
-  if (typeof stageId === "string") labels.push(`${messages.productHistoryFieldStage}: ${stageId}`);
-  return labels.length ? labels.join(" · ") : null;
+  const discipline = [value.discipline, value.disciplineName]
+    .map(recordedName).find((candidate) => candidate !== null);
+  const stage = [value.stage, value.stageName]
+    .map(recordedName).find((candidate) => candidate !== null);
+  if (discipline) labels.push(discipline);
+  else if (typeof value.disciplineId === "string" || typeof value.stageId === "string")
+    labels.push(messages.productHistoryEntityDiscipline);
+  if (stage) labels.push(stage);
+  else if (typeof value.stageId === "string") labels.push(messages.productHistoryEntityStage);
+  return labels.length ? labels.join(" · ") : messages.productHistoryLocationUnavailable;
 }
 
-function GroupedOperationDetails({ details }: { details: ProductHistoryDetail[] }) {
+const locationKeys = ["scope", "productId", "discipline", "disciplineName", "disciplineId",
+  "stage", "stageName", "stageId"];
+function sameRecordedLocation(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
+  const identityKeys = ["scope", "productId", "disciplineId", "stageId"];
+  if (identityKeys.some((key) => key in before || key in after))
+    return identityKeys.every((key) => JSON.stringify(before[key]) === JSON.stringify(after[key]));
+  return locationKeys.every((key) => JSON.stringify(before[key]) === JSON.stringify(after[key]));
+}
+
+function GroupedOperationDetails({ details, operationTitle }: {
+  details: ProductHistoryDetail[]; operationTitle: string;
+}) {
   if (details.length === 0) return null;
   return <details className="product-history__details product-history__operation-details">
     <summary>{messages.productHistoryOperationDetails(details.length)}</summary>
     <ol className="product-history__operation-items">
       {details.map((detail) => {
-        const detailName = detail.item?.name || (detail.item
-          ? `${itemKindLabel(detail.item.kind)} · ${detail.item.id}` : messages.productHistoryChangeDetail);
+        const detailTitle = detailOperationTitle(detail);
+        const detailName = historicalDetailName(detail);
+        const showDetailTitle = detailTitle !== null && detailTitle !== operationTitle;
         const beforeRows = detailRows(detail.before ?? null);
         const afterRows = detailRows(detail.after ?? null);
         const parentBefore = recordedParentLabel(detail.parentBefore);
         const parentAfter = recordedParentLabel(detail.parentAfter);
+        const sameLocation = !!detail.parentBefore && !!detail.parentAfter &&
+          sameRecordedLocation(detail.parentBefore, detail.parentAfter);
+        const singleLocation = sameLocation ? parentBefore ?? parentAfter : null;
         const isCalendarEvent = detail.eventType === "calendar_rescheduled" ||
           detail.eventType === "calendar_reschedule_reversed";
-        return <li key={`${detail.source}:${detail.eventId}`}>
-          <strong>{detailName}</strong>
+        return <li key={`${detail.source}:${detail.id}`}>
+          <strong>{showDetailTitle ? detailTitle : detailName}</strong>
+          {showDetailTitle && <span className="product-history__operation-kind">{detailName}</span>}
           {detail.source === "specialized" && detail.eventType === "hierarchy_moved" &&
             <span className="product-history__operation-kind">{messages.productHistoryTypeMovement}</span>}
-          {(parentBefore || parentAfter) && <span className="product-history__hierarchy">
-            {parentBefore && <span>{messages.productHistoryPreviousParent}: {parentBefore}</span>}
-            {parentAfter && <span>{messages.productHistoryNewParent}: {parentAfter}</span>}
+          {singleLocation && <span className="product-history__hierarchy">{singleLocation}</span>}
+          {!sameLocation && parentBefore && parentAfter && <span className="product-history__hierarchy">
+            <span>{messages.productHistoryPreviousParent}: {parentBefore}</span>
+            <span>{messages.productHistoryNewParent}: {parentAfter}</span>
           </span>}
+          {!sameLocation && (parentBefore || parentAfter) && (!parentBefore || !parentAfter) &&
+            <span className="product-history__hierarchy">{messages.productHistoryLocation}: {parentBefore ?? parentAfter}</span>}
           {detail.source === "specialized" && detail.eventType === "hierarchy_moved" &&
             <MovementComparison event={{ before: detail.before ?? null, after: detail.after ?? null }} />}
           {detail.source === "specialized" && isCalendarEvent &&
@@ -262,24 +352,13 @@ function GroupedOperationDetails({ details }: { details: ProductHistoryDetail[] 
   </details>;
 }
 
-function itemKindLabel(kind: string): string {
-  if (kind === "activity") return messages.productHistoryActivityKind;
-  if (kind === "stage") return messages.productHistoryStageKind;
-  if (kind === "discipline") return messages.productHistoryDisciplineKind;
-  if (kind === "product") return messages.productHistoryProduct;
-  if (kind === "business_target") return messages.productHistoryTarget;
-  if (kind === "calendar_reschedule") return messages.productHistoryBatchReschedule;
-  if (kind === "calendar_reschedule_reversal") return messages.productHistoryBatchReversal;
-  return messages.productHistoryItem;
-}
-
 function movementParentLabel(details: Record<string, unknown> | null): string | null {
   const parent = record(details?.parent);
   if (!parent) return null;
   if (parent.scope === "product_root") return messages.productHistoryProductRoot;
   if (parent.scope === "product") return messages.productHistoryProduct;
-  const parts = [parent.discipline, parent.stage]
-    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const parts = [recordedName(parent.discipline), recordedName(parent.stage)]
+    .filter((value): value is string => value !== null);
   return parts.length ? parts.join(" › ") : messages.productHistoryLocationUnavailable;
 }
 
@@ -345,7 +424,7 @@ function ActivityDateComparison({ event }: { event: {
         ? messages.dateRange(formatCivilDate(change.plannedStart ?? null), formatCivilDate(change.plannedEnd ?? null))
         : messages.noDate;
       return <li key={id}>
-        <strong>{typeof item?.name === "string" ? item.name : messages.productHistoryNameUnavailable}</strong>
+        <strong>{recordedName(item?.name) ?? messages.productHistoryNameUnavailable}</strong>
         {hierarchyLabel(item) && <span className="product-history__hierarchy">{hierarchyLabel(item)}</span>}
         <div className="product-history__date-comparison">
           <span><small>{messages.calendarBefore}</small>{dateRange(previous)}</span>
@@ -381,7 +460,7 @@ function StageDateComparison({ event }: { event: ProductHistoryEvent }) {
 
 function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
   const itemHierarchy = hierarchyLabel(event.item);
-  const affected = event.affectedItems.filter((item) => typeof item.name === "string");
+  const affected = event.affectedItems.filter((item) => recordedName(item.name) !== null);
   const beforeRows = detailRows(event.before);
   const afterRows = detailRows(event.after);
   const hasMovement = event.eventType === "hierarchy_moved";
@@ -393,24 +472,25 @@ function HistoryEventCard({ event }: { event: ProductHistoryEvent }) {
       <div className="product-history__event-main">
         <strong className="product-history__item-name">{eventItemName(event)}</strong>
         <time dateTime={event.occurredAt}>{historyTime.format(new Date(event.occurredAt))}</time>
-        <span>{event.actorName ?? messages.stageDateActor(event.actorId)}</span>
+        <span>{recordedName(event.actorName) ?? messages.productHistoryActorUnavailable}</span>
       </div>
-        <span className="product-history__event-type">{movementEventLabel(event)}</span>
+        {event.eventType !== "living_schedule_operation" &&
+          <span className="product-history__event-type">{movementEventLabel(event)}</span>}
     </header>
     {itemHierarchy && <p className="product-history__hierarchy">{itemHierarchy}</p>}
     {event.justification && <p className="product-history__justification">
       <strong>{messages.productHistoryJustification}:</strong> {event.justification}
     </p>}
     {event.reversalOfOperationId && <p className="product-history__operation-context">
-      <strong>{messages.productHistoryOriginalOperation}:</strong> {event.reversalOfOperationId}
+      <strong>{messages.productHistoryOriginalOperation}:</strong> {messages.productHistoryReversalContext}
     </p>}
     {event.operationId && event.details &&
       (event.eventType === "living_schedule_operation" || event.details.length > 1) &&
-      <GroupedOperationDetails details={event.details} />}
+      <GroupedOperationDetails details={event.details} operationTitle={eventItemName(event)} />}
     {affected.length > 0 && <details className="product-history__details">
       <summary>{messages.productHistoryAffected(affected.length)}</summary>
       <ul className="product-history__affected-items">{affected.map((item, index) => <li key={`${String(item.id)}:${index}`}>
-        <strong>{String(item.name)}</strong>
+        <strong>{recordedName(item.name)}</strong>
         {hierarchyLabel(item) && <span className="product-history__hierarchy">{hierarchyLabel(item)}</span>}
       </li>)}</ul>
     </details>}

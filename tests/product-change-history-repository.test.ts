@@ -158,8 +158,9 @@ describe("product change history repository", () => {
         { eventId: "9081", source: "living_schedule", eventType: "schedule_operation_detail",
           entityType: "stage_activities", entityId: activityId, changeType: "stage_activities_updated",
           item: { kind: "activity", id: activityId, name: null }, parentBefore: { stageId: "stage-id" },
-          parentAfter: { stageId: "stage-id" }, before: { name: "Old recorded name" },
-          after: { name: "New recorded name" } }
+          parentAfter: { stageId: "stage-id" }, before: { name: "Old recorded name",
+            working_day_duration: 5, planning_calendar_version: 7 },
+          after: { name: "New recorded name", working_day_duration: 8, planning_calendar_version: 7 } }
       ]
     });
     const first = grouped(operationIdA, "calendar_reschedule_reversed");
@@ -177,7 +178,8 @@ describe("product change history repository", () => {
         details: [
           { id: "calendar-reversal:cccccccc-cccc-4ccc-8ccc-cccccccccccc", source: "specialized" },
           { id: "9081", source: "living_schedule", entityId: activityId,
-            before: { name: "Old recorded name" }, after: { name: "New recorded name" } }
+            before: { name: "Old recorded name", working_day_duration: 5, planning_calendar_version: 7 },
+            after: { name: "New recorded name", working_day_duration: 8, planning_calendar_version: 7 } }
         ] },
       { id: second.id, operationId: operationIdB }
     ], nextCursor: { occurredAt, eventId: second.id } });
@@ -185,6 +187,29 @@ describe("product change history repository", () => {
     const query = sql.mock.calls[0]?.[0] as TemplateStringsArray;
     expect(query.join("?")).toContain("list_product_change_history");
     expect(query.join("?")).not.toContain("product_schedule_operation_events");
+  });
+
+  it("preserves snake_case working-plan values in generic activity details", async () => {
+    const operationId = "abababab-abab-4bab-8bab-abababababab";
+    const operation = { ...event(`operation:${operationId}`, occurredAt, "living_schedule_operation"),
+      item: null, operationId, operationType: "activity_working_plan_changed",
+      before: null, after: null,
+      details: [{ eventId: "1021", source: "living_schedule", eventType: "schedule_operation_detail",
+        entityType: "stage_activities", entityId: activityId, changeType: "stage_activities_updated",
+        item: { kind: "activity", id: activityId, name: null },
+        before: { working_day_duration: 5, planning_calendar_version: 7 },
+        after: { working_day_duration: 8, planning_calendar_version: 7 } }] };
+    sql.mockResolvedValueOnce([{ result: { status: "ok", events: [operation], nextCursor: null } }])
+      .mockResolvedValueOnce([{ id: actorId, name: "Synthetic actor" }]);
+
+    const result = await createScheduleRepository({ DATABASE_URL: "postgresql://example.invalid" })
+      .listProductChangeHistory(workspaceId, productId, actorId, 25, null);
+
+    expect(result).toMatchObject({ status: "ok", events: [{
+      operationType: "activity_working_plan_changed",
+      details: [{ before: { working_day_duration: 5, planning_calendar_version: 7 },
+        after: { working_day_duration: 8, planning_calendar_version: 7 } }]
+    }] });
   });
 
   it("rejects malformed grouped detail payloads", async () => {

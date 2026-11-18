@@ -529,6 +529,24 @@ describe("schedule hierarchy API", () => {
     expect(repo.listProductChangeHistory).not.toHaveBeenCalled();
   });
 
+  it("logs safe history failure diagnostics without disclosing provider details", async () => {
+    const repo = repository();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = Object.assign(new Error("sensitive SQL text and connection detail"), { code: "42501" });
+    vi.mocked(repo.listProductChangeHistory).mockRejectedValueOnce(failure);
+    try {
+      const result = await call(request(`${base}/change-history?limit=25`), "viewer", repo);
+      expect(result.status).toBe(503);
+      expect(await result.text()).not.toContain("sensitive SQL text");
+      expect(log).toHaveBeenCalledWith("Product change history lookup failed", {
+        errorType: "Error", sqlstate: "42501"
+      });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("sensitive SQL text");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("returns scoped read-only calendar impacts to active members", async () => {
     const repo = repository();
     const calendar = calculationCalendar(2, [{

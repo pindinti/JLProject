@@ -211,6 +211,18 @@ Phase 3A.4b adds an editor/admin-only deletion dialog to the schedule rows. It f
 
 This addendum supersedes D067's blocked Development status while preserving the migration 0032 failure record. Migration 0033 extended the executor-owned source-link check to allow the stable products and import_batches provenance row IDs alongside the seven specialized ledgers. The record is a stable, append-only source identity; mutable product fields are not treated as immutable audit payload. The reviewed migration committed to Development on 2026-11-18 UTC with SHA-256 9A313419A67E66023FB3BC6B884A2CF518D1EEAF9C8FC7E6DB3B330E8BC6D175. Rollback-only Worker import, clone, audit, calendar, grouped history, and legacy checks passed. The complete verification record is in docs/verification/phase1.1-unified-history-validation.md. Authenticated browser acceptance remains pending.
 
+### D067 Product history client contract correction
+
+Authenticated manual acceptance exposed a client contract mismatch. The database function emits grouped detail `eventId`; the Worker repository validates it and publishes the normalized detail as `id`. The dialog incorrectly validated and keyed `eventId`, so it showed its existing pt-BR load error after a successful HTTP 200 response. The dialog now consumes `id`, matching the existing Worker API and repository type. Worker history failures log only the error type, a validated SQLSTATE when present, and known safe contract-validation messages; the client response remains generic. Read-only Development tests passed through the function, Worker repository, route, and dialog for existing products. No migration or business-data change is required. The authenticated browser request remains to be repeated; see docs/verification/phase1.1-unified-history-validation.md.
+
+### D067 Product history identifier presentation
+
+History presentation uses only audit-recorded entity names. When those names are absent, the dialog shows neutral pt-BR entity or location labels and never resolves current entity names to describe old events. Structured UUID/database identifier fields, unavailable actor IDs, and reversal operation IDs are not rendered; IDs remain in the response model and React keys for identity and audit linkage. Grouped metadata name changes receive entity-specific titles such as “Etapa renomeada,” and the redundant operation category badge is hidden for grouped operation cards. No API, database, audit, pagination, authorization, or reversal behavior changes.
+
+### D067 Final history detail and footer cleanup
+
+The second detail in a working-day planning operation is a distinct generic Living Schedule detail. The history function retains its recorded `working_day_duration` and `planning_calendar_version` values after removing date fields already represented by the exact-linked specialized activity-date event. The Worker preserves those JSON fields; the dialog previously lacked snake_case labels and therefore showed an unnamed activity detail with no values. The dialog now renders those values in pt-BR, groups equal parent locations into one compact description, and shows previous/new locations only for a changed location. The footer now describes the editable Living Schedule, immutable R00, and optional future R01+ scenario-incorporation snapshots. No migration or API change is needed.
+
 ### Phase 1 migration 0029 execution record
 
 The approved privilege correction moved the temporary `jlproject_date_executor` membership grant before the seven specialized-ledger triggers, created those triggers under `SET ROLE jlproject_date_executor`, and reset the role immediately afterward. Corrected migration SHA-256: `9430B4E22AABF6ED41F2478B1E9E7ACFF4A50D68E9E9733861E3DFEB830D846E`.

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductChangeHistoryDialog } from "../src/ProductChangeHistoryDialog";
+import { messages } from "../src/locales/pt-BR";
 
 const auth = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../src/auth", () => ({ authenticatedFetch: auth.fetch }));
@@ -41,6 +42,17 @@ beforeEach(() => {
 });
 
 describe("ProductChangeHistoryDialog", () => {
+  it("describes the continuously editable schedule and optional future revisions", async () => {
+    auth.fetch.mockResolvedValue(json({ events: [], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(messages.productHistoryAuditDisclaimer)).toBeInTheDocument();
+    expect(messages.productHistoryAuditDisclaimer).toContain("R00");
+    expect(messages.productHistoryAuditDisclaimer).toContain("R01+");
+    expect(messages.productHistoryAuditDisclaimer).toContain("cenários");
+    expect(messages.productHistoryAuditDisclaimer).not.toContain("R01 permanecem");
+  });
+
   it("filters only event types supplied by the product history feed", async () => {
     auth.fetch.mockResolvedValue(json({ events: [activityEvent, productEvent], nextCursor: null }));
     mount();
@@ -52,7 +64,7 @@ describe("ProductChangeHistoryDialog", () => {
     });
     expect(within(dialog).getByText("Synthetic activity")).toBeInTheDocument();
     expect(within(dialog).queryByText("Synthetic product")).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/não representa revisões formais/)).toBeInTheDocument();
+    expect(within(dialog).getByText(messages.productHistoryAuditDisclaimer)).toBeInTheDocument();
     expect(within(dialog).getByText(/Informações anteriores à cobertura de auditoria não são reconstruídas/)).toBeInTheDocument();
   });
 
@@ -93,7 +105,7 @@ describe("ProductChangeHistoryDialog", () => {
     const dialog = await screen.findByRole("dialog");
     const stageCard = within(dialog).getByText("Synthetic stage").closest("li")!;
     expect(within(stageCard).getByText("Datas da etapa alteradas")).toBeInTheDocument();
-    expect(stageCard).toHaveTextContent("Usuário (ID: actor)");
+    expect(stageCard).toHaveTextContent(messages.productHistoryActorUnavailable);
     expect(stageCard).toHaveTextContent("Synthetic date correction");
     expect(stageCard.querySelector("time")).toHaveAttribute("dateTime", stageDateEvent.occurredAt);
     expect(within(dialog).getByRole("option", { name: "Datas da etapa alteradas" })).toHaveValue("stage_dates_changed");
@@ -226,17 +238,19 @@ describe("ProductChangeHistoryDialog", () => {
       operationType: "schedule_metadata_updated", reversalOfOperationId: null,
       sourceEventTypes: ["living_schedule_operation", "activity_dates_changed"],
       details: [
-        { eventId: "activity-date:11111111-1111-4111-8111-111111111111", source: "specialized",
+        { id: "activity-date:11111111-1111-4111-8111-111111111111", source: "specialized",
           eventType: "activity_dates_changed", item: { kind: "activity", id: "activity-1",
             name: "Synthetic activity", hierarchy: { discipline: "Recorded discipline", stage: "Recorded stage" } },
           justification: "Synthetic grouped schedule reason",
           before: { plannedStart: "2026-11-01", plannedEnd: "2026-11-08" },
           after: { plannedStart: "2026-11-03", plannedEnd: "2026-11-10" }, affectedItems: [] },
-        { eventId: "921", source: "living_schedule", eventType: "schedule_operation_detail",
+        { id: "921", source: "living_schedule", eventType: "schedule_operation_detail",
           entityType: "stage_activities", entityId: "activity-1", changeType: "stage_activities_updated",
           item: { kind: "activity", id: "activity-1", name: null },
-          parentBefore: { disciplineId: "recorded-discipline-id", stageId: "recorded-stage-id" },
-          parentAfter: { disciplineId: "recorded-discipline-id", stageId: "recorded-stage-id" },
+          parentBefore: { disciplineId: "a1111111-1111-4111-8111-111111111111",
+            stageId: "b2222222-2222-4222-8222-222222222222" },
+          parentAfter: { disciplineId: "a1111111-1111-4111-8111-111111111111",
+            stageId: "b2222222-2222-4222-8222-222222222222" },
           before: { name: "Old recorded name" }, after: { name: "New recorded name" } }
       ]
     };
@@ -245,19 +259,25 @@ describe("ProductChangeHistoryDialog", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Synthetic editor")).toBeInTheDocument();
     expect(within(dialog).getByText("Synthetic grouped schedule reason")).toBeInTheDocument();
-    expect(within(dialog).getAllByText("Dados do cronograma alterados")).toHaveLength(2);
+    expect(within(dialog).getByText("Atividade renomeada", { selector: ".product-history__item-name" }))
+      .toBeInTheDocument();
+    expect(dialog.querySelector(".product-history__event-type")).toBeNull();
     fireEvent.change(within(dialog).getByLabelText("Filtrar por tipo de evento"), {
       target: { value: "activity_dates_changed" }
     });
     const detailRow = within(dialog).getByText("Synthetic activity").closest("li") as HTMLElement;
     const card = detailRow.closest(".product-history__event") as HTMLElement;
-    fireEvent.click(within(card).getByText("Ver alterações da operação (2)"));
+    fireEvent.click(within(card).getByText(messages.productHistoryOperationDetails(2)));
     expect(card).toHaveTextContent("01/11/2026");
     expect(card).toHaveTextContent("10/11/2026");
     expect(card).toHaveTextContent("Old recorded name");
     expect(card).toHaveTextContent("New recorded name");
-    expect(card).toHaveTextContent("Identificador da disciplina: recorded-discipline-id");
-    expect(card).toHaveTextContent("Identificador da etapa: recorded-stage-id");
+    expect(card).not.toHaveTextContent("a1111111-1111-4111-8111-111111111111");
+    expect(card).not.toHaveTextContent("b2222222-2222-4222-8222-222222222222");
+    expect(card).toHaveTextContent(messages.productHistoryEntityDiscipline);
+    expect(card).toHaveTextContent(messages.productHistoryEntityStage);
+    expect(card).not.toHaveTextContent(messages.productHistoryPreviousParent);
+    expect(card).not.toHaveTextContent(messages.productHistoryNewParent);
     expect(card).not.toHaveTextContent("stage_activities");
   });
 
@@ -272,7 +292,7 @@ describe("ProductChangeHistoryDialog", () => {
       operationId, operationType: "calendar_reschedule_reversed", reversalOfOperationId: originalId,
       sourceEventTypes: ["living_schedule_operation", "calendar_reschedule_reversed"],
       details: [
-        { eventId: "calendar-reversal:ffffffff-ffff-4fff-8fff-ffffffffffff", source: "specialized",
+        { id: "calendar-reversal:ffffffff-ffff-4fff-8fff-ffffffffffff", source: "specialized",
           eventType: "calendar_reschedule_reversed",
           item: { kind: "calendar_reschedule_reversal", id: "reversal-batch", name: null },
           justification: "Synthetic reversal reason",
@@ -281,7 +301,7 @@ describe("ProductChangeHistoryDialog", () => {
           after: { originalOperationId: originalId, activities: [{ activityId: "deleted-activity-id",
             plannedStart: "2026-11-02", plannedEnd: "2026-11-08" }] },
           affectedItems: [{ kind: "activity", id: "deleted-activity-id", name: null }] },
-        { eventId: "933", source: "living_schedule", eventType: "schedule_operation_detail",
+        { id: "933", source: "living_schedule", eventType: "schedule_operation_detail",
           item: { kind: "activity", id: "deleted-activity-id", name: null },
           entityType: "stage_activities", entityId: "deleted-activity-id",
           before: { planned_start: "2026-11-01" }, after: { planned_start: "2026-11-02" } }
@@ -291,12 +311,124 @@ describe("ProductChangeHistoryDialog", () => {
     mount();
     const dialog = await screen.findByRole("dialog");
     const card = dialog.querySelector(".product-history__event") as HTMLElement;
-    expect(card).toHaveTextContent(originalId);
-    expect(card).toHaveTextContent("Atividade · deleted-activity-id");
+    expect(card).not.toHaveTextContent(originalId);
+    expect(card).toHaveTextContent(messages.productHistoryReversalContext);
+    expect(card).not.toHaveTextContent("deleted-activity-id");
     expect(card).toHaveTextContent("Nome indisponível");
     fireEvent.click(within(card).getByText("Ver alterações da operação (2)"));
     expect(card).toHaveTextContent("01/11/2026 a 07/11/2026");
     expect(card).toHaveTextContent("02/11/2026 a 08/11/2026");
     expect(within(card).queryByRole("button", { name: /reverter/i })).not.toBeInTheDocument();
+  });
+
+  it("uses neutral labels and suppresses identifiers when recorded entity names are absent", async () => {
+    const disciplineId = "c3333333-3333-4333-8333-333333333333";
+    const stageId = "d4444444-4444-4444-8444-444444444444";
+    const operation = {
+      id: "operation:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      occurredAt: "2026-11-13T12:30:00.000Z", actorId: "f5555555-5555-4555-8555-555555555555",
+      actorName: null, eventType: "living_schedule_operation", item: null,
+      justification: "Synthetic metadata adjustment", before: null, after: null,
+      affectedItems: [], operationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      operationType: "schedule_metadata_updated", reversalOfOperationId: null,
+      details: [{ id: "999", source: "living_schedule", eventType: "schedule_operation_detail",
+        entityType: "discipline_stages", entityId: stageId, changeType: "stage_metadata_updated",
+        item: { kind: "stage", id: stageId, name: null },
+        parentBefore: { disciplineId }, parentAfter: { disciplineId },
+        before: { display_order: 2, discipline_id: disciplineId },
+        after: { display_order: 1, discipline_id: disciplineId } }]
+    };
+    auth.fetch.mockResolvedValue(json({ events: [operation], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    const card = dialog.querySelector(".product-history__event") as HTMLElement;
+    fireEvent.click(within(card).getByText(messages.productHistoryOperationDetails(1)));
+    expect(card).toHaveTextContent(messages.productHistoryEntityStage);
+    expect(card).toHaveTextContent(messages.productHistoryEntityDiscipline);
+    expect(card).toHaveTextContent(messages.productHistoryActorUnavailable);
+    expect(card).not.toHaveTextContent(disciplineId);
+    expect(card).not.toHaveTextContent(stageId);
+    expect(card).not.toHaveTextContent("display_order");
+  });
+
+  it("titles a grouped stage rename and displays only its recorded names", async () => {
+    const stageId = "d5555555-5555-4555-8555-555555555555";
+    const operation = {
+      id: "operation:ffffffff-ffff-4fff-8fff-ffffffffffff",
+      occurredAt: "2026-11-14T12:30:00.000Z", actorId: "actor", actorName: "Synthetic editor",
+      eventType: "living_schedule_operation", item: null,
+      justification: "Synthetic stage rename", before: null, after: null,
+      affectedItems: [], operationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      operationType: "schedule_metadata_updated", reversalOfOperationId: null,
+      details: [{ id: "1000", source: "living_schedule", eventType: "schedule_operation_detail",
+        entityType: "discipline_stages", entityId: stageId, changeType: "stage_metadata_updated",
+        item: { kind: "stage", id: stageId, name: "Etapa Horizonte" },
+        before: { display_name: "Etapa Conceitual" }, after: { display_name: "Etapa Horizonte" } }]
+    };
+    auth.fetch.mockResolvedValue(json({ events: [operation], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(messages.productHistoryOperationRenameStage,
+      { selector: ".product-history__item-name" })).toBeInTheDocument();
+    expect(within(dialog).queryByText(messages.productHistoryOperationMetadata)).not.toBeInTheDocument();
+    const card = dialog.querySelector(".product-history__event") as HTMLElement;
+    fireEvent.click(within(card).getByText(messages.productHistoryOperationDetails(1)));
+    expect(card).toHaveTextContent("Etapa Horizonte");
+    expect(card).toHaveTextContent("Etapa Conceitual");
+    expect(card).not.toHaveTextContent(stageId);
+  });
+
+  it("replaces UUIDs in recorded hierarchy breadcrumbs with neutral labels", async () => {
+    const disciplineId = "a6666666-6666-4666-8666-666666666666";
+    const stageId = "b7777777-7777-4777-8777-777777777777";
+    const event = { ...activityEvent, actorName: null, item: { ...activityEvent.item,
+      hierarchy: { discipline: disciplineId, stage: stageId } } };
+    auth.fetch.mockResolvedValue(json({ events: [event], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    const card = dialog.querySelector(".product-history__event") as HTMLElement;
+    expect(card).toHaveTextContent(messages.productHistoryEntityDiscipline);
+    expect(card).toHaveTextContent(messages.productHistoryEntityStage);
+    expect(card).toHaveTextContent(messages.productHistoryActorUnavailable);
+    expect(card).not.toHaveTextContent(disciplineId);
+    expect(card).not.toHaveTextContent(stageId);
+  });
+
+  it("renders working-plan metadata retained beside the specialized date audit", async () => {
+    const operation = {
+      id: "operation:abababab-abab-4bab-8bab-abababababab",
+      occurredAt: "2026-11-15T12:30:00.000Z", actorId: "actor", actorName: "Synthetic editor",
+      eventType: "living_schedule_operation", item: null,
+      justification: "Synthetic working plan adjustment", before: null, after: null,
+      affectedItems: [], operationId: "abababab-abab-4bab-8bab-abababababab",
+      operationType: "activity_working_plan_changed", reversalOfOperationId: null,
+      details: [
+        { id: "activity-date:11111111-1111-4111-8111-111111111111", source: "specialized",
+          eventType: "activity_dates_changed", item: { kind: "activity", id: "activity-1",
+            name: "Synthetic activity" }, justification: "Synthetic working plan adjustment",
+          before: { plannedStart: "2026-11-02", plannedEnd: "2026-11-06" },
+          after: { plannedStart: "2026-11-02", plannedEnd: "2026-11-11" }, affectedItems: [] },
+        { id: "1010", source: "living_schedule", eventType: "schedule_operation_detail",
+          entityType: "stage_activities", entityId: "activity-1", changeType: "stage_activities_updated",
+          item: { kind: "activity", id: "activity-1", name: null },
+          before: { working_day_duration: 5, planning_calendar_version: 7 },
+          after: { working_day_duration: 8, planning_calendar_version: 7 } }
+      ]
+    };
+    auth.fetch.mockResolvedValue(json({ events: [operation], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    const card = dialog.querySelector(".product-history__event") as HTMLElement;
+    expect(card).toHaveTextContent(messages.productHistoryOperationActivityPlan);
+    fireEvent.click(within(card).getByText(messages.productHistoryOperationDetails(2)));
+    expect(card).toHaveTextContent("02/11/2026");
+    expect(card).toHaveTextContent("06/11/2026");
+    expect(card).toHaveTextContent("11/11/2026");
+    expect(card).toHaveTextContent("5");
+    expect(card).toHaveTextContent("8");
+    expect(card).toHaveTextContent("7");
+    expect(card).toHaveTextContent(messages.productHistoryWorkingDays);
+    expect(card).toHaveTextContent(messages.productHistoryCalendarVersion);
+    expect(card).toHaveTextContent("Synthetic activity");
   });
 });

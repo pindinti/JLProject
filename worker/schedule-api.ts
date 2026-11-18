@@ -22,6 +22,24 @@ function response(body: Record<string, unknown>, status: number) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+function logProductHistoryFailure(error: unknown): void {
+  const issue = error && typeof error === "object" ? error as Record<string, unknown> : null;
+  const sqlstate = issue?.["code"];
+  const message = error instanceof Error ? error.message : "";
+  console.error("Product change history lookup failed", {
+    errorType: error instanceof Error ? error.name : typeof error,
+    ...(typeof sqlstate === "string" && /^[0-9A-Z]{5}$/.test(sqlstate) ? { sqlstate } : {}),
+    ...(["Invalid product change history event.", "Invalid product change history item.",
+      "Invalid product change history details.", "Invalid product change history operation metadata.",
+      "Invalid product change history source event types.", "Invalid product change history grouped details.",
+      "Invalid product change history grouped detail.", "Invalid product change history grouped item.",
+      "Invalid product change history recorded hierarchy.", "Invalid product change history affected item.",
+      "Invalid product change history result.", "Invalid product change history cursor.",
+      "Unexpected product change history result.", "Product change history is not ordered newest first."
+    ].includes(message) ? { contractError: message } : {})
+  });
+}
+
 function parseRoute(pathname: string): Route | null {
   const match = pathname.match(prefix);
   if (!match) return null;
@@ -539,7 +557,10 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
       if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
       return response({ error: "Consulta inválida." }, 400);
-    } catch { return response({ error: "Não foi possível carregar o histórico do produto." }, 503); }
+    } catch (error) {
+      logProductHistoryFailure(error);
+      return response({ error: "Não foi possível carregar o histórico do produto." }, 503);
+    }
   }
   if (route.kind === "calendar_impact_apply" && request.method === "POST") {
     const value = await body(request);
