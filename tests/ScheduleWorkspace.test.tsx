@@ -85,6 +85,11 @@ describe("schedule workspace refinements", () => {
     });
     const { container } = mount(true, undefined, "workspace");
     await waitFor(() => expect(container.querySelector('[data-start-date="2026-11-07"]')).toBeInTheDocument());
+    await waitFor(() => {
+      const holidayIsHighlighted = [...container.querySelectorAll<HTMLElement>(".timeline-nonworking-days span")]
+        .some((band) => band.dataset.startDate! <= "2026-11-09" && "2026-11-09" <= band.dataset.endDate!);
+      expect(holidayIsHighlighted).toBe(true);
+    });
     const bands = [...container.querySelectorAll<HTMLElement>(".timeline-nonworking-days span")];
     const highlighted = (date: string) => bands.some((band) =>
       band.dataset.startDate! <= date && date <= band.dataset.endDate!);

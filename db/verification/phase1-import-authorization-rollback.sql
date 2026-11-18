@@ -74,7 +74,15 @@ BEGIN
           'name', 'P1-0031 imported activity', 'activityType', 'Test',
           'plannedStart', '2031-02-03', 'plannedEnd', '2031-02-05',
           'displayOrder', 5, 'notes', NULL, 'sourceId', 'T001', 'sourceRow', 5)))))),
-    'targets', '[]'::jsonb, 'sourceMeta', '[]'::jsonb);
+    'targets', jsonb_build_array(jsonb_build_object(
+      'name', 'P1-0031 imported target', 'targetDate', '2031-02-01',
+      'operationalDate', '2031-01-29', 'sourceRow', 6, 'status', 'Approved source target',
+      'notes', 'Synthetic imported target', 'displayOrder', 0,
+      'matchedSourceId', 'T901', 'matchMethod', 'exact')),
+    'sourceMeta', jsonb_build_array(jsonb_build_object(
+      'sourceId', 'T901', 'sourceRow', 6, 'name', 'P1-0031 imported target',
+      'discipline', 'P31 synthetic discipline', 'stage', 'P31S',
+      'plannedStart', '2031-02-01', 'plannedEnd', '2031-02-01', 'status', NULL, 'notes', NULL)));
 
   PERFORM set_config('jlproject.schedule_actor_id', v_actor::text, true);
   PERFORM set_config('jlproject.schedule_operation_id', v_operation::text, true);
@@ -101,17 +109,39 @@ BEGIN
          AND activity.id = v_activity AND activity.source_external_id = 'T001'
          AND activity.planned_start = DATE '2031-02-03'
          AND activity.planned_end = DATE '2031-02-05') OR
+     NOT EXISTS (SELECT 1 FROM public.business_targets AS target
+       WHERE target.workspace_id = v_workspace AND target.product_id = v_product
+         AND target.name = 'P1-0031 imported target'
+         AND target.target_date = DATE '2031-02-01'
+         AND target.operational_date = DATE '2031-01-29'
+         AND target.source_external_id = 'T901' AND target.source_row = 6
+         AND target.source_status = 'Approved source target'
+         AND target.notes = 'Synthetic imported target') OR
      NOT EXISTS (SELECT 1 FROM public.import_source_rows AS source_row
        JOIN public.import_batches AS batch ON batch.id = source_row.import_batch_id
        WHERE batch.workspace_id = v_workspace AND batch.product_id = v_product
          AND source_row.source_sheet = 'Cronograma Produto' AND source_row.source_row = 5
          AND source_row.source_external_id = 'T001' AND source_row.activity_id = v_activity) OR
+     NOT EXISTS (SELECT 1 FROM public.import_source_rows AS source_row
+       JOIN public.import_batches AS batch ON batch.id = source_row.import_batch_id
+       WHERE batch.workspace_id = v_workspace AND batch.product_id = v_product
+         AND source_row.source_sheet = 'Cronograma Produto' AND source_row.source_row = 6
+         AND source_row.source_external_id = 'T901' AND source_row.target_id IS NOT NULL) OR
+     NOT EXISTS (SELECT 1 FROM public.import_source_rows AS source_row
+       JOIN public.import_batches AS batch ON batch.id = source_row.import_batch_id
+       WHERE batch.workspace_id = v_workspace AND batch.product_id = v_product
+         AND source_row.source_sheet = 'Metas e Premissas' AND source_row.source_row = 6
+         AND source_row.target_id IS NOT NULL) OR
      NOT EXISTS (SELECT 1 FROM public.initial_schedule_revisions AS revision
        WHERE revision.workspace_id = v_workspace AND revision.product_id = v_product
          AND revision.label = 'R00' AND revision.snapshot->'dependencies' = '[]'::jsonb
          AND revision.snapshot->'activityIds'->>'T001' = v_activity::text
+         AND revision.snapshot->'targets' @> jsonb_build_array(jsonb_build_object(
+           'name', 'P1-0031 imported target', 'targetDate', '2031-02-01',
+           'operationalDate', '2031-01-29', 'sourceRow', 6,
+           'matchedSourceId', 'T901'))
          AND revision.snapshot#>>'{disciplines,0,stages,0,activities,0,sourceId}' = 'T001') THEN
-    RAISE EXCEPTION 'Import source identity, dates, hierarchy, or R00 snapshot was not preserved.';
+    RAISE EXCEPTION 'Import source identity, dates, target, hierarchy, or R00 snapshot was not preserved.';
   END IF;
 
   SELECT operation.* INTO v_operation_row
@@ -122,7 +152,7 @@ BEGIN
     FROM public.read_product_schedule_cursor(v_workspace, v_product, v_actor);
   IF v_operation_row.operation_id IS NULL OR v_operation_row.schedule_version <> 1 OR
      v_operation_row.actor_id <> v_actor OR v_operation_row.operation_type <> 'schedule_imported' OR
-     jsonb_array_length(v_operation_row.events) <> 4 OR
+     jsonb_array_length(v_operation_row.events) <> 5 OR
      (SELECT count(*) FROM public.list_product_schedule_operations(v_workspace, v_product, v_actor, NULL, 100)) <> 1 OR
      v_schedule_version <> 1 OR v_history_watermark <= 0 THEN
     RAISE EXCEPTION 'Import audit grouping or exactly-once Living Schedule cursor advancement failed.';

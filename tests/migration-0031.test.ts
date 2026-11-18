@@ -60,6 +60,8 @@ describe("migration 0031 import authorization compatibility", () => {
     expect(integration).toContain("Rollback-only import authorization checks for migration 0031");
     expect(integration).toContain("public.import_initial_schedule");
     expect(integration).toContain("source_external_id = 'T001'");
+    expect(integration).toContain("P1-0031 imported target");
+    expect(integration).toContain("target.operational_date = DATE '2031-01-29'");
     expect(integration).toContain("'schedule_imported'");
     expect(integration).toContain("'replayed'");
     expect(integration).toContain("'conflict'");

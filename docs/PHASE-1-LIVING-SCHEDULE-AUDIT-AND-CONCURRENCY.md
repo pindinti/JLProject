@@ -164,3 +164,11 @@ The same read-only state-summary file was run before migration, after migration,
 Recovery review found Neon history retention of six hours and an existing ready branch dev-pre-0029-20261118 (br-small-bird-b6ubv4r2), expiring 2026-11-25T02:00:00Z. That branch predates 0029/0030 and is not a recovery point for the current schema. No branch was created, restored, or reset.
 
 Targeted checks passed (7 files, 94 tests); the full test suite passed (54 files, 443 tests); lint, typecheck, build, and git diff --check passed. Build produced no bundle-size advisory. Generic Living Schedule event presentation in the product-history UI remains an explicit follow-up before revisions/scenarios work is considered complete. No Production access, deployment, or Phase 2 work occurred.
+
+### Final import-target coverage and regression refinement
+
+The standalone import fixture now includes synthetic source target T901. It asserts the stored target and operational dates, status, notes, the Cronograma Produto and Metas e Premissas source-row references, the clone-independent import R00 target payload, and five grouped schedule detail events. The Worker import script and complete Phase 1 matrix were rerun after this addition; both passed as jlproject_worker with all transactions rolled back. The same before/after state-summary query still matches. Migration 0031 was not rerun.
+
+A full-suite run exposed a test timing race because the Gantt calendar-highlight test asserted a holiday before the asynchronous calendar response arrived. The test now waits for the holiday band. This is test-only and does not change application behavior. The isolated check and final full suite passed.
+
+Final local checks: targeted tests 7 files/94 tests, full suite 54 files/443 tests, lint, typecheck, build, and git diff --check all passed. The build emitted the non-blocking large-client-chunk advisory. Final read-only privilege verification remains in db/verification/phase1-import-authorization-postflight.sql. No Production access, deployment, branch changes, or Phase 2 work occurred.
