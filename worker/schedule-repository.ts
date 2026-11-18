@@ -85,18 +85,28 @@ export type CalendarRescheduleHistoryResult = { status: "ok"; operations: Calend
   { status: "not_found" | "forbidden" | "invalid" };
 export type ProductChangeEventType = "product_created" | "schedule_imported" | "activity_dates_changed" |
   "stage_dates_changed" | "business_target_date_changed" | "calendar_rescheduled" | "calendar_reschedule_reversed" |
-  "schedule_hierarchy_deleted" | "hierarchy_moved";
+  "schedule_hierarchy_deleted" | "hierarchy_moved" | "living_schedule_operation";
 export interface ProductChangeHistoryCursor { occurredAt: string; eventId: string }
 export interface ProductChangeHistoryItem {
   kind: string; id: string; name: string | null;
     operationId?: string;
   hierarchy?: { scope?: string; discipline?: string | null; stage?: string | null };
 }
+export interface ProductChangeHistoryDetail {
+  id: string; source: "specialized" | "living_schedule"; eventType: string;
+  item: ProductChangeHistoryItem | null; justification: string | null;
+  before: Record<string, unknown> | null; after: Record<string, unknown> | null;
+  affectedItems: Array<Record<string, unknown>>;
+  entityType?: string; entityId?: string; changeType?: string;
+  parentBefore?: Record<string, unknown>; parentAfter?: Record<string, unknown>;
+}
 export interface ProductChangeEvent {
   id: string; occurredAt: string; actorId: string; actorName: string | null;
   eventType: ProductChangeEventType; item: ProductChangeHistoryItem | null;
   justification: string | null; before: Record<string, unknown> | null;
   after: Record<string, unknown> | null; affectedItems: Array<Record<string, unknown>>;
+  operationId?: string; operationType?: string | null; reversalOfOperationId?: string | null;
+  sourceEventTypes?: ProductChangeEventType[]; details?: ProductChangeHistoryDetail[];
 }
 export type ProductChangeHistoryResult = { status: "ok"; events: ProductChangeEvent[];
   nextCursor: ProductChangeHistoryCursor | null } | { status: "not_found" | "forbidden" | "invalid" };
@@ -191,7 +201,13 @@ const text = (value: unknown) => String(value);
 const nullable = (value: unknown) => value === null || value === undefined ? null : String(value);
 const productChangeEventTypes = new Set<ProductChangeEventType>([
   "product_created", "schedule_imported", "activity_dates_changed", "stage_dates_changed", "business_target_date_changed",
-  "calendar_rescheduled", "calendar_reschedule_reversed", "schedule_hierarchy_deleted", "hierarchy_moved"
+  "calendar_rescheduled", "calendar_reschedule_reversed", "schedule_hierarchy_deleted", "hierarchy_moved",
+  "living_schedule_operation"
+]);
+const specializedHistoryEventTypes = new Set<string>([
+  "product_created", "schedule_imported", "activity_dates_changed", "stage_dates_changed",
+  "business_target_date_changed", "calendar_rescheduled", "calendar_reschedule_reversed",
+  "schedule_hierarchy_deleted", "hierarchy_moved", "living_schedule_operation"
 ]);
 
 function jsonRecord(value: unknown): Record<string, unknown> | null {
@@ -232,6 +248,70 @@ function productChangeEvent(value: unknown): ProductChangeEvent {
   if ((event["before"] !== null && !before) || (event["after"] !== null && !after) ||
       event["item"] === undefined || event["before"] === undefined || event["after"] === undefined)
     throw new Error("Invalid product change history details.");
+  const operationId = event["operationId"];
+  const operationType = event["operationType"];
+  const reversalOfOperationId = event["reversalOfOperationId"];
+  if ((operationId !== undefined && operationId !== null && typeof operationId !== "string") ||
+      (operationType !== undefined && operationType !== null && typeof operationType !== "string") ||
+      (reversalOfOperationId !== undefined && reversalOfOperationId !== null &&
+        typeof reversalOfOperationId !== "string"))
+    throw new Error("Invalid product change history operation metadata.");
+  const sourceEventTypes = event["sourceEventTypes"];
+  if (sourceEventTypes !== undefined && (!Array.isArray(sourceEventTypes) ||
+      !sourceEventTypes.every((entry) => typeof entry === "string" &&
+        specializedHistoryEventTypes.has(entry))))
+    throw new Error("Invalid product change history source event types.");
+  const rawDetails = event["details"];
+  if (rawDetails !== undefined && !Array.isArray(rawDetails))
+    throw new Error("Invalid product change history grouped details.");
+  const details = (rawDetails as unknown[] | undefined)?.map((entry): ProductChangeHistoryDetail => {
+    const detail = jsonRecord(entry);
+    const detailId = detail?.["eventId"];
+    const source = detail?.["source"];
+    const detailType = detail?.["eventType"];
+    const detailItem = detail?.["item"];
+    const detailJustification = detail?.["justification"];
+    const detailBefore = detail?.["before"] === null ? null : jsonRecord(detail?.["before"]);
+    const detailAfter = detail?.["after"] === null ? null : jsonRecord(detail?.["after"]);
+    const affected = detail?.["affectedItems"] ?? [];
+    if (!detail || typeof detailId !== "string" ||
+        (source !== "specialized" && source !== "living_schedule") || typeof detailType !== "string" ||
+        (detailJustification !== null && detailJustification !== undefined && typeof detailJustification !== "string") ||
+        (detail?.["before"] !== undefined && detail?.["before"] !== null && !detailBefore) ||
+        (detail?.["after"] !== undefined && detail?.["after"] !== null && !detailAfter) ||
+        !Array.isArray(affected) || !affected.every((item) => !!jsonRecord(item)))
+      throw new Error("Invalid product change history grouped detail.");
+    let parsedItem: ProductChangeHistoryItem | null = null;
+    if (detailItem !== undefined && detailItem !== null) {
+      const rawItem = jsonRecord(detailItem);
+      const rawHierarchy = rawItem?.["hierarchy"] === undefined ? null : jsonRecord(rawItem["hierarchy"]);
+      if (!rawItem || typeof rawItem["kind"] !== "string" || typeof rawItem["id"] !== "string" ||
+          (rawItem["name"] !== null && rawItem["name"] !== undefined && typeof rawItem["name"] !== "string") ||
+          (rawItem["operationId"] !== undefined && typeof rawItem["operationId"] !== "string") ||
+          (rawItem["hierarchy"] !== undefined && !rawHierarchy))
+        throw new Error("Invalid product change history grouped item.");
+      parsedItem = { kind: rawItem["kind"], id: rawItem["id"],
+        name: (rawItem["name"] as string | null | undefined) ?? null,
+        ...(rawHierarchy ? { hierarchy: {
+          ...(typeof rawHierarchy["scope"] === "string" ? { scope: rawHierarchy["scope"] } : {}),
+          ...(rawHierarchy["discipline"] === undefined ? {} : { discipline: nullable(rawHierarchy["discipline"]) }),
+          ...(rawHierarchy["stage"] === undefined ? {} : { stage: nullable(rawHierarchy["stage"]) })
+        } } : {}) };
+    }
+    const parentBefore = detail["parentBefore"] === undefined ? undefined : jsonRecord(detail["parentBefore"]);
+    const parentAfter = detail["parentAfter"] === undefined ? undefined : jsonRecord(detail["parentAfter"]);
+    if ((detail["parentBefore"] !== undefined && !parentBefore) ||
+        (detail["parentAfter"] !== undefined && !parentAfter))
+      throw new Error("Invalid product change history recorded hierarchy.");
+    return { id: detailId, source, eventType: detailType, item: parsedItem,
+      justification: (detailJustification as string | null | undefined) ?? null,
+      before: detailBefore, after: detailAfter,
+      affectedItems: affected.map((item) => jsonRecord(item)!),
+      ...(typeof detail["entityType"] === "string" ? { entityType: detail["entityType"] } : {}),
+      ...(typeof detail["entityId"] === "string" ? { entityId: detail["entityId"] } : {}),
+      ...(typeof detail["changeType"] === "string" ? { changeType: detail["changeType"] } : {}),
+      ...(parentBefore ? { parentBefore } : {}), ...(parentAfter ? { parentAfter } : {}) };
+  });
   return { id: event["id"], occurredAt: event["occurredAt"], actorId: event["actorId"],
     actorName: event["actorName"] as string | null, eventType: event["eventType"] as ProductChangeEventType,
     item, justification: event["justification"] as string | null, before, after,
@@ -239,7 +319,13 @@ function productChangeEvent(value: unknown): ProductChangeEvent {
       const record = jsonRecord(entry);
       if (!record) throw new Error("Invalid product change history affected item.");
       return record;
-    }) };
+    }),
+    ...(typeof operationId === "string" ? { operationId } : {}),
+    ...(operationType === null || typeof operationType === "string" ? { operationType } : {}),
+    ...(reversalOfOperationId === null || typeof reversalOfOperationId === "string"
+      ? { reversalOfOperationId } : {}),
+    ...(sourceEventTypes === undefined ? {} : { sourceEventTypes: sourceEventTypes as ProductChangeEventType[] }),
+    ...(details === undefined ? {} : { details }) };
 }
 
 function discipline(row: Record<string, unknown>): Discipline {

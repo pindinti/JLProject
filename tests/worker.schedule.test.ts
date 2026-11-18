@@ -471,6 +471,43 @@ describe("schedule hierarchy API", () => {
     expect(repo.listProductChangeHistory).toHaveBeenCalledWith(ws, product, actor, 1, null);
   });
 
+  it("passes unified operation details through the existing authorized history endpoint", async () => {
+    const operationId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const eventId = `operation:${operationId}`;
+    const occurredAt = "2026-11-11T12:30:00.000000Z";
+    const event = {
+      id: eventId, occurredAt, actorId: actor, actorName: "Synthetic Actor",
+      eventType: "living_schedule_operation" as const, item: null,
+      justification: "Synthetic grouped reason", before: null, after: null,
+      affectedItems: [{ kind: "activity", id: activity, name: null }], operationId,
+      operationType: "schedule_metadata_updated", reversalOfOperationId: null,
+      sourceEventTypes: ["living_schedule_operation" as const, "activity_dates_changed" as const],
+      details: [{ id: "9501", source: "living_schedule" as const, eventType: "schedule_operation_detail",
+        item: { kind: "activity", id: activity, name: null }, justification: null,
+        before: { name: "Recorded old name" }, after: { name: "Recorded new name" }, affectedItems: [],
+        entityType: "stage_activities", entityId: activity, changeType: "stage_activities_updated" }]
+    };
+    const repo = repository();
+    vi.mocked(repo.listProductChangeHistory).mockResolvedValueOnce({ status: "ok", events: [event],
+      nextCursor: { occurredAt, eventId } }).mockResolvedValueOnce({ status: "ok", events: [], nextCursor: null });
+
+    const result = await call(request(`${base}/change-history?limit=1`), "viewer", repo);
+    expect(result.status).toBe(200);
+    const page = await result.json() as { events: Array<Record<string, unknown>>; nextCursor: string };
+    expect(page.events).toMatchObject([{ id: eventId, operationId,
+      eventType: "living_schedule_operation", operationType: "schedule_metadata_updated",
+      details: [{ id: "9501", source: "living_schedule", entityId: activity,
+        before: { name: "Recorded old name" }, after: { name: "Recorded new name" } }] }]);
+    expect(page.nextCursor).toBe(`${occurredAt}~${eventId}`);
+    expect(repo.listProductChangeHistory).toHaveBeenCalledWith(ws, product, actor, 1, null);
+
+    const next = await call(request(`${base}/change-history?limit=1&cursor=${encodeURIComponent(page.nextCursor)}`),
+      "viewer", repo);
+    expect(next.status).toBe(200);
+    expect(repo.listProductChangeHistory).toHaveBeenLastCalledWith(ws, product, actor, 1,
+      { occurredAt, eventId });
+  });
+
   it("rejects malformed pagination and client actor claims before querying history", async () => {
     const repo = repository();
     for (const suffix of ["?limit=0", "?limit=101", `?actorId=${actor}`,

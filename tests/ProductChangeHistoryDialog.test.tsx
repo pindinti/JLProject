@@ -53,7 +53,7 @@ describe("ProductChangeHistoryDialog", () => {
     expect(within(dialog).getByText("Synthetic activity")).toBeInTheDocument();
     expect(within(dialog).queryByText("Synthetic product")).not.toBeInTheDocument();
     expect(within(dialog).getByText(/não representa revisões formais/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Não registra edição cadastral/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Informações anteriores à cobertura de auditoria não são reconstruídas/)).toBeInTheDocument();
   });
 
   it("shows movement actor, time, item type, parent hierarchy and one-based positions", async () => {
@@ -214,5 +214,89 @@ describe("ProductChangeHistoryDialog", () => {
     await waitFor(() => expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument());
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("renders generic details in one operation group and filters by represented specialized type", async () => {
+    const operationId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const grouped = {
+      id: `operation:${operationId}`, occurredAt: "2026-11-11T12:30:00.000Z",
+      actorId: "actor", actorName: "Synthetic editor", eventType: "living_schedule_operation",
+      item: null, justification: "Synthetic grouped schedule reason", before: null, after: null,
+      affectedItems: [{ kind: "activity", id: "activity-1", name: null }], operationId,
+      operationType: "schedule_metadata_updated", reversalOfOperationId: null,
+      sourceEventTypes: ["living_schedule_operation", "activity_dates_changed"],
+      details: [
+        { eventId: "activity-date:11111111-1111-4111-8111-111111111111", source: "specialized",
+          eventType: "activity_dates_changed", item: { kind: "activity", id: "activity-1",
+            name: "Synthetic activity", hierarchy: { discipline: "Recorded discipline", stage: "Recorded stage" } },
+          justification: "Synthetic grouped schedule reason",
+          before: { plannedStart: "2026-11-01", plannedEnd: "2026-11-08" },
+          after: { plannedStart: "2026-11-03", plannedEnd: "2026-11-10" }, affectedItems: [] },
+        { eventId: "921", source: "living_schedule", eventType: "schedule_operation_detail",
+          entityType: "stage_activities", entityId: "activity-1", changeType: "stage_activities_updated",
+          item: { kind: "activity", id: "activity-1", name: null },
+          parentBefore: { disciplineId: "recorded-discipline-id", stageId: "recorded-stage-id" },
+          parentAfter: { disciplineId: "recorded-discipline-id", stageId: "recorded-stage-id" },
+          before: { name: "Old recorded name" }, after: { name: "New recorded name" } }
+      ]
+    };
+    auth.fetch.mockResolvedValue(json({ events: [grouped], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Synthetic editor")).toBeInTheDocument();
+    expect(within(dialog).getByText("Synthetic grouped schedule reason")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("Dados do cronograma alterados")).toHaveLength(2);
+    fireEvent.change(within(dialog).getByLabelText("Filtrar por tipo de evento"), {
+      target: { value: "activity_dates_changed" }
+    });
+    const detailRow = within(dialog).getByText("Synthetic activity").closest("li") as HTMLElement;
+    const card = detailRow.closest(".product-history__event") as HTMLElement;
+    fireEvent.click(within(card).getByText("Ver alterações da operação (2)"));
+    expect(card).toHaveTextContent("01/11/2026");
+    expect(card).toHaveTextContent("10/11/2026");
+    expect(card).toHaveTextContent("Old recorded name");
+    expect(card).toHaveTextContent("New recorded name");
+    expect(card).toHaveTextContent("Identificador da disciplina: recorded-discipline-id");
+    expect(card).toHaveTextContent("Identificador da etapa: recorded-stage-id");
+    expect(card).not.toHaveTextContent("stage_activities");
+  });
+
+  it("shows reversal lineage without adding reversal actions and tolerates missing historical labels", async () => {
+    const operationId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const originalId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const reversal = {
+      id: `operation:${operationId}`, occurredAt: "2026-11-12T12:30:00.000Z",
+      actorId: "actor", actorName: null, eventType: "living_schedule_operation",
+      item: null, justification: "Synthetic reversal reason", before: null, after: null,
+      affectedItems: [{ kind: "activity", id: "deleted-activity-id", name: null }],
+      operationId, operationType: "calendar_reschedule_reversed", reversalOfOperationId: originalId,
+      sourceEventTypes: ["living_schedule_operation", "calendar_reschedule_reversed"],
+      details: [
+        { eventId: "calendar-reversal:ffffffff-ffff-4fff-8fff-ffffffffffff", source: "specialized",
+          eventType: "calendar_reschedule_reversed",
+          item: { kind: "calendar_reschedule_reversal", id: "reversal-batch", name: null },
+          justification: "Synthetic reversal reason",
+          before: { originalOperationId: originalId, activities: [{ activityId: "deleted-activity-id",
+            plannedStart: "2026-11-01", plannedEnd: "2026-11-07" }] },
+          after: { originalOperationId: originalId, activities: [{ activityId: "deleted-activity-id",
+            plannedStart: "2026-11-02", plannedEnd: "2026-11-08" }] },
+          affectedItems: [{ kind: "activity", id: "deleted-activity-id", name: null }] },
+        { eventId: "933", source: "living_schedule", eventType: "schedule_operation_detail",
+          item: { kind: "activity", id: "deleted-activity-id", name: null },
+          entityType: "stage_activities", entityId: "deleted-activity-id",
+          before: { planned_start: "2026-11-01" }, after: { planned_start: "2026-11-02" } }
+      ]
+    };
+    auth.fetch.mockResolvedValue(json({ events: [reversal], nextCursor: null }));
+    mount();
+    const dialog = await screen.findByRole("dialog");
+    const card = dialog.querySelector(".product-history__event") as HTMLElement;
+    expect(card).toHaveTextContent(originalId);
+    expect(card).toHaveTextContent("Atividade · deleted-activity-id");
+    expect(card).toHaveTextContent("Nome indisponível");
+    fireEvent.click(within(card).getByText("Ver alterações da operação (2)"));
+    expect(card).toHaveTextContent("01/11/2026 a 07/11/2026");
+    expect(card).toHaveTextContent("02/11/2026 a 08/11/2026");
+    expect(within(card).queryByRole("button", { name: /reverter/i })).not.toBeInTheDocument();
   });
 });

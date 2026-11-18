@@ -139,4 +139,62 @@ describe("product change history repository", () => {
     expect(query.join("?")).toContain("list_product_change_history");
     expect(query.join("?")).not.toContain("list_stage_date_change_history");
   });
+
+  it("maps complete grouped operations with stable same-time ordering and reversal lineage", async () => {
+    const operationIdA = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const operationIdB = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const grouped = (operationId: string, operationType: string) => ({
+      id: `operation:${operationId}`, occurredAt, actorId, actorName: null,
+      eventType: "living_schedule_operation", item: null, justification: "Synthetic grouped reason",
+      before: null, after: null, affectedItems: [], operationId, operationType,
+      reversalOfOperationId: operationType === "calendar_reschedule_reversed" ? "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" : null,
+      sourceEventTypes: ["living_schedule_operation", "calendar_reschedule_reversed"],
+      details: [
+        { eventId: "calendar-reversal:cccccccc-cccc-4ccc-8ccc-cccccccccccc", source: "specialized",
+          eventType: "calendar_reschedule_reversed", item: { kind: "calendar_reschedule_reversal",
+            id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: null },
+          justification: "Synthetic grouped reason", before: { originalOperationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+          after: { originalOperationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }, affectedItems: [] },
+        { eventId: "9081", source: "living_schedule", eventType: "schedule_operation_detail",
+          entityType: "stage_activities", entityId: activityId, changeType: "stage_activities_updated",
+          item: { kind: "activity", id: activityId, name: null }, parentBefore: { stageId: "stage-id" },
+          parentAfter: { stageId: "stage-id" }, before: { name: "Old recorded name" },
+          after: { name: "New recorded name" } }
+      ]
+    });
+    const first = grouped(operationIdA, "calendar_reschedule_reversed");
+    const second = grouped(operationIdB, "schedule_metadata_updated");
+    sql.mockResolvedValueOnce([{ result: { status: "ok", events: [first, second],
+      nextCursor: { occurredAt, eventId: second.id } } }])
+      .mockResolvedValueOnce([{ id: actorId, name: "Synthetic actor" }]);
+
+    const result = await createScheduleRepository({ DATABASE_URL: "postgresql://example.invalid" })
+      .listProductChangeHistory(workspaceId, productId, actorId, 2, null);
+
+    expect(result).toMatchObject({ status: "ok", events: [
+      { id: first.id, operationId: operationIdA, operationType: "calendar_reschedule_reversed",
+        reversalOfOperationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", actorName: "Synthetic actor",
+        details: [
+          { id: "calendar-reversal:cccccccc-cccc-4ccc-8ccc-cccccccccccc", source: "specialized" },
+          { id: "9081", source: "living_schedule", entityId: activityId,
+            before: { name: "Old recorded name" }, after: { name: "New recorded name" } }
+        ] },
+      { id: second.id, operationId: operationIdB }
+    ], nextCursor: { occurredAt, eventId: second.id } });
+    expect(sql).toHaveBeenCalledTimes(2);
+    const query = sql.mock.calls[0]?.[0] as TemplateStringsArray;
+    expect(query.join("?")).toContain("list_product_change_history");
+    expect(query.join("?")).not.toContain("product_schedule_operation_events");
+  });
+
+  it("rejects malformed grouped detail payloads", async () => {
+    sql.mockResolvedValueOnce([{ result: { status: "ok", events: [{
+      ...event("operation:dddddddd-dddd-4ddd-8ddd-dddddddddddd", occurredAt, "living_schedule_operation"),
+      operationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", operationType: "schedule_metadata_updated",
+      sourceEventTypes: ["living_schedule_operation"], details: [{ eventId: "bad", source: "untrusted" }]
+    }], nextCursor: null } }]);
+    await expect(createScheduleRepository({ DATABASE_URL: "postgresql://example.invalid" })
+      .listProductChangeHistory(workspaceId, productId, actorId, 25, null))
+      .rejects.toThrow("Invalid product change history grouped detail.");
+  });
 });
