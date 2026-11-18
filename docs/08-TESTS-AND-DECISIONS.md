@@ -296,3 +296,10 @@ Review after the initial Phase 1 checkpoint found that the import rollback fixtu
 One concurrent full-suite run exposed a timing race in the Gantt calendar test: it asserted the holiday band before the asynchronous workspace-calendar response had been applied. The test now waits for the holiday band; no product behavior changed. The isolated test and subsequent full suite passed.
 
 Final targeted checks passed (7 files, 94 tests); the full suite passed (54 files, 443 tests); lint, typecheck, build, and git diff --check passed. The build retains the non-blocking client bundle advisory for a 618.71 kB minified chunk. The read-only postflight in db/verification/phase1-import-authorization-postflight.sql and the state summary remained successful. No Production access, deployment, or Phase 2 work occurred.
+
+
+### D066 final import API provenance validation
+
+The final API test submits both source_external_id and sourceExternalId fields from an untrusted request, then separately submits a T999 source ID against a mismatching source row. Both requests return 400 and never reach the import repository. This confirms the exact-field import contract retains server-side control of the database provenance column while preserving validated spreadsheet source IDs.
+
+After this test-only addition, focused import/migration checks passed (3 files, 15 tests) and the full suite passed (54 files, 444 tests). Lint, typecheck, build, and git diff --check passed. The build reports the non-blocking 618.71 kB client chunk advisory. No database migration or write-path integration was rerun or changed.

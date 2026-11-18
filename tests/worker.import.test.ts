@@ -66,6 +66,20 @@ describe("workspace import API", () => {
     expect(repo.import).not.toHaveBeenCalled();
   });
 
+  it("rejects client-supplied provenance fields and source IDs inconsistent with source rows", async () => {
+    const repo = repository();
+    const extraProvenance = syntheticImportSubmission();
+    Object.assign(extraProvenance.disciplines[0].stages[0].activities[0], {
+      source_external_id: "T999", sourceExternalId: "T998"
+    });
+    expect((await call(request(extraProvenance), "admin", repo)).status).toBe(400);
+
+    const mismatchedSourceRow = syntheticImportSubmission();
+    mismatchedSourceRow.disciplines[0].stages[0].activities[0].sourceId = "T999";
+    expect((await call(request(mismatchedSourceRow), "admin", repo)).status).toBe(400);
+    expect(repo.import).not.toHaveBeenCalled();
+  });
+
   it("returns safe duplicate, conflict, and replay responses", async () => {
     const duplicate = await call(request(), "admin", repository({ status: "duplicate" }));
     expect(duplicate.status).toBe(409);

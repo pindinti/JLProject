@@ -172,3 +172,10 @@ The standalone import fixture now includes synthetic source target T901. It asse
 A full-suite run exposed a test timing race because the Gantt calendar-highlight test asserted a holiday before the asynchronous calendar response arrived. The test now waits for the holiday band. This is test-only and does not change application behavior. The isolated check and final full suite passed.
 
 Final local checks: targeted tests 7 files/94 tests, full suite 54 files/443 tests, lint, typecheck, build, and git diff --check all passed. The build emitted the non-blocking large-client-chunk advisory. Final read-only privilege verification remains in db/verification/phase1-import-authorization-postflight.sql. No Production access, deployment, branch changes, or Phase 2 work occurred.
+
+
+### Final import API provenance validation
+
+A Worker API test now submits both source_external_id and sourceExternalId in an untrusted import request, then separately submits T999 against an inconsistent source row. Both requests are rejected with 400 before repository invocation, proving the API does not accept arbitrary extra provenance fields and validates imported IDs against source rows.
+
+Final focused import/migration checks passed (3 files, 15 tests); the full suite passed (54 files, 444 tests); lint, typecheck, build, and git diff --check passed. Build reports the non-blocking 618.71 kB client chunk advisory. This test-only change did not alter the database; migration 0031 and rollback-only integration were not rerun.
