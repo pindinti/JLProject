@@ -43,7 +43,7 @@ function repository(): ScheduleRepository {
     deleteSubtree: vi.fn(async (_ws, _product, _actor, operationId) => ({ status: "deleted" as const,
       operationId, counts: { disciplines: 1, stages: 2, activities: 3 } })),
     listStageDefinitions: vi.fn(async () => [{ id: "a9999999-9999-4999-8999-999999999999", code: "EC", color: "#445566" }]),
-    updateStageDefinitionColor: vi.fn(async (_workspaceId, definitionId, _expectedColor, color) => ({
+    updateStageDefinitionColor: vi.fn(async (_workspaceId, definitionId, _actorId, _expectedColor, color) => ({
       status: "ok" as const, value: { id: definitionId, code: "EC", color }
     })),
     productExists: vi.fn(async () => true), disciplineExists: vi.fn(async () => true),
@@ -137,6 +137,7 @@ async function call(input: Request, role: WorkspaceRole | null, repo = repositor
 describe("schedule hierarchy API", () => {
   const movePath = `${base}/hierarchy/moves`;
   const moveBody = { kind: "activity", targetId: activity, expectedVersion: 1,
+    reason: "Synthetic hierarchy move",
     destinationDisciplineId: null, destinationStageId: null, destinationIndex: 0,
     expectedSourceOrder: [activity], expectedDestinationOrder: [] };
 
@@ -152,6 +153,8 @@ describe("schedule hierarchy API", () => {
   it("rejects unauthorized, malformed, stale, conflicting, and failed hierarchy moves", async () => {
     const repo = repository();
     expect((await call(request(movePath, "POST", moveBody), "viewer", repo)).status).toBe(403);
+    expect((await call(request(movePath, "POST", { ...moveBody, reason: "short" }), "editor", repo)).status).toBe(400);
+    expect((await call(request(movePath, "POST", { ...moveBody, reason: undefined }), "editor", repo)).status).toBe(400);
     expect((await call(request(movePath, "POST", { ...moveBody, actorId: actor }), "admin", repo)).status).toBe(400);
     expect((await call(request(movePath, "POST", { ...moveBody,
       destinationDisciplineId: discipline }), "admin", repo)).status).toBe(400);
@@ -588,22 +591,25 @@ describe("schedule hierarchy API", () => {
   it("creates, edits, and soft-deletes targets only for active editors with scoped identities", async () => {
     const repo = repository();
     const path = `${base}/targets`;
-    const input = { name: "Synthetic milestone", description: "Synthetic description",
+    const baseInput = { name: "Synthetic milestone", description: "Synthetic description",
       targetDate: "2026-11-09", color: "#336699" };
+    const input = { ...baseInput, reason: "Synthetic target planning" };
     expect((await call(request(path, "POST", input), "viewer", repo)).status).toBe(403);
     const created = await call(request(path, "POST", input), "editor", repo);
     expect(created.status).toBe(201);
-    expect(repo.createTarget).toHaveBeenCalledWith(ws, product, actor, input);
+    expect(repo.createTarget).toHaveBeenCalledWith(ws, product, actor, input, expect.any(String));
     const updated = await call(request(`${path}/${targetId}`, "PATCH", {
-      ...input, name: "Renamed synthetic milestone", targetDate: "2026-11-10",
+      ...baseInput, name: "Renamed synthetic milestone", targetDate: "2026-11-10",
       version: 1, reason: "Synthetic date correction"
     }), "admin", repo);
     expect(updated.status).toBe(200);
     expect(repo.updateTarget).toHaveBeenCalledWith(ws, product, targetId, actor,
-      { ...input, name: "Renamed synthetic milestone", targetDate: "2026-11-10" }, 1,
+      { ...baseInput, name: "Renamed synthetic milestone", targetDate: "2026-11-10" }, 1,
       "Synthetic date correction", expect.any(String));
-    expect((await call(request(`${path}/${targetId}`, "DELETE", { version: 2 }), "editor", repo)).status).toBe(200);
-    expect(repo.deleteTarget).toHaveBeenCalledWith(ws, product, targetId, actor, 2, expect.any(String));
+    const deletionReason = "Synthetic target removal";
+    expect((await call(request(`${path}/${targetId}`, "DELETE", { version: 2, reason: deletionReason }), "editor", repo)).status).toBe(200);
+    expect(repo.deleteTarget).toHaveBeenCalledWith(ws, product, targetId, actor, 2, expect.any(String), deletionReason);
+    expect((await call(request(`${path}/${targetId}`, "DELETE", { version: 2 }), "editor", repo)).status).toBe(400);
     expect((await call(request(`${path}/${targetId}`, "PATCH", input), "viewer", repo)).status).toBe(403);
     expect((await call(request(`${path}/${targetId}`, "DELETE", { version: 1 }), "admin", repo, false)).status).toBe(403);
     expect((await call(request(`${path}/${targetId}`.replace(ws, otherWs), "PATCH", input), "admin", repo)).status).toBe(403);
@@ -663,7 +669,7 @@ describe("schedule hierarchy API", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({ stageDefinition: { id: definitionId, code: "EC", color: "#AA5577" } });
     }
-    expect(repo.updateStageDefinitionColor).toHaveBeenCalledWith(ws, definitionId, "#445566", "#AA5577");
+    expect(repo.updateStageDefinitionColor).toHaveBeenCalledWith(ws, definitionId, actor, "#445566", "#AA5577");
     expect(repo.updateStage).not.toHaveBeenCalled();
     expect(repo.changeActivityDates).not.toHaveBeenCalled();
     expect((await call(request(path, "PATCH", input), "viewer", repo)).status).toBe(403);
@@ -702,14 +708,35 @@ describe("schedule hierarchy API", () => {
     const repo = repository();
     const disciplineInput = { name: "Arquitetura", shortCode: "ARQ", color: "#112233", displayOrder: 0 };
     const stageInput = { code: "EC", color: "#445566", displayName: "Estudo conceitual", displayOrder: 0 };
-    const activityInput = { name: "Tarefa sintética", plannedStart: "2026-11-01", plannedEnd: "2026-11-05", displayOrder: 0 };
+    const activityInput = { name: "Tarefa sintética", plannedStart: "2026-11-01", plannedEnd: "2026-11-05",
+      displayOrder: 0, reason: "Synthetic initial activity plan" };
     expect((await call(request(disciplines, "POST", disciplineInput), "admin", repo)).status).toBe(201);
     expect(repo.createDiscipline).toHaveBeenCalledWith(ws, product, actor, { ...disciplineInput, description: null });
     expect((await call(request(stages, "POST", stageInput), "editor", repo)).status).toBe(201);
     expect(repo.createStage).toHaveBeenCalledWith(ws, product, discipline, actor, stageInput);
     expect((await call(request(activities, "POST", activityInput), "editor", repo)).status).toBe(201);
     expect(repo.createActivity).toHaveBeenCalledWith(ws, product, discipline, stage, actor,
-      { ...activityInput, activityType: null, notes: null });
+      { name: activityInput.name, plannedStart: activityInput.plannedStart, plannedEnd: activityInput.plannedEnd,
+        displayOrder: activityInput.displayOrder, activityType: null, notes: null },
+      activityInput.reason, expect.any(String));
+  });
+
+  it("requires a justification for dated activity creation while allowing undated activities", async () => {
+    const repo = repository();
+    const dateful = { name: "Synthetic planned activity", displayOrder: 0,
+      plannedStart: "2026-11-01", plannedEnd: "2026-11-05" };
+    expect((await call(request(activities, "POST", dateful), "editor", repo)).status).toBe(400);
+    expect(repo.createActivity).not.toHaveBeenCalled();
+
+    const reason = "Synthetic initial schedule plan";
+    expect((await call(request(activities, "POST", { ...dateful, reason }), "editor", repo)).status).toBe(201);
+    expect(repo.createActivity).toHaveBeenCalledWith(ws, product, discipline, stage, actor,
+      { ...dateful, activityType: null, notes: null }, reason, expect.any(String));
+
+    const undated = { name: "Synthetic unscheduled activity", displayOrder: 1 };
+    expect((await call(request(activities, "POST", undated), "editor", repo)).status).toBe(201);
+    expect(repo.createActivity).toHaveBeenLastCalledWith(ws, product, discipline, stage, actor,
+      { ...undated, plannedStart: null, plannedEnd: null, activityType: null, notes: null }, null, expect.any(String));
   });
 
   it("creates an empty stage with full or partial audited dates and preserves legacy creation", async () => {
@@ -818,11 +845,13 @@ describe("schedule hierarchy API", () => {
       stageId: null, colorOverride: null }] });
 
     const input = { name: "Root activity", plannedStart: "2026-11-03", plannedEnd: "2026-11-07",
-      displayOrder: 0, colorOverride: "#aa5577" };
+      displayOrder: 0, colorOverride: "#aa5577", reason: "Synthetic root schedule plan" };
     const created = await call(request(rootActivities, "POST", input), "editor", repo);
     expect(created.status).toBe(201);
     expect(repo.createActivity).toHaveBeenCalledWith(ws, product, null, null, actor,
-      { ...input, colorOverride: "#AA5577", activityType: null, notes: null });
+      { name: input.name, plannedStart: input.plannedStart, plannedEnd: input.plannedEnd,
+        displayOrder: input.displayOrder, colorOverride: "#AA5577", activityType: null, notes: null },
+      input.reason, expect.any(String));
     expect((await call(request(rootActivities, "POST", { ...input, colorOverride: "red" }),
       "editor", repo)).status).toBe(400);
     expect((await call(request(rootActivities, "POST", input), "viewer", repo)).status).toBe(403);
@@ -837,12 +866,13 @@ describe("schedule hierarchy API", () => {
       kind: "company_shutdown", name: null, municipality: null, description: "Synthetic closure",
       startDate: "2026-11-06", endDate: "2026-11-06", version: 1 }]);
     const input = { name: "Root working activity", displayOrder: 0, planningMode: "working_days",
-      plannedStart: "2026-11-05", workingDays: 2, calendarVersion: 3, colorOverride: "#aa5577" };
+      plannedStart: "2026-11-05", workingDays: 2, calendarVersion: 3, colorOverride: "#aa5577",
+      reason: "Synthetic working schedule plan" };
     const response = await call(request(rootActivities, "POST", input), "editor", repo, true, calendarRepo);
     expect(response.status).toBe(201);
     expect(repo.createWorkingActivity).toHaveBeenCalledWith(ws, product, null, null, actor,
       expect.objectContaining({ plannedEnd: "2026-11-09", workingDays: 2,
-        calendarVersion: 3, colorOverride: "#AA5577" }));
+        calendarVersion: 3, colorOverride: "#AA5577" }), input.reason, expect.any(String));
   });
 
   it("edits root metadata and colors with optimistic concurrency and workspace isolation", async () => {
@@ -959,7 +989,8 @@ describe("schedule hierarchy API", () => {
       startDate: "2026-11-06", endDate: "2026-11-06", version: 1 };
     const calendarRepo = calculationCalendar(3, [closure]);
     const input = { name: "Synthetic working activity", displayOrder: 1,
-      planningMode: "working_days", plannedStart: "2026-11-05", workingDays: 2, calendarVersion: 3 };
+      planningMode: "working_days", plannedStart: "2026-11-05", workingDays: 2, calendarVersion: 3,
+      reason: "Synthetic working activity plan" };
     const created = await call(request(activities, "POST", input), "editor", repo, true, calendarRepo);
     expect(created.status).toBe(201);
     await expect(created.json()).resolves.toMatchObject({ activity: {
@@ -968,7 +999,8 @@ describe("schedule hierarchy API", () => {
     } });
     expect(calendarRepo.readForCalculation).toHaveBeenCalledWith(ws);
     expect(repo.createWorkingActivity).toHaveBeenCalledWith(ws, product, discipline, stage, actor,
-      expect.objectContaining({ plannedEnd: "2026-11-09", workingDays: 2, calendarVersion: 3 }));
+      expect.objectContaining({ plannedEnd: "2026-11-09", workingDays: 2, calendarVersion: 3 }),
+      input.reason, expect.any(String));
     expect(repo.createActivity).not.toHaveBeenCalled();
     const racedCalendar = await call(request(activities, "POST", input), "editor", {
       ...repo, createWorkingActivity: async () => ({ status: "stale_calendar" })

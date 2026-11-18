@@ -52,6 +52,7 @@ export type StageDefinitionColorMutation = { status: "ok"; value: StageDefinitio
 export interface BusinessTarget { id: string; name: string; description: string | null; color: string;
   targetDate: string; operationalDate: string | null; displayOrder: number; version: number }
 export interface TargetInput { name: string; description: string | null; targetDate: string; color: string }
+export interface TargetCreateInput extends TargetInput { reason: string }
 export interface DateChange { operationId: string; changedAt: string;
   previousStart: string | null; previousEnd: string | null;
   newStart: string; newEnd: string; reason: string }
@@ -88,6 +89,7 @@ export type ProductChangeEventType = "product_created" | "schedule_imported" | "
 export interface ProductChangeHistoryCursor { occurredAt: string; eventId: string }
 export interface ProductChangeHistoryItem {
   kind: string; id: string; name: string | null;
+    operationId?: string;
   hierarchy?: { scope?: string; discipline?: string | null; stage?: string | null };
 }
 export interface ProductChangeEvent {
@@ -110,6 +112,7 @@ export type HierarchyItemKind = "activity" | "stage" | "discipline";
 export interface HierarchyMoveInput {
   kind: HierarchyItemKind;
   targetId: string;
+  reason: string;
   expectedVersion: number;
   destinationDisciplineId: string | null;
   destinationStageId: string | null;
@@ -131,8 +134,8 @@ export interface ScheduleRepository {
     operationId: string, kind: DeletionKind, targetId: string,
     fingerprint: string, reason: string): Promise<DeletionResult>;
   listStageDefinitions(workspaceId: string): Promise<StageDefinition[]>;
-  updateStageDefinitionColor(workspaceId: string, definitionId: string, expectedColor: string,
-    color: string): Promise<StageDefinitionColorMutation>;
+  updateStageDefinitionColor(workspaceId: string, definitionId: string, actorId: string,
+    expectedColor: string, color: string): Promise<StageDefinitionColorMutation>;
   productExists(workspaceId: string, productId: string, activeOnly: boolean): Promise<boolean>;
   disciplineExists(workspaceId: string, productId: string, disciplineId: string, activeOnly: boolean): Promise<boolean>;
   stageExists(workspaceId: string, productId: string, disciplineId: string, stageId: string, activeOnly: boolean): Promise<boolean>;
@@ -160,9 +163,10 @@ export interface ScheduleRepository {
     Promise<CalendarRescheduleHistoryResult>;
   listProductChangeHistory(workspaceId: string, productId: string, actorId: string, limit: number,
     cursor: ProductChangeHistoryCursor | null): Promise<ProductChangeHistoryResult>;
-  createActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null, actorId: string, input: ActivityInput): Promise<Mutation<Activity>>;
+  createActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
+    actorId: string, input: ActivityInput, reason: string | null, operationId: string): Promise<Mutation<Activity>>;
   createWorkingActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
-    actorId: string, input: WorkingActivityInput): Promise<Mutation<Activity>>;
+    actorId: string, input: WorkingActivityInput, reason: string, operationId: string): Promise<Mutation<Activity>>;
   updateActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null, activityId: string, actorId: string, input: ActivityMetadataInput, version: number): Promise<Mutation<Activity>>;
   changeActivityDates(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
     activityId: string, actorId: string, start: string, end: string, reason: string | null,
@@ -175,11 +179,12 @@ export interface ScheduleRepository {
     stageId: string | null, activityId: string): Promise<DateChange[]>;
   getHierarchy(workspaceId: string, productId: string): Promise<ScheduleHierarchy | null>;
   listTargets(workspaceId: string, productId: string): Promise<BusinessTarget[]>;
-  createTarget(workspaceId: string, productId: string, actorId: string, input: TargetInput): Promise<Mutation<BusinessTarget>>;
+  createTarget(workspaceId: string, productId: string, actorId: string,
+    input: TargetCreateInput, operationId: string): Promise<Mutation<BusinessTarget>>;
   updateTarget(workspaceId: string, productId: string, targetId: string, actorId: string,
     input: TargetInput, version: number, reason: string | null, operationId: string): Promise<Mutation<BusinessTarget>>;
   deleteTarget(workspaceId: string, productId: string, targetId: string, actorId: string,
-    version: number, operationId: string): Promise<Mutation<BusinessTarget>>;
+    version: number, operationId: string, reason: string): Promise<Mutation<BusinessTarget>>;
 }
 
 const text = (value: unknown) => String(value);
@@ -210,10 +215,12 @@ function productChangeEvent(value: unknown): ProductChangeEvent {
       ? jsonRecord(rawItem["hierarchy"]) : null;
     if (!rawItem || typeof rawItem["kind"] !== "string" || typeof rawItem["id"] !== "string" ||
         (rawItem["name"] !== null && typeof rawItem["name"] !== "string") ||
+          (rawItem["operationId"] !== undefined && typeof rawItem["operationId"] !== "string") ||
         (rawItem["hierarchy"] !== undefined && !rawHierarchy) ||
         (rawHierarchy?.["scope"] !== undefined && typeof rawHierarchy["scope"] !== "string"))
       throw new Error("Invalid product change history item.");
-    item = { kind: rawItem["kind"], id: rawItem["id"], name: rawItem["name"] as string | null,
+      item = { kind: rawItem["kind"], id: rawItem["id"], name: rawItem["name"] as string | null,
+        ...(rawItem["operationId"] === undefined ? {} : { operationId: rawItem["operationId"] as string }),
       ...(rawHierarchy ? { hierarchy: {
         ...(rawHierarchy["scope"] === undefined ? {} : { scope: rawHierarchy["scope"] as string }),
         ...(rawHierarchy["discipline"] === undefined ? {} : { discipline: nullable(rawHierarchy["discipline"]) }),
@@ -483,12 +490,19 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
 
   return {
     async moveHierarchyItem(ws, productId, actorId, operationId, input) {
-      const rows = await sql`SELECT public.move_schedule_item(
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'hierarchy_moved', true),
+          set_config('jlproject.schedule_justification', ${input.reason}, true)
+      )
+      SELECT public.move_schedule_item(
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
         ${input.kind}, ${input.targetId}::uuid, ${input.expectedVersion}::bigint,
         ${input.destinationDisciplineId}::uuid, ${input.destinationStageId}::uuid,
         ${input.destinationIndex}, ${JSON.stringify(input.expectedSourceOrder)}::jsonb,
-        ${JSON.stringify(input.expectedDestinationOrder)}::jsonb) AS result`;
+        ${JSON.stringify(input.expectedDestinationOrder)}::jsonb) AS result
+      FROM schedule_context`;
       const result = rows[0]?.["result"] as { status?: string; version?: number } | undefined;
       if (!result || !["moved", "unchanged", "not_found", "invalid", "forbidden", "stale",
         "conflict", "duplicate"].includes(result.status ?? ""))
@@ -511,9 +525,16 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       throw new Error("Unexpected deletion preview result.");
     },
     async deleteSubtree(ws, productId, actorId, operationId, kind, targetId, fingerprint, reason) {
-      const rows = await sql`SELECT public.delete_schedule_subtree(
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'schedule_deleted', true),
+          set_config('jlproject.schedule_justification', ${reason}, true)
+      )
+      SELECT public.delete_schedule_subtree(
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
-        ${kind}, ${targetId}::uuid, ${fingerprint}, ${reason}) AS result`;
+        ${kind}, ${targetId}::uuid, ${fingerprint}, ${reason}) AS result
+      FROM schedule_context`;
       const result = rows[0]?.["result"] as DeletionResult | undefined;
       if (result?.status === "deleted") return { status: "deleted", operationId, counts: result.counts };
       if (result && ["not_found", "invalid", "forbidden", "stale"].includes(result.status))
@@ -525,12 +546,17 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         WHERE workspace_id = ${ws}::uuid ORDER BY lower(code), id`;
       return rows.map((row) => ({ id: text(row["id"]), code: text(row["code"]), color: text(row["color"]) }));
     },
-    async updateStageDefinitionColor(ws, definitionId, expectedColor, color) {
-      const rows = await sql`UPDATE public.stage_definitions
+    async updateStageDefinitionColor(ws, definitionId, actorId, expectedColor, color) {
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_type', 'stage_definition_color_changed', true)
+      )
+      UPDATE public.stage_definitions AS definition
         SET color = ${color}
-        WHERE workspace_id = ${ws}::uuid AND id = ${definitionId}::uuid
-          AND upper(color) = upper(${expectedColor})
-        RETURNING id::text AS id, code, color`;
+        FROM schedule_context
+        WHERE definition.workspace_id = ${ws}::uuid AND definition.id = ${definitionId}::uuid
+          AND upper(definition.color) = upper(${expectedColor})
+        RETURNING definition.id::text AS id, definition.code, definition.color`;
       if (rows[0]) return { status: "ok", value: {
         id: text(rows[0]["id"]), code: text(rows[0]["code"]), color: text(rows[0]["color"])
       } };
@@ -586,11 +612,18 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       return stageCreateResult(ws, productId, disciplineId, input, result);
     },
     async createStageWithDates(ws, productId, disciplineId, actorId, input, dates) {
-      const rows = await sql`SELECT public.create_discipline_stage_with_dates(
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${dates.operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'stage_created_with_dates', true),
+          set_config('jlproject.schedule_justification', ${dates.reason}, true)
+      )
+      SELECT public.create_discipline_stage_with_dates(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${actorId}::uuid,
         ${dates.operationId}::uuid, ${input.code}, ${input.color}, ${input.displayName},
         ${input.displayOrder}, ${dates.plannedStart}::date, ${dates.plannedEnd}::date,
-        ${dates.reason}) AS result`;
+        ${dates.reason}) AS result
+      FROM schedule_context`;
       return stageCreateResult(ws, productId, disciplineId, input, text(rows[0]?.["result"]), dates.operationId);
     },
     async updateStage(ws, productId, disciplineId, stageId, actorId, input, version) {
@@ -604,10 +637,17 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       return value ? { status: "ok", value } : { status: "not_found" };
     },
     async changeStageDates(ws, productId, disciplineId, stageId, actorId, input, version, operationId) {
-      const rows = await sql`SELECT public.change_discipline_stage_dates(
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'stage_dates_changed', true),
+          set_config('jlproject.schedule_justification', ${input.reason}, true)
+      )
+      SELECT public.change_discipline_stage_dates(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${actorId}::uuid, ${operationId}::uuid, ${input.plannedStart}::date,
-        ${input.plannedEnd}::date, ${input.reason}, ${version}::bigint) AS result`;
+        ${input.plannedEnd}::date, ${input.reason}, ${version}::bigint) AS result
+      FROM schedule_context`;
       const result = rows[0]?.["result"] as { status?: string } | undefined;
       if (!result || !["updated", "unchanged", "not_found", "stale", "invalid", "forbidden"]
         .includes(result.status ?? "")) throw new Error("Unexpected stage date change result.");
@@ -640,9 +680,16 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       }));
     },
     async applyCalendarReschedule(ws, productId, actorId, operationId, calendarVersion, reason, proposals) {
-      const rows = await sql`SELECT public.apply_calendar_reschedule(
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'calendar_rescheduled', true),
+          set_config('jlproject.schedule_justification', ${reason}, true)
+      )
+      SELECT public.apply_calendar_reschedule(
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
-        ${calendarVersion}::bigint, ${reason}, ${JSON.stringify(proposals)}::jsonb) AS result`;
+        ${calendarVersion}::bigint, ${reason}, ${JSON.stringify(proposals)}::jsonb) AS result
+      FROM schedule_context`;
       const result = rows[0]?.["result"] as { status?: string; count?: number } | undefined;
       if (result?.status === "updated" && result.count === proposals.length)
         return { status: "updated", count: result.count, operationId };
@@ -651,9 +698,17 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       throw new Error("Unexpected calendar reschedule result.");
     },
     async reverseCalendarReschedule(ws, productId, actorId, originalOperationId, operationId, reason) {
-      const rows = await sql`SELECT public.reverse_calendar_reschedule(
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'calendar_reschedule_reversed', true),
+          set_config('jlproject.schedule_justification', ${reason}, true),
+          set_config('jlproject.schedule_reversal_of', ${originalOperationId}, true)
+      )
+      SELECT public.reverse_calendar_reschedule(
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid,
-        ${originalOperationId}::uuid, ${operationId}::uuid, ${reason}) AS result`;
+        ${originalOperationId}::uuid, ${operationId}::uuid, ${reason}) AS result
+      FROM schedule_context`;
       const result = rows[0]?.["result"] as { status?: string; count?: number; activityId?: string } | undefined;
       if (result?.status === "reversed" && Number.isSafeInteger(result.count) && Number(result.count) > 0)
         return { status: "reversed", count: Number(result.count), operationId, originalOperationId };
@@ -782,10 +837,16 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       return { status: "ok", events: events.map((event) => ({ ...event,
         actorName: actorNames.get(event.actorId) ?? null })), nextCursor };
     },
-    async createActivity(ws, productId, disciplineId, stageId, actorId, input) {
-      const rows = await sql`WITH locked_product AS MATERIALIZED (
-        SELECT workspace_id, id FROM public.products
-        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+    async createActivity(ws, productId, disciplineId, stageId, actorId, input, reason, operationId) {
+      const hasDates = input.plannedStart !== null || input.plannedEnd !== null;
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', ${hasDates ? "activity_created_with_dates" : "activity_created"}, true),
+          set_config('jlproject.schedule_justification', ${reason ?? ""}, true)
+      ), locked_product AS MATERIALIZED (
+        SELECT product.workspace_id, product.id FROM public.products AS product, schedule_context
+        WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
         FOR UPDATE
       )
       INSERT INTO public.stage_activities
@@ -806,12 +867,17 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       const value = await findActivity(ws, productId, disciplineId, stageId, text(rows[0]["id"]));
       return value ? { status: "ok", value } : { status: "not_found" };
     },
-    async createWorkingActivity(ws, productId, disciplineId, stageId, actorId, input) {
-      const rows = await sql`WITH created AS MATERIALIZED (SELECT public.create_activity_with_working_plan(
+    async createWorkingActivity(ws, productId, disciplineId, stageId, actorId, input, reason, operationId) {
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'activity_created_with_dates', true),
+          set_config('jlproject.schedule_justification', ${reason}, true)
+      ), created AS MATERIALIZED (SELECT public.create_activity_with_working_plan(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${actorId}::uuid, ${input.name}, ${input.activityType}, ${input.plannedStart}::date,
         ${input.plannedEnd}::date, ${input.displayOrder}, ${input.notes},
-        ${input.workingDays}, ${input.calendarVersion}::bigint) AS result),
+        ${input.workingDays}, ${input.calendarVersion}::bigint) AS result FROM schedule_context),
       colored AS (
         UPDATE public.stage_activities AS a SET color_override = ${input.colorOverride ?? null}
         FROM created AS c
@@ -854,16 +920,21 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     async changeActivityDates(ws, productId, disciplineId, stageId, activityId, actorId,
       start, end, reason, version, operationId) {
-      const rows = await sql`WITH locked_product AS MATERIALIZED (
-        SELECT id FROM public.products
-        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
-        FOR UPDATE
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'activity_dates_changed', true),
+          set_config('jlproject.schedule_justification', ${reason}, true)
+      ), locked_product AS MATERIALIZED (
+        SELECT product.id FROM public.products AS product, schedule_context
+        WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
+        FOR UPDATE OF product
       )
       SELECT public.change_activity_dates(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${activityId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
         ${start}::date, ${end}::date, ${reason}, ${version}::bigint) AS result
-      FROM locked_product`;
+      FROM locked_product, schedule_context`;
       if (!rows[0]) return { status: "not_found" };
       const result = rows[0]?.["result"] as { status?: string } | undefined;
       if (!result || !["updated", "unchanged", "not_found", "stale", "invalid", "forbidden"].includes(result.status ?? ""))
@@ -875,17 +946,22 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     async changeActivityWorkingPlan(ws, productId, disciplineId, stageId, activityId, actorId,
       start, end, workingDays, calendarVersion, reason, version, operationId) {
-      const rows = await sql`WITH locked_product AS MATERIALIZED (
-        SELECT id FROM public.products
-        WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
-        FOR UPDATE
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'activity_working_plan_changed', true),
+          set_config('jlproject.schedule_justification', ${reason}, true)
+      ), locked_product AS MATERIALIZED (
+        SELECT product.id FROM public.products AS product, schedule_context
+        WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
+        FOR UPDATE OF product
       )
       SELECT public.change_activity_planning(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${activityId}::uuid, ${actorId}::uuid, ${operationId}::uuid, 'working_days',
         ${start}::date, ${end}::date, ${workingDays}, ${calendarVersion}::bigint,
         ${reason}, ${version}::bigint) AS result
-      FROM locked_product`;
+      FROM locked_product, schedule_context`;
       if (!rows[0]) return { status: "not_found" };
       const result = rows[0]?.["result"] as { status?: string } | undefined;
       if (!result || !["updated", "unchanged", "not_found", "stale", "stale_calendar", "invalid", "forbidden"].includes(result.status ?? ""))
@@ -966,11 +1042,16 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         targetDate: text(row["targetDate"]), operationalDate: nullable(row["operationalDate"]),
         displayOrder: Number(row["displayOrder"]), version: Number(row["version"]) }));
     },
-    async createTarget(ws, productId, actorId, input) {
+    async createTarget(ws, productId, actorId, input, operationId) {
       try {
-        const rows = await sql`WITH locked_product AS MATERIALIZED (
-          SELECT workspace_id, id FROM public.products
-          WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
+        const rows = await sql`WITH schedule_context AS MATERIALIZED (
+          SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+            set_config('jlproject.schedule_operation_id', ${operationId}, true),
+            set_config('jlproject.schedule_operation_type', 'business_target_created', true),
+            set_config('jlproject.schedule_justification', ${input.reason}, true)
+        ), locked_product AS MATERIALIZED (
+          SELECT product.workspace_id, product.id FROM public.products AS product, schedule_context
+          WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
           FOR UPDATE
         )
         INSERT INTO public.business_targets
@@ -990,16 +1071,21 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     async updateTarget(ws, productId, targetId, actorId, input, version, reason, operationId) {
       let rows;
       try {
-        rows = await sql`WITH locked_product AS MATERIALIZED (
-          SELECT id FROM public.products
-          WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
-          FOR UPDATE
+        rows = await sql`WITH schedule_context AS MATERIALIZED (
+          SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+            set_config('jlproject.schedule_operation_id', ${operationId}, true),
+            set_config('jlproject.schedule_operation_type', 'business_target_updated', true),
+            set_config('jlproject.schedule_justification', ${reason ?? ""}, true)
+        ), locked_product AS MATERIALIZED (
+          SELECT product.id FROM public.products AS product, schedule_context
+          WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
+          FOR UPDATE OF product
         )
         SELECT public.update_business_target(
           ${ws}::uuid, ${productId}::uuid, ${targetId}::uuid, ${actorId}::uuid,
           ${operationId}::uuid, ${input.name}, ${input.description}, ${input.color},
           ${input.targetDate}::date, ${version}::bigint, ${reason}) AS result
-        FROM locked_product`;
+        FROM locked_product, schedule_context`;
       } catch (error) { if (duplicate(error)) return { status: "duplicate" }; throw error; }
       if (!rows[0]) return { status: "not_found" };
       const result = text(rows[0]?.["result"]);
@@ -1007,16 +1093,21 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       const value = (await this.listTargets(ws, productId)).find((target) => target.id === targetId);
       return value ? { status: "ok", value } : { status: "not_found" };
     },
-    async deleteTarget(ws, productId, targetId, actorId, version, operationId) {
-      const rows = await sql`WITH locked_product AS MATERIALIZED (
+    async deleteTarget(ws, productId, targetId, actorId, version, operationId, reason) {
+      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+        SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+          set_config('jlproject.schedule_operation_id', ${operationId}, true),
+          set_config('jlproject.schedule_operation_type', 'business_target_deleted', true),
+          set_config('jlproject.schedule_justification', ${reason}, true)
+      ), locked_product AS MATERIALIZED (
         SELECT id FROM public.products
         WHERE workspace_id = ${ws}::uuid AND id = ${productId}::uuid AND active = true
         FOR UPDATE
       )
-      SELECT public.delete_business_target(
+      SELECT public.delete_business_target_with_reason(
         ${ws}::uuid, ${productId}::uuid, ${targetId}::uuid, ${actorId}::uuid,
-        ${operationId}::uuid, ${version}::bigint) AS result
-      FROM locked_product`;
+        ${operationId}::uuid, ${version}::bigint, ${reason}) AS result
+      FROM locked_product, schedule_context`;
       if (!rows[0]) return { status: "not_found" };
       const result = text(rows[0]?.["result"]);
       return result === "deleted" ? { status: "ok", value: { id: targetId } as BusinessTarget }

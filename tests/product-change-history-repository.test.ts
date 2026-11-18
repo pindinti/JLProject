@@ -103,23 +103,38 @@ describe("product change history repository", () => {
     expect(sql).toHaveBeenCalledTimes(1);
   });
 
-  it("maps stage date events from the existing product feed and preserves its keyset cursor", async () => {
-    const stageEvent = { ...event("stage-date:a5555555-5555-4555-8555-555555555555",
+  it("preserves exact stage-event IDs and their shared operation group", async () => {
+    const operationId = "b5555555-5555-4555-8555-555555555555";
+    const firstStageId = "a5555555-5555-4555-8555-555555555555";
+    const secondStageId = "c5555555-5555-4555-8555-555555555555";
+    const firstStageEvent = { ...event(`stage-date:${firstStageId}`,
       occurredAt, "stage_dates_changed"), item: { kind: "stage", id: "a5555555-5555-4555-8555-555555555555",
-      name: "Synthetic stage", hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage" } },
+      name: "Synthetic stage A", operationId,
+      hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage A" } },
       before: { plannedStart: null, plannedEnd: null },
       after: { plannedStart: "2026-11-01", plannedEnd: null } };
-    sql.mockResolvedValueOnce([{ result: { status: "ok", events: [stageEvent],
-      nextCursor: { occurredAt, eventId: stageEvent.id } } }])
+    const secondStageEvent = { ...event(`stage-date:${secondStageId}`,
+      "2026-11-10T11:59:00.000000Z", "stage_dates_changed"), item: { kind: "stage", id: secondStageId,
+      name: "Synthetic stage B", operationId,
+      hierarchy: { discipline: "Synthetic discipline", stage: "Synthetic stage B" } },
+      before: { plannedStart: null, plannedEnd: null },
+      after: { plannedStart: null, plannedEnd: "2026-11-05" } };
+    sql.mockResolvedValueOnce([{ result: { status: "ok", events: [firstStageEvent, secondStageEvent],
+      nextCursor: { occurredAt: secondStageEvent.occurredAt, eventId: secondStageEvent.id } } }])
       .mockResolvedValueOnce([{ id: actorId, name: "Synthetic actor" }]);
 
     const result = await createScheduleRepository({ DATABASE_URL: "postgresql://example.invalid" })
-      .listProductChangeHistory(workspaceId, productId, actorId, 1, null);
+      .listProductChangeHistory(workspaceId, productId, actorId, 2, null);
 
-    expect(result).toMatchObject({ status: "ok", events: [{ id: stageEvent.id,
-      eventType: "stage_dates_changed", item: { kind: "stage", name: "Synthetic stage" },
-      before: { plannedStart: null }, after: { plannedStart: "2026-11-01" },
-      actorName: "Synthetic actor" }], nextCursor: { occurredAt, eventId: stageEvent.id } });
+    expect(result).toMatchObject({ status: "ok", events: [
+      { id: firstStageEvent.id, eventType: "stage_dates_changed",
+        item: { kind: "stage", id: firstStageId, name: "Synthetic stage A", operationId },
+        before: { plannedStart: null }, after: { plannedStart: "2026-11-01" },
+        actorName: "Synthetic actor" },
+      { id: secondStageEvent.id, eventType: "stage_dates_changed",
+        item: { kind: "stage", id: secondStageId, name: "Synthetic stage B", operationId },
+        before: { plannedEnd: null }, after: { plannedEnd: "2026-11-05" } }
+    ], nextCursor: { occurredAt: secondStageEvent.occurredAt, eventId: secondStageEvent.id } });
     const query = sql.mock.calls[0]?.[0] as TemplateStringsArray;
     expect(query.join("?")).toContain("list_product_change_history");
     expect(query.join("?")).not.toContain("list_stage_date_change_history");

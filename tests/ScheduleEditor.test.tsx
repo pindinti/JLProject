@@ -7,6 +7,11 @@ import { readRecentCustomColors } from "../src/recent-color-history";
 
 const api = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../src/auth", () => ({ authenticatedFetch: api.fetch }));
+const moveReason = "Synthetic hierarchy movement reason";
+
+function enterMoveReason(dialog: HTMLElement) {
+  fireEvent.change(within(dialog).getByLabelText("Justificativa"), { target: { value: moveReason } });
+}
 
 const workspace = { id: "e97c159e-3f7b-4e27-8b1e-38036bf47a3f", name: "JLProject", role: "admin" as const };
 const userId = "synthetic-user";
@@ -157,9 +162,13 @@ describe("schedule editor", () => {
     expect(firstRow).toHaveClass("drop-before");
     expect(screen.getByText("Soltar antes de Synthetic activity.")).toBeInTheDocument();
     fireEvent.drop(firstRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
+    const moveDialog = await screen.findByRole("dialog", { name: "Mover atividade" });
+    enterMoveReason(moveDialog);
+    fireEvent.click(within(moveDialog).getByRole("button", { name: "Mover atividade" }));
     await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(1));
     const call = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
     expect(JSON.parse(call[1]?.body as string)).toEqual({ kind: "activity", targetId: secondActivity.id,
+      reason: moveReason,
       expectedVersion: secondActivity.version, destinationDisciplineId: discipline.id, destinationStageId: stage.id,
       destinationIndex: 0, expectedSourceOrder: [activity.id, secondActivity.id],
       expectedDestinationOrder: [activity.id, secondActivity.id] });
@@ -191,10 +200,12 @@ describe("schedule editor", () => {
     const dialog = screen.getByRole("dialog", { name: "Mover atividade" });
     fireEvent.change(within(dialog).getByLabelText("Destino"), { target: { value: emptyStage.id } });
     fireEvent.change(within(dialog).getByLabelText("Posição"), { target: { value: "start" } });
+    enterMoveReason(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "Mover atividade" }));
     await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/hierarchy/moves"))).toBe(true));
     const call = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
     expect(JSON.parse(call[1]?.body as string)).toEqual({ kind: "activity", targetId: activity.id,
+      reason: moveReason,
       expectedVersion: activity.version, destinationDisciplineId: discipline.id, destinationStageId: emptyStage.id,
       destinationIndex: 0, expectedSourceOrder: [activity.id, secondActivity.id], expectedDestinationOrder: [] });
   });
@@ -215,9 +226,13 @@ describe("schedule editor", () => {
     expect(within(productRow).getByText("Solte aqui para colocar em Atividades de Produto")).toBeInTheDocument();
     expect(screen.getByText("Soltar no fim de Atividades de Produto.")).toBeInTheDocument();
     fireEvent.drop(productRow, { clientY: 0, dataTransfer: { dropEffect: "" } });
+    const dialog = await screen.findByRole("dialog", { name: "Mover atividade" });
+    enterMoveReason(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mover atividade" }));
     await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/hierarchy/moves"))).toBe(true));
     const call = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
     expect(JSON.parse(call[1]?.body as string)).toEqual({ kind: "activity", targetId: activity.id,
+      reason: moveReason,
       expectedVersion: activity.version, destinationDisciplineId: null, destinationStageId: null,
       destinationIndex: 0, expectedSourceOrder: [activity.id], expectedDestinationOrder: [] });
   });
@@ -241,6 +256,7 @@ describe("schedule editor", () => {
     fireEvent.click(screen.getByRole("button", { name: /Mover atividade: Second activity/ }));
     const dialog = screen.getByRole("dialog", { name: "Mover atividade" });
     const form = dialog.querySelector("form")!;
+    enterMoveReason(dialog);
     act(() => { fireEvent.submit(form); fireEvent.submit(form); });
     await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(1));
     expect(within(dialog).getByRole("button", { name: "Movendo atividade…" })).toBeDisabled();
@@ -263,6 +279,7 @@ describe("schedule editor", () => {
     const handle = screen.getByRole("button", { name: /Mover atividade: Synthetic activity/ });
     fireEvent.click(handle);
     const dialog = screen.getByRole("dialog", { name: "Mover atividade" });
+    enterMoveReason(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "Mover atividade" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("A ordem do cronograma mudou. Atualize os dados e tente novamente.");
     expect(screen.getByRole("button", { name: "Synthetic activity" }).closest(".workspace-table-row")).toBeInTheDocument();
@@ -287,9 +304,13 @@ describe("schedule editor", () => {
     fireEvent.dragOver(firstRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
     expect(firstRow).toHaveClass("drop-before");
     fireEvent.drop(firstRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
+    const dialog = await screen.findByRole("dialog", { name: "Mover etapa" });
+    enterMoveReason(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mover etapa" }));
     await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/hierarchy/moves"))).toBe(true));
     const moveCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
     expect(JSON.parse(moveCall[1]?.body as string)).toEqual({ kind: "stage", targetId: emptyStage.id,
+      reason: moveReason,
       expectedVersion: emptyStage.version, destinationDisciplineId: discipline.id, destinationStageId: null,
       destinationIndex: 0, expectedSourceOrder: [stage.id, emptyStage.id],
       expectedDestinationOrder: [stage.id, emptyStage.id] });
@@ -321,9 +342,13 @@ describe("schedule editor", () => {
     expect(destinationRow).toHaveClass("drop-append");
     expect(within(destinationRow).getByText("Solte aqui para mover a etapa para esta disciplina")).toBeInTheDocument();
     fireEvent.drop(destinationRow, { clientY: 0, dataTransfer: { dropEffect: "" } });
+    const moveDialog = await screen.findByRole("dialog", { name: "Mover etapa" });
+    enterMoveReason(moveDialog);
+    fireEvent.click(within(moveDialog).getByRole("button", { name: "Mover etapa" }));
     await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(1));
     const moveCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
     expect(JSON.parse(moveCall[1]?.body as string)).toEqual({ kind: "stage", targetId: stage.id,
+      reason: moveReason,
       expectedVersion: stage.version, destinationDisciplineId: destinationDiscipline.id, destinationStageId: null,
       destinationIndex: 0, expectedSourceOrder: [stage.id, emptyStage.id], expectedDestinationOrder: [] });
     expect(container.querySelector(`[data-row-key="stage:${stage.id}"]`)).toBeInTheDocument();
@@ -358,20 +383,24 @@ describe("schedule editor", () => {
     const stageDialog = screen.getByRole("dialog", { name: "Mover etapa" });
     fireEvent.change(within(stageDialog).getByLabelText("Disciplina de destino"), { target: { value: destinationDiscipline.id } });
     fireEvent.change(within(stageDialog).getByLabelText("Posição"), { target: { value: "start" } });
+    enterMoveReason(stageDialog);
     fireEvent.click(within(stageDialog).getByRole("button", { name: "Mover etapa" }));
     await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(1));
     const stageMove = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
     expect(JSON.parse(stageMove[1]?.body as string)).toEqual({ kind: "stage", targetId: emptyStage.id,
+      reason: moveReason,
       expectedVersion: emptyStage.version, destinationDisciplineId: destinationDiscipline.id, destinationStageId: null,
       destinationIndex: 0, expectedSourceOrder: [stage.id, emptyStage.id], expectedDestinationOrder: [] });
 
     fireEvent.click(screen.getByRole("button", { name: /Mover disciplina: Synthetic discipline/ }));
     const disciplineDialog = screen.getByRole("dialog", { name: "Mover disciplina" });
     fireEvent.change(within(disciplineDialog).getByLabelText("Posição"), { target: { value: "end" } });
+    enterMoveReason(disciplineDialog);
     fireEvent.click(within(disciplineDialog).getByRole("button", { name: "Mover disciplina" }));
     await waitFor(() => expect(api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))).toHaveLength(2));
     const disciplineMove = api.fetch.mock.calls.filter(([path]) => String(path).endsWith("/hierarchy/moves"))[1]!;
     expect(JSON.parse(disciplineMove[1]?.body as string)).toEqual({ kind: "discipline", targetId: discipline.id,
+      reason: moveReason,
       expectedVersion: discipline.version, destinationDisciplineId: null, destinationStageId: null,
       destinationIndex: 1, expectedSourceOrder: [discipline.id, destinationDiscipline.id],
       expectedDestinationOrder: [discipline.id, destinationDiscipline.id] });
@@ -390,9 +419,13 @@ describe("schedule editor", () => {
     expect(targetRow).toHaveClass("drop-before");
     expect(screen.getByText("Soltar disciplina antes de Synthetic discipline.")).toBeInTheDocument();
     fireEvent.drop(targetRow, { clientY: -1, dataTransfer: { dropEffect: "" } });
+    const dialog = await screen.findByRole("dialog", { name: "Mover disciplina" });
+    enterMoveReason(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mover disciplina" }));
     await waitFor(() => expect(api.fetch.mock.calls.some(([path]) => String(path).endsWith("/hierarchy/moves"))).toBe(true));
     const moveCall = api.fetch.mock.calls.find(([path]) => String(path).endsWith("/hierarchy/moves"))!;
     expect(JSON.parse(moveCall[1]?.body as string)).toEqual({ kind: "discipline", targetId: destinationDiscipline.id,
+      reason: moveReason,
       expectedVersion: destinationDiscipline.version, destinationDisciplineId: null, destinationStageId: null,
       destinationIndex: 0, expectedSourceOrder: [discipline.id, destinationDiscipline.id],
       expectedDestinationOrder: [discipline.id, destinationDiscipline.id] });
@@ -414,6 +447,7 @@ describe("schedule editor", () => {
       .map((row) => row.getAttribute("data-row-key"));
     fireEvent.click(screen.getByRole("button", { name: /Mover disciplina: Synthetic discipline/ }));
     const dialog = screen.getByRole("dialog", { name: "Mover disciplina" });
+    enterMoveReason(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "Mover disciplina" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("A ordem do cronograma mudou. Atualize os dados e tente novamente.");
     expect(Array.from(container.querySelectorAll(".workspace-table-row.row-discipline"))
@@ -1349,6 +1383,9 @@ describe("schedule editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Informe as duas datas");
     fireEvent.change(screen.getByLabelText("Início planejado"), { target: { value: "01/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Justificativa do planejamento de datas"), {
+      target: { value: "Planejamento inicial da atividade" }
+    });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
       expect.stringContaining(`/stages/${stage.id}/activities`),
@@ -1374,6 +1411,9 @@ describe("schedule editor", () => {
     fireEvent.change(screen.getByLabelText("Duração em dias úteis"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Calcular término" }));
     expect(await screen.findByText("10/11/2026")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Justificativa do planejamento de datas"), {
+      target: { value: "Plano inicial da atividade" }
+    });
     expect(screen.getByText(/1 dia\(s\) não útil\(eis\) considerado\(s\)/)).toBeInTheDocument();
     expect(screen.getByText(/07\/11\/2026/)).toBeInTheDocument();
     expect(api.fetch.mock.calls.some(([path, options]) => String(path).endsWith(`/stages/${stage.id}/activities`) && options?.method === "POST"))
@@ -1383,7 +1423,8 @@ describe("schedule editor", () => {
       expect.stringContaining(`/stages/${stage.id}/activities`),
       expect.objectContaining({ method: "POST", body: JSON.stringify({
         name: "Synthetic working activity", activityType: null, displayOrder: 0, notes: null,
-        planningMode: "working_days", plannedStart: "2026-11-06", workingDays: 2, calendarVersion: 7
+        planningMode: "working_days", plannedStart: "2026-11-06", workingDays: 2, calendarVersion: 7,
+        reason: "Plano inicial da atividade"
       }) })
     ));
   });
@@ -1681,13 +1722,17 @@ describe("schedule editor", () => {
     fireEvent.change(screen.getByLabelText("Nome da atividade"), { target: { value: "New root activity" } });
     fireEvent.change(container.querySelector("#activity-start")!, { target: { value: "11/11/2026" } });
     fireEvent.change(container.querySelector("#activity-end")!, { target: { value: "13/11/2026" } });
+    fireEvent.change(screen.getByLabelText("Justificativa do planejamento de datas"), {
+      target: { value: "Planejamento inicial da atividade raiz" }
+    });
     fireEvent.change(container.querySelector("#activity-color")!, { target: { value: "#123ABC" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
       `/api/workspaces/${workspace.id}/products/${product.id}/root-activities`,
       expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "New root activity", activityType: null,
         displayOrder: 0, notes: null, colorOverride: "#123ABC", planningMode: "manual",
-        plannedStart: "2026-11-11", plannedEnd: "2026-11-13" }) })
+        plannedStart: "2026-11-11", plannedEnd: "2026-11-13",
+        reason: "Planejamento inicial da atividade raiz" }) })
     ));
     expect(readRecentCustomColors(userId)).toEqual(["#123ABC"]);
     expect(await screen.findByText(/New root activity/, { selector: ".workspace-row-name" })).toBeInTheDocument();
@@ -1766,12 +1811,16 @@ describe("schedule editor", () => {
     fireEvent.change(container.querySelector("#activity-working-days")!, { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: /Calcular/ }));
     expect(await screen.findByText("10/11/2026")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Justificativa do planejamento de datas"), {
+      target: { value: "Plano inicial da atividade raiz" }
+    });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
     await waitFor(() => expect(api.fetch).toHaveBeenCalledWith(
       `/api/workspaces/${workspace.id}/products/${product.id}/root-activities`,
       expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Root working activity", activityType: null,
         displayOrder: 0, notes: null, colorOverride: null, planningMode: "working_days",
-        plannedStart: "2026-11-06", workingDays: 2, calendarVersion: 7 }) })
+        plannedStart: "2026-11-06", workingDays: 2, calendarVersion: 7,
+        reason: "Plano inicial da atividade raiz" }) })
     ));
   });
 

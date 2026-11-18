@@ -203,7 +203,8 @@ export async function handleRequest(
         const input = await parseStageDefinitionColor(request);
         if (!input) return privateResponse({ error: "Cor inválida." }, 400);
         const result = await scheduleRepositoryFactory(environment).updateStageDefinitionColor(
-          membership.workspaceId, definitionId.toLowerCase(), input.expectedColor, input.color);
+          membership.workspaceId, definitionId.toLowerCase(), identity.subject,
+          input.expectedColor, input.color);
         if (result.status === "not_found") return privateResponse({ error: "Definição de etapa não encontrada." }, 404);
         if (result.status === "stale") return privateResponse({ error: "A cor foi alterada. Atualize os dados e tente novamente." }, 409);
         return privateResponse({ stageDefinition: result.value }, 200);

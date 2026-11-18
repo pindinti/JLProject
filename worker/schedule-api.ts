@@ -7,7 +7,7 @@ import type { WorkerEnvironment } from "./database";
 import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
   type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type HierarchyMoveInput, type Mutation,
   type ProductChangeHistoryCursor, type ScheduleRepository, type StageCreateMutation, type StageDateInput,
-  type StageInput } from "./schedule-repository";
+  type StageInput, type TargetInput } from "./schedule-repository";
 
 const prefix = /^\/api\/workspaces\/([^/]+)\/products\/([^/]+)\/(hierarchy|calendar-impact|calendar-reschedules|change-history|targets|disciplines|root-activities)(?:\/(.*))?$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -134,7 +134,7 @@ const optional = (value: unknown, max: number): string | null | undefined => {
 
 function hierarchyMoveInput(value: Record<string, unknown>): HierarchyMoveInput | null {
   if (!only(value, ["kind", "targetId", "expectedVersion", "destinationDisciplineId",
-    "destinationStageId", "destinationIndex", "expectedSourceOrder", "expectedDestinationOrder"])) return null;
+    "destinationStageId", "destinationIndex", "expectedSourceOrder", "expectedDestinationOrder", "reason"])) return null;
   const kind = value["kind"];
   const targetId = value["targetId"];
   const expectedVersion = value["expectedVersion"];
@@ -143,10 +143,12 @@ function hierarchyMoveInput(value: Record<string, unknown>): HierarchyMoveInput 
   const destinationIndex = value["destinationIndex"];
   const expectedSourceOrder = value["expectedSourceOrder"];
   const expectedDestinationOrder = value["expectedDestinationOrder"];
+  const reason = label(value["reason"], 2000);
   if ((kind !== "activity" && kind !== "stage" && kind !== "discipline") ||
       typeof targetId !== "string" || !uuid.test(targetId) ||
       !Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 1 ||
       !Number.isSafeInteger(destinationIndex) || Number(destinationIndex) < 0 ||
+      !reason || reason.length < 10 ||
       (destinationDisciplineId !== null &&
         (typeof destinationDisciplineId !== "string" || !uuid.test(destinationDisciplineId))) ||
       (destinationStageId !== null &&
@@ -161,7 +163,7 @@ function hierarchyMoveInput(value: Record<string, unknown>): HierarchyMoveInput 
   if (kind === "discipline" && (destinationDisciplineId !== null || destinationStageId !== null) ||
       kind === "stage" && (destinationDisciplineId === null || destinationStageId !== null) ||
       kind === "activity" && ((destinationDisciplineId === null) !== (destinationStageId === null))) return null;
-  return { kind, targetId: targetId.toLowerCase(), expectedVersion: Number(expectedVersion),
+  return { kind, targetId: targetId.toLowerCase(), reason, expectedVersion: Number(expectedVersion),
     destinationDisciplineId: destinationDisciplineId?.toLowerCase() ?? null,
     destinationStageId: destinationStageId?.toLowerCase() ?? null,
     destinationIndex: Number(destinationIndex),
@@ -252,9 +254,9 @@ function stageDateChangeInput(value: Record<string, unknown>):
 }
 function activityInput(value: Record<string, unknown>, editing: boolean, allowColorOnCreate = false):
   { input: ActivityInput | ActivityMetadataInput; version?: number;
-    workingPlan?: { start: string; duration: number; calendarVersion: number } } | null {
+    workingPlan?: { start: string; duration: number; calendarVersion: number }; reason?: string | null } | null {
   const keys = ["name", "activityType", "displayOrder", "notes", ...(editing || allowColorOnCreate ? ["colorOverride"] : []),
-    ...(editing ? ["version"] : ["plannedStart", "plannedEnd", "planningMode", "workingDays", "calendarVersion"])];
+    ...(editing ? ["version"] : ["plannedStart", "plannedEnd", "planningMode", "workingDays", "calendarVersion", "reason"])];
   if (!only(value, keys)) return null;
   const name = label(value["name"], 300);
   const activityType = optional(value["activityType"], 80);
@@ -268,6 +270,9 @@ function activityInput(value: Record<string, unknown>, editing: boolean, allowCo
     ...( (editing || allowColorOnCreate) && colorOverride !== undefined
       ? { colorOverride: colorOverride === null ? null : String(colorOverride).toUpperCase() } : {}) };
   if (editing) return { input: metadata, version: value["version"] as number };
+  const rawReason = value["reason"];
+  const reason = rawReason === undefined || rawReason === null || rawReason === "" ? null : label(rawReason, 2000);
+  if (reason === null && rawReason !== undefined && rawReason !== null && rawReason !== "") return null;
   const planningMode = value["planningMode"] ?? "manual";
   if (planningMode === "working_days") {
     const start = value["plannedStart"];
@@ -275,17 +280,19 @@ function activityInput(value: Record<string, unknown>, editing: boolean, allowCo
     const calendarVersion = value["calendarVersion"];
     if (!civilDate(start) || value["plannedEnd"] !== undefined ||
         !Number.isSafeInteger(duration) || Number(duration) < 1 || Number(duration) > 27393 ||
-        !Number.isSafeInteger(calendarVersion) || Number(calendarVersion) < 0) return null;
+        !Number.isSafeInteger(calendarVersion) || Number(calendarVersion) < 0 || !reason || reason.length < 10) return null;
     return { input: { ...metadata, plannedStart: start, plannedEnd: null },
-      workingPlan: { start, duration: Number(duration), calendarVersion: Number(calendarVersion) } };
+      workingPlan: { start, duration: Number(duration), calendarVersion: Number(calendarVersion) }, reason };
   }
   if ((planningMode !== "manual") || value["workingDays"] !== undefined || value["calendarVersion"] !== undefined)
     return null;
   const start = value["plannedStart"] ?? null;
   const end = value["plannedEnd"] ?? null;
   if ((start === null) !== (end === null) ||
-      (start !== null && (!civilDate(start) || !civilDate(end) || start > end))) return null;
-  return { input: { ...metadata, plannedStart: start as string | null, plannedEnd: end as string | null } };
+      (start !== null && (!civilDate(start) || !civilDate(end) || start > end)) ||
+      ((start !== null || end !== null) && (!reason || reason.length < 10)) ||
+      (start === null && end === null && reason !== null)) return null;
+  return { input: { ...metadata, plannedStart: start as string | null, plannedEnd: end as string | null }, reason };
 }
 
 function workingPlanInput(value: Record<string, unknown>): {
@@ -327,9 +334,8 @@ function calendarRescheduleInput(value: Record<string, unknown>):
 }
 
 function targetInput(value: Record<string, unknown>, editing: boolean):
-  { input: { name: string; description: string | null; targetDate: string; color: string };
-    version?: number; reason?: string | null } | null {
-  const keys = ["name", "description", "targetDate", "color", ...(editing ? ["version", "reason"] : [])];
+  { input: TargetInput; version?: number; reason: string | null } | null {
+  const keys = ["name", "description", "targetDate", "color", "reason", ...(editing ? ["version"] : [])];
   if (!only(value, keys)) return null;
   const name = label(value["name"], 200);
   const description = optional(value["description"], 2000);
@@ -338,9 +344,9 @@ function targetInput(value: Record<string, unknown>, editing: boolean):
   const rawReason = value["reason"];
   const reason = rawReason === undefined || rawReason === null || rawReason === "" ? null : label(rawReason, 2000);
   if (reason === null && rawReason !== undefined && rawReason !== null && rawReason !== "") return null;
-  if (reason && reason.length < 10) return null;
+  if ((!editing && (!reason || reason.length < 10)) || (editing && reason && reason.length < 10)) return null;
   return { input: { name, description, targetDate: value["targetDate"], color: String(value["color"]).toUpperCase() },
-    ...(editing ? { version: value["version"] as number, reason } : {}) };
+    ...(editing ? { version: value["version"] as number } : {}), reason };
 }
 
 function mutation<T>(result: Mutation<T>, noun: string, created = false): Response {
@@ -595,7 +601,9 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   if (route.kind === "targets" && request.method === "POST") {
     const value = await body(request); const parsed = value && targetInput(value, false);
     if (!parsed) return response({ error: "Informe nome, data e cor válidos." }, 400);
-    try { return targetMutation(await repository.createTarget(ws, productId, identity.subject, parsed.input), true); }
+    if (!parsed.reason) return response({ error: "Informe justificativa para cadastrar a data da meta." }, 400);
+    try { return targetMutation(await repository.createTarget(ws, productId, identity.subject,
+      { ...parsed.input, reason: parsed.reason }, crypto.randomUUID()), true); }
     catch { return response({ error: "Não foi possível salvar a meta. Tente novamente." }, 503); }
   }
   if (route.kind === "target" && route.targetId && request.method === "PATCH") {
@@ -610,11 +618,12 @@ export async function handleScheduleRequest(request: Request, identity: Identity
   }
   if (route.kind === "target" && route.targetId && request.method === "DELETE") {
     const value = await body(request);
-    if (!value || !only(value, ["version"]) || !version(value["version"]))
+    const reason = value && only(value, ["version", "reason"]) ? label(value["reason"], 2000) : null;
+    if (!value || !version(value["version"]) || !reason || reason.length < 10)
       return response({ error: "Atualize os dados da meta antes de excluí-la." }, 400);
     try {
       return targetMutation(await repository.deleteTarget(ws, productId, route.targetId.toLowerCase(), identity.subject,
-        value["version"] as number, crypto.randomUUID()));
+        value["version"] as number, crypto.randomUUID(), reason));
     } catch { return response({ error: "Não foi possível excluir a meta. Tente novamente." }, 503); }
   }
   if (route.kind === "activity_history" && request.method === "GET" && activityId) {
@@ -680,7 +689,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       if (!parsed) return response({ error: "Dados invÃ¡lidos." }, 400);
       if (!parsed.workingPlan)
         return mutation(await repository.createActivity(ws, productId, null, null, identity.subject,
-          parsed.input as ActivityInput), "activity", true);
+          parsed.input as ActivityInput, parsed.reason ?? null, crypto.randomUUID()), "activity", true);
       try {
         const calendar = await calendarFactory(environment).readForCalculation(ws);
         if (parsed.workingPlan.calendarVersion !== calendar.version)
@@ -695,7 +704,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
           calendarVersion: calendar.version
         };
         return mutation(await repository.createWorkingActivity(ws, productId, null, null,
-          identity.subject, workingInput), "activity", true);
+          identity.subject, workingInput, parsed.reason!, crypto.randomUUID()), "activity", true);
       } catch { return response({ error: "NÃ£o foi possÃ­vel calcular ou salvar a atividade. Tente novamente." }, 503); }
     }
   }
@@ -753,14 +762,14 @@ export async function handleScheduleRequest(request: Request, identity: Identity
             calendarVersion: calendar.version
           };
           const created = await repository.createWorkingActivity(ws, productId, disciplineId, stageId,
-            identity.subject, workingInput);
+            identity.subject, workingInput, parsed.reason!, crypto.randomUUID());
           if (created.status === "invalid")
             return response({ error: "Dados do planejamento em dias úteis inválidos." }, 400);
           return mutation(created, "activity", true);
         } catch { return response({ error: "Não foi possível calcular ou salvar a atividade. Tente novamente." }, 503); }
       }
       return mutation(await repository.createActivity(ws, productId, disciplineId, stageId, identity.subject,
-        parsed.input as ActivityInput), "activity", true);
+        parsed.input as ActivityInput, parsed.reason ?? null, crypto.randomUUID()), "activity", true);
     }
     if (request.method === "PATCH" && activityId) {
       const value = await body(request); const parsed = value && activityInput(value, true);

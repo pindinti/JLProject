@@ -39,11 +39,11 @@ describe("product row locks for clone consistency", () => {
       "a3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, {
         name: "Synthetic activity", activityType: null, plannedStart: "2026-11-10", plannedEnd: "2026-11-11",
         displayOrder: 0, notes: null
-      });
+      }, "Synthetic activity plan", "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
     await schedules.createActivity(workspaceId, productId, null, null, actorId, {
       name: "Synthetic root activity", activityType: null, plannedStart: "2026-11-10", plannedEnd: "2026-11-11",
       displayOrder: 1, notes: null, colorOverride: "#AA5577"
-    });
+    }, "Synthetic root activity plan", "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
     await schedules.updateActivity(workspaceId, productId, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3",
       "a3aa998a-a2c3-4376-9105-90af0d1dbfe3", "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, {
         name: "Synthetic activity", activityType: null, displayOrder: 0, notes: null
@@ -59,21 +59,42 @@ describe("product row locks for clone consistency", () => {
       "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, "2026-11-10", "2026-11-11",
       "Synthetic root date lock test", 1, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
     await schedules.createTarget(workspaceId, productId, actorId, {
-      name: "Synthetic target", description: null, color: "#336699", targetDate: "2026-11-10"
-    });
+      name: "Synthetic target", description: null, color: "#336699", targetDate: "2026-11-10",
+      reason: "Synthetic target planning"
+    }, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
     await schedules.updateTarget(workspaceId, productId, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3",
       actorId, { name: "Synthetic target", description: null, color: "#336699", targetDate: "2026-11-10" },
       1, null, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
     await schedules.deleteTarget(workspaceId, productId, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3",
-      actorId, 1, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+      actorId, 1, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3", "Synthetic target removal");
 
     expect(database.query).toHaveBeenCalled();
     const writes = database.calls.filter((query) => query.includes("locked_product"));
     expect(writes).toHaveLength(11);
     for (const query of writes) {
       expect(query).toContain("FROM public.products");
-      expect(query).toContain("AND active = true");
+      expect(query).toMatch(/active = true/);
       expect(query).toContain("FOR UPDATE");
+    }
+  });
+
+  it("sets actor, operation, and reason context on direct date-bearing creates", async () => {
+    const schedules = repository();
+    await schedules.createActivity(workspaceId, productId, null, null, actorId, {
+      name: "Synthetic planned activity", activityType: null, plannedStart: "2026-11-10",
+      plannedEnd: "2026-11-11", displayOrder: 0, notes: null
+    }, "Synthetic activity creation", "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+    await schedules.createTarget(workspaceId, productId, actorId, {
+      name: "Synthetic target", description: null, color: "#336699", targetDate: "2026-11-10",
+      reason: "Synthetic target creation"
+    }, "d3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+
+    for (const query of database.calls.filter((value) => value.includes("INSERT INTO public.stage_activities") ||
+      value.includes("INSERT INTO public.business_targets"))) {
+      expect(query).toContain("jlproject.schedule_actor_id");
+      expect(query).toContain("jlproject.schedule_operation_id");
+      expect(query).toContain("jlproject.schedule_operation_type");
+      expect(query).toContain("jlproject.schedule_justification");
     }
   });
 

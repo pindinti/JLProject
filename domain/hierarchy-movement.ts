@@ -4,6 +4,7 @@ export type HierarchyMoveKind = "activity" | "stage" | "discipline";
 export interface HierarchyMoveRequest {
   kind: HierarchyMoveKind;
   targetId: string;
+  reason?: string;
   expectedVersion: number;
   destinationDisciplineId: string | null;
   destinationStageId: string | null;

@@ -357,7 +357,7 @@ describe("schedule workspace refinements", () => {
   });
 
   it("opens a create dialog from the toolbar with the selected date and creates a synthetic milestone", async () => {
-    const onCreate = vi.fn(async (value: { name: string; description: string | null; targetDate: string; color: string }) =>
+    const onCreate = vi.fn(async (value: { name: string; description: string | null; targetDate: string; color: string; reason: string }) =>
       ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }));
     const { container } = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
       targets={targets} openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
@@ -376,18 +376,21 @@ describe("schedule workspace refinements", () => {
     fireEvent.click(within(datePicker).getByRole("button", { name: /10 de novembro de 2026/ }));
     expect(screen.getByLabelText("Data")).toHaveValue("10/11/2026");
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Marco sintético" } });
+    fireEvent.change(screen.getByLabelText("Justificativa do planejamento da meta"), {
+      target: { value: "Planejamento inicial da meta" }
+    });
     expect(onCreate).not.toHaveBeenCalled();
     fireEvent.submit(screen.getByRole("dialog"));
     await act(async () => { await Promise.resolve(); });
     expect(onCreate).toHaveBeenCalledWith({ name: "Marco sintético", description: null,
-      targetDate: "2026-11-10", color: "#AA4557" });
+      targetDate: "2026-11-10", color: "#AA4557", reason: "Planejamento inicial da meta" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("records a milestone custom color only after the color edit is saved", async () => {
     const userId = "milestone-user";
     localStorage.clear();
-    const onCreate = vi.fn(async (value: { name: string; description: string | null; targetDate: string; color: string }) =>
+    const onCreate = vi.fn(async (value: { name: string; description: string | null; targetDate: string; color: string; reason: string }) =>
       ({ id: "created", ...value, operationalDate: null, displayOrder: 1, version: 1 }));
     render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree}
       targets={targets} userId={userId} openDisciplines={new Set(["discipline"])}
@@ -410,6 +413,9 @@ describe("schedule workspace refinements", () => {
     fireEvent.click(screen.getByRole("button", { name: "Adicionar marco" }));
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Synthetic milestone" } });
     fireEvent.change(screen.getByLabelText("Código hexadecimal"), { target: { value: "#12BC34" } });
+    fireEvent.change(screen.getByLabelText("Justificativa do planejamento da meta"), {
+      target: { value: "Planejamento inicial da meta" }
+    });
     fireEvent.click(screen.getByRole("button", { name: "Salvar meta" }));
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ color: "#12BC34" })));
     expect(readRecentCustomColors(userId)).toEqual(["#12BC34"]);
@@ -511,7 +517,7 @@ describe("schedule workspace refinements", () => {
     fireEvent.submit(screen.getByRole("dialog"));
     expect(await screen.findByRole("alert")).toHaveTextContent("justificativa com pelo menos 10 caracteres");
     expect(onUpdate).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Justificativa da alteração da data"),
+    fireEvent.change(screen.getByLabelText("Justificativa do planejamento da meta"),
       { target: { value: "Synthetic date adjustment" } });
     fireEvent.submit(screen.getByRole("dialog"));
     await act(async () => { await Promise.resolve(); });
@@ -519,17 +525,17 @@ describe("schedule workspace refinements", () => {
       targetDate: "2026-11-08", reason: "Synthetic date adjustment"
     }));
 
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const second = render(<ScheduleWorkspace product={{ id: "product", name: "Synthetic product" }} tree={tree} targets={targets}
       openDisciplines={new Set(["discipline"])} openStages={new Set(["stage"])} canEdit
       onToggle={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onHistory={vi.fn()} onAddDiscipline={vi.fn()} onRefresh={vi.fn()} onProductHistory={vi.fn()} onRescheduleHistory={vi.fn()} onCreateTarget={vi.fn()}
       onUpdateTarget={onUpdate} onDeleteTarget={onDelete} />);
     fireEvent.click(second.container.querySelector(".timeline-target-label")!);
     fireEvent.click(within(second.container).getByRole("button", { name: "Excluir meta" }));
+    fireEvent.change(screen.getByLabelText("Justificativa da exclusão"),
+      { target: { value: "Synthetic target removal" } });
+    fireEvent.click(within(second.container).getByRole("button", { name: "Confirmar exclusão" }));
     await act(async () => { await Promise.resolve(); });
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Synthetic target"));
-    expect(onDelete).toHaveBeenCalledWith(targets[0]);
-    confirm.mockRestore();
+    expect(onDelete).toHaveBeenCalledWith(targets[0], "Synthetic target removal");
   });
 
   it("updates the Today marker when São Paulo reaches a new calendar date", () => {

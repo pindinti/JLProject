@@ -32,12 +32,14 @@ describe("hierarchy movement repository", () => {
   it("delegates the entire move and audit transaction to one database function", async () => {
     const repository = createScheduleRepository({ DATABASE_URL: "postgresql://localhost/neondb" });
     await expect(repository.moveHierarchyItem(workspaceId, productId, actorId, operationId, {
-      kind: "activity", targetId: activityId, expectedVersion: 3,
+      kind: "activity", targetId: activityId, expectedVersion: 3, reason: "Synthetic move reason",
       destinationDisciplineId: null, destinationStageId: null, destinationIndex: 0,
       expectedSourceOrder: [activityId], expectedDestinationOrder: []
     })).resolves.toEqual({ status: "moved", operationId, version: 4 });
     expect(database.calls).toHaveLength(1);
     expect(database.calls[0]).toContain("public.move_schedule_item");
+    expect(database.calls[0]).toContain("jlproject.schedule_operation_id");
+    expect(database.calls[0]).toContain("jlproject.schedule_justification");
     expect(database.calls[0]).not.toMatch(/UPDATE\s+public\./i);
     expect(database.calls[0]).not.toMatch(/INSERT\s+INTO\s+public\./i);
   });
@@ -46,7 +48,7 @@ describe("hierarchy movement repository", () => {
     database.query.mockResolvedValueOnce([{ result: { status: "partial", version: 0 } }]);
     const repository = createScheduleRepository({ DATABASE_URL: "postgresql://localhost/neondb" });
     await expect(repository.moveHierarchyItem(workspaceId, productId, actorId, operationId, {
-      kind: "discipline", targetId: activityId, expectedVersion: 1,
+      kind: "discipline", targetId: activityId, expectedVersion: 1, reason: "Synthetic move reason",
       destinationDisciplineId: null, destinationStageId: null, destinationIndex: 0,
       expectedSourceOrder: [activityId], expectedDestinationOrder: [activityId]
     })).rejects.toThrow("Unexpected hierarchy movement result");

@@ -34,11 +34,18 @@ export function createImportRepository(environment: WorkerEnvironment): ImportRe
     async import(workspaceId, actorId, submission) {
       const sourceHash = await sha256(importSourceContent(submission));
       const requestHash = await sha256({ workspaceId, actorId, submission });
+      const operationId = crypto.randomUUID();
       try {
         const rows = await sql`
+          WITH schedule_context AS MATERIALIZED (
+            SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
+              set_config('jlproject.schedule_operation_id', ${operationId}, true),
+              set_config('jlproject.schedule_operation_type', 'schedule_imported', true)
+          )
           SELECT public.import_initial_schedule(${workspaceId}::uuid, ${actorId}::uuid,
             ${submission.idempotencyKey}::uuid, ${sourceHash}, ${requestHash},
             ${JSON.stringify(submission)}::jsonb) AS result
+          FROM schedule_context
         `;
         const result = rows[0]?.["result"] as ImportResult | undefined;
         if (!result || !["created", "replayed", "duplicate", "conflict", "denied"].includes(result.status))

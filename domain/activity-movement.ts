@@ -3,6 +3,7 @@ import type { ScheduleTree } from "./schedule-workspace";
 export interface ActivityMoveRequest {
   kind: "activity";
   targetId: string;
+  reason?: string;
   expectedVersion: number;
   destinationDisciplineId: string | null;
   destinationStageId: string | null;

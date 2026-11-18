@@ -429,6 +429,11 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
            !previewMatches(workingPreview, draft.plannedStart, draft.workingDays))) {
         setFeedback(messages.workingDayPreviewRequired); return;
       }
+      if ((plannedStart !== null || plannedEnd !== null) &&
+          (draft.dateReason.trim().length < 10 || draft.dateReason.trim().length > 2000 ||
+           Array.from(draft.dateReason.trim()).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) {
+        setFeedback(messages.scheduleDateReasonRequired); return;
+      }
     }
     if (draft.id && !window.confirm(messages.confirmHierarchyEdit)) return;
     let path = `${base}/disciplines`;
@@ -457,6 +462,8 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
         data = { ...data, planningMode: "working_days", plannedStart,
           workingDays: Number(draft.workingDays), calendarVersion: workingPreview.calendarVersion };
       } else if (!draft.id) data = { ...data, planningMode: "manual", plannedStart, plannedEnd };
+      if (!draft.id && (plannedStart !== null || plannedEnd !== null))
+        data = { ...data, reason: draft.dateReason.trim() };
       if (draft.id) path += `/${draft.id}`;
     }
     if (draft.id) data.version = draft.version;
@@ -648,7 +655,7 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     }
     return result;
   }
-  async function createTarget(value: Omit<ScheduleTarget, "id" | "operationalDate" | "displayOrder" | "version">): Promise<ScheduleTarget> {
+  async function createTarget(value: Omit<ScheduleTarget, "id" | "operationalDate" | "displayOrder" | "version"> & { reason: string }): Promise<ScheduleTarget> {
     const result = await targetRequest(`${base}/targets`, "POST", value);
     if (!result.ok) throw new Error((await result.json().catch(() => null))?.error ?? messages.milestoneSaveError);
     const target = (await result.json() as { target: ScheduleTarget }).target;
@@ -663,8 +670,10 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
     setTargets((current) => current.map((item) => item.id === updated.id ? updated : item));
     return updated;
   }
-  async function deleteTarget(target: ScheduleTarget): Promise<void> {
-    const result = await targetRequest(`${base}/targets/${target.id}`, "DELETE", { version: target.version });
+  async function deleteTarget(target: ScheduleTarget, reason: string): Promise<void> {
+    const result = await targetRequest(`${base}/targets/${target.id}`, "DELETE", {
+      version: target.version, reason
+    });
     if (!result.ok) throw new Error((await result.json().catch(() => null))?.error ?? messages.milestoneDeleteError);
     setTargets((current) => current.filter((item) => item.id !== target.id));
   }
@@ -1173,6 +1182,13 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
                 <button type="button" onClick={() => void calculateWorkingPreview(draft.plannedStart, draft.workingDays)}
                   disabled={previewLoading || busy}>{messages.calculateWorkingEnd}</button>
                 <WorkingPreviewDetails preview={workingPreview} loading={previewLoading} />
+              </>}
+              {(draft.plannedStart.trim() || draft.plannedEnd.trim()) && <>
+                <label htmlFor="activity-date-creation-reason">{messages.scheduleDateCreationReason}</label>
+                <textarea id="activity-date-creation-reason" minLength={10} maxLength={2000} aria-required="true"
+                  value={draft.dateReason} aria-describedby="activity-date-creation-reason-hint"
+                  onChange={(event) => setDraft({ ...draft, dateReason: event.target.value })} />
+                <small id="activity-date-creation-reason-hint">{messages.scheduleDateCreationReasonHint}</small>
               </>}
             </>}
           <label htmlFor="activity-notes">{messages.activityNotes}</label>
