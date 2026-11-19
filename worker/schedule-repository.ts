@@ -1,4 +1,4 @@
-import { neon } from "@neondatabase/serverless";
+import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import type { CalendarImpactCandidate } from "../domain/calendar-impact";
 import type { WorkerEnvironment } from "./database";
 
@@ -404,6 +404,70 @@ export function assembleHierarchy(productId: string, rows: Record<string, unknow
       currentStage.derivedEnd = item.plannedEnd;
   }
   return hierarchy;
+}
+
+export function queryHierarchyRows(sql: NeonQueryFunction<false, false>, ws: string, productId: string,
+  limit: number | null = null) {
+  return sql`SELECT p.id::text AS "productId",
+    d.id::text AS "disciplineId", d.name AS "disciplineName",
+    d.short_code AS "disciplineCode", d.color AS "disciplineColor",
+    d.display_order AS "disciplineOrder", d.description AS "disciplineDescription",
+    d.version AS "disciplineVersion",
+    s.id::text AS "stageId", def.code AS "stageCode", def.color AS "stageColor",
+    s.display_name AS "stageName", s.display_order AS "stageOrder", s.version AS "stageVersion",
+    to_char(s.planned_start, 'YYYY-MM-DD') AS "stagePlannedStart",
+    to_char(s.planned_end, 'YYYY-MM-DD') AS "stagePlannedEnd",
+    a.id::text AS "activityId", a.name AS "activityName", a.activity_type AS "activityType",
+    to_char(a.planned_start, 'YYYY-MM-DD') AS "plannedStart",
+    to_char(a.planned_end, 'YYYY-MM-DD') AS "plannedEnd",
+    a.display_order AS "activityOrder", a.notes AS "activityNotes",
+    a.color_override AS "activityColorOverride", a.version AS "activityVersion",
+    a.planning_mode AS "planningMode", a.working_day_duration AS "workingDayDuration",
+    a.planning_calendar_version AS "planningCalendarVersion"
+    FROM public.products AS p
+    LEFT JOIN public.product_disciplines AS d ON d.product_id = p.id AND d.workspace_id = p.workspace_id
+      AND d.deleted_at IS NULL
+    LEFT JOIN public.discipline_stages AS s ON s.discipline_id = d.id AND s.workspace_id = p.workspace_id
+      AND s.product_id = p.id AND s.deleted_at IS NULL
+    LEFT JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = p.workspace_id
+    LEFT JOIN public.stage_activities AS a ON a.stage_id = s.id AND a.workspace_id = p.workspace_id
+      AND a.product_id = p.id AND a.discipline_id = d.id AND a.deleted_at IS NULL
+    WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid
+    ORDER BY d.display_order, d.id, s.display_order, s.id, a.display_order, a.id LIMIT ${limit}::integer`;
+}
+
+export function queryRootActivityRows(sql: NeonQueryFunction<false, false>, ws: string, productId: string,
+  limit: number | null = null) {
+  return sql`SELECT id::text AS id, NULL::text AS "stageId", name,
+    activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
+    to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes,
+    color_override AS "colorOverride", version, planning_mode AS "planningMode",
+    working_day_duration AS "workingDayDuration",
+    planning_calendar_version AS "planningCalendarVersion"
+    FROM public.stage_activities
+    WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+      AND discipline_id IS NULL AND stage_id IS NULL AND deleted_at IS NULL
+    ORDER BY display_order, id LIMIT ${limit}::integer`;
+}
+
+export function queryTargetRows(sql: NeonQueryFunction<false, false>, ws: string, productId: string,
+  limit: number | null = null) {
+  return sql`SELECT id::text AS id, name,
+    description, color,
+    to_char(target_date, 'YYYY-MM-DD') AS "targetDate",
+    to_char(operational_date, 'YYYY-MM-DD') AS "operationalDate",
+    display_order AS "displayOrder", version
+    FROM public.business_targets
+    WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
+      AND deleted_at IS NULL
+    ORDER BY display_order, id LIMIT ${limit}::integer`;
+}
+
+export function mapBusinessTarget(row: Record<string, unknown>): BusinessTarget {
+  return { id: text(row["id"]), name: text(row["name"]),
+    description: nullable(row["description"]), color: text(row["color"]),
+    targetDate: text(row["targetDate"]), operationalDate: nullable(row["operationalDate"]),
+    displayOrder: Number(row["displayOrder"]), version: Number(row["version"]) };
 }
 
 export function createScheduleRepository(environment: WorkerEnvironment): ScheduleRepository {
@@ -1074,59 +1138,12 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         newEnd: text(row["newEnd"]), reason: text(row["reason"]) }));
     },
     async getHierarchy(ws, productId) {
-      const rows = await sql`SELECT p.id::text AS "productId",
-        d.id::text AS "disciplineId", d.name AS "disciplineName",
-        d.short_code AS "disciplineCode", d.color AS "disciplineColor",
-        d.display_order AS "disciplineOrder", d.description AS "disciplineDescription",
-        d.version AS "disciplineVersion",
-        s.id::text AS "stageId", def.code AS "stageCode", def.color AS "stageColor",
-        s.display_name AS "stageName", s.display_order AS "stageOrder", s.version AS "stageVersion",
-        to_char(s.planned_start, 'YYYY-MM-DD') AS "stagePlannedStart",
-        to_char(s.planned_end, 'YYYY-MM-DD') AS "stagePlannedEnd",
-        a.id::text AS "activityId", a.name AS "activityName", a.activity_type AS "activityType",
-        to_char(a.planned_start, 'YYYY-MM-DD') AS "plannedStart",
-        to_char(a.planned_end, 'YYYY-MM-DD') AS "plannedEnd",
-        a.display_order AS "activityOrder", a.notes AS "activityNotes",
-        a.color_override AS "activityColorOverride", a.version AS "activityVersion",
-        a.planning_mode AS "planningMode", a.working_day_duration AS "workingDayDuration",
-        a.planning_calendar_version AS "planningCalendarVersion"
-        FROM public.products AS p
-        LEFT JOIN public.product_disciplines AS d ON d.product_id = p.id AND d.workspace_id = p.workspace_id
-          AND d.deleted_at IS NULL
-        LEFT JOIN public.discipline_stages AS s ON s.discipline_id = d.id AND s.workspace_id = p.workspace_id
-          AND s.deleted_at IS NULL
-        LEFT JOIN public.stage_definitions AS def ON def.id = s.definition_id AND def.workspace_id = p.workspace_id
-        LEFT JOIN public.stage_activities AS a ON a.stage_id = s.id AND a.workspace_id = p.workspace_id
-          AND a.deleted_at IS NULL
-        WHERE p.workspace_id = ${ws}::uuid AND p.id = ${productId}::uuid
-        ORDER BY d.display_order, d.id, s.display_order, s.id, a.display_order, a.id`;
+      const rows = await queryHierarchyRows(sql, ws, productId);
       if (!rows[0]) return null;
-      const rootRows = await sql`SELECT id::text AS id, NULL::text AS "stageId", name,
-        activity_type AS "activityType", to_char(planned_start, 'YYYY-MM-DD') AS "plannedStart",
-        to_char(planned_end, 'YYYY-MM-DD') AS "plannedEnd", display_order AS "displayOrder", notes,
-        color_override AS "colorOverride", version, planning_mode AS "planningMode",
-        working_day_duration AS "workingDayDuration",
-        planning_calendar_version AS "planningCalendarVersion"
-        FROM public.stage_activities
-        WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
-          AND discipline_id IS NULL AND stage_id IS NULL AND deleted_at IS NULL
-        ORDER BY display_order, id`;
-      return assembleHierarchy(productId, rows, rootRows);
+      return assembleHierarchy(productId, rows, await queryRootActivityRows(sql, ws, productId));
     },
     async listTargets(ws, productId) {
-      const rows = await sql`SELECT id::text AS id, name,
-        description, color,
-        to_char(target_date, 'YYYY-MM-DD') AS "targetDate",
-        to_char(operational_date, 'YYYY-MM-DD') AS "operationalDate",
-        display_order AS "displayOrder", version
-        FROM public.business_targets
-        WHERE workspace_id = ${ws}::uuid AND product_id = ${productId}::uuid
-          AND deleted_at IS NULL
-        ORDER BY display_order, id`;
-      return rows.map((row) => ({ id: text(row["id"]), name: text(row["name"]),
-        description: nullable(row["description"]), color: text(row["color"]),
-        targetDate: text(row["targetDate"]), operationalDate: nullable(row["operationalDate"]),
-        displayOrder: Number(row["displayOrder"]), version: Number(row["version"]) }));
+      return (await queryTargetRows(sql, ws, productId)).map(mapBusinessTarget);
     },
     async createTarget(ws, productId, actorId, input, operationId) {
       try {

@@ -17,6 +17,7 @@ import { createImportRepository } from "./import-repository";
 import { handleCalendarRequest, isCalendarRoute, type CalendarRepositoryFactory } from "./calendar-api";
 import { createCalendarRepository } from "./calendar-repository";
 import { createExecutiveGanttRepository, type ExecutiveGanttRepository } from "./executive-gantt";
+import { comparisonEntityLimit, readProductComparison } from "./product-comparison";
 
 const healthPath = "/api/health";
 const databaseConnectivityPath = "/api/internal/database-connectivity";
@@ -24,6 +25,7 @@ const sessionPath = "/api/auth/session";
 const workspaceMembershipPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/membership$/i;
 const workspacesPath = "/api/workspaces";
 const executiveGanttPath = /^\/api\/workspaces\/([^/]+)\/executive-gantt$/;
+const productComparisonPath = /^\/api\/workspaces\/([^/]+)\/product-comparison$/;
 const membersPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships$/i;
 const memberPath = /^\/api\/workspaces\/([0-9a-f-]{36})\/memberships\/([0-9a-f-]{36})$/i;
 const stageCatalogPath = /^\/api\/workspaces\/([^/]+)\/stage-definitions$/;
@@ -122,6 +124,7 @@ export async function handleRequest(
 
   const workspaceMatch = url.pathname.match(workspaceMembershipPath);
   const executiveGanttMatch = url.pathname.match(executiveGanttPath);
+  const comparisonMatch = url.pathname.match(productComparisonPath);
   const membersMatch = url.pathname.match(membersPath);
   const memberMatch = url.pathname.match(memberPath);
   const productRoute = isProductRoute(url.pathname);
@@ -135,7 +138,7 @@ export async function handleRequest(
     request.method === "POST" && !!membersMatch ||
     request.method === "PATCH" && (!!memberMatch || !!stageDefinitionColorMatch) ||
     productRoute || scheduleRoute || importRoute || calendarRoute || !!stageCatalogMatch ||
-    !!stageDefinitionColorMatch || !!executiveGanttMatch;
+    !!stageDefinitionColorMatch || !!executiveGanttMatch || !!comparisonMatch;
   if (protectedRoute) {
     const origin = request.headers.get("Origin");
     if (origin && origin !== url.origin) {
@@ -170,6 +173,24 @@ export async function handleRequest(
         }
         const workspaces = await memberAdminRepositoryFactory(environment).listOwnWorkspaces(identity.subject);
         return privateResponse({ workspaces }, 200);
+      }
+
+      if (comparisonMatch) {
+        if (request.method !== "GET") return privateResponse({ error: "Método não permitido." }, 405);
+        const workspaceId = comparisonMatch[1];
+        const leftId = url.searchParams.get("leftProductId")?.toLowerCase();
+        const rightId = url.searchParams.get("rightProductId")?.toLowerCase();
+        if (!uuidPattern.test(workspaceId) || url.searchParams.size !== 2 || !leftId || !rightId ||
+          !uuidPattern.test(leftId) || !uuidPattern.test(rightId) || leftId === rightId) {
+          return privateResponse({ error: "Selecione dois produtos diferentes." }, 400);
+        }
+        const membership = await authorizeWorkspace(identity, workspaceId, "read", repository);
+        if (!membership) return privateResponse({ error: "Acesso não autorizado." }, 403);
+        const result = await readProductComparison(environment, membership.workspaceId, identity.subject, leftId, rightId);
+        if (result.status === "ok") return privateResponse({ comparison: result.comparison }, 200);
+        if (result.status === "too_large") return privateResponse({ code: "comparison_too_large",
+          error: "Os cronogramas excedem o limite de tamanho para comparação.", maxEntities: comparisonEntityLimit }, 422);
+        return privateResponse({ error: "Produto não encontrado." }, 404);
       }
 
       if (executiveGanttMatch) {

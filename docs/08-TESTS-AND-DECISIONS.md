@@ -338,3 +338,29 @@ Review of the installed Development definitions confirmed two defects. Migration
 ### D068 Phase 2.1 clone compatibility execution
 
 Migration `0035_product_cloning_compatibility.sql` committed to Development on 2026-11-19 at 04:30:47 UTC with approved SHA-256 `C86E8AE1A53EF5800724C86B7C74065FFB6B1BAF65DCAEAD68641925118F6D68`. Isolated archived-source cloning passed through the limited Worker role. Official Worker rollback tests and pre/post fingerprints verified working schedule, R00, audit, and permission integrity. The [Phase 2.1 verification record](verification/phase2.1-clone-compatibility.md) contains the target and detailed results.
+
+### D069 Product Schedule Comparison Phase 3A
+
+Two manually selected products in the same authorized workspace can be compared regardless of status or lineage. Phase 3A provides the read-only Worker data contract for the two current Living Schedules, their product versions, and their audit cursors. The read uses one consistent transaction and rejects any pair over 2,000 schedule entities. D065 governs stage dates. The [architecture record](06-ARCHITECTURE-AND-SECURITY.md#product-schedule-comparison-phase-3a) documents the contract and response limits.
+
+### D069 Product Schedule Comparison Phase 3B
+
+The domain engine compares the Phase 3A pair as Product A and Product B. Suggestions require exact keys on both sides: discipline short code and name, stage code and display name within paired disciplines, activity name and type within paired stages or the product root, and target name. Only a unique remaining pair is suggested. Duplicate candidates remain visible as ambiguous items, and children of unpaired parents have no automatic correspondence. Manual pairs take precedence and can cross parents. An unlink excludes that specific pair without inferring a replacement from a duplicate group. Decisions are input to a single invocation.
+
+The result contains a hierarchy, a separate target list, field-level A/B differences, and summary counts for each row category and match origin. Paired rows appear under their A parent, with both parent references available. Each row compares its own fields, so child changes are counted on child rows. Ambiguous counts are per item, including both sides. Stage rows retain explicit and derived boundaries and use the D065 effective interval. Cosmetic colors and database versions are excluded from differences.
+
+### D069 Product Schedule Comparison Phase 3C.1
+
+The product action opens `/produtos/:productId/comparar` for every role with workspace read access. Product A starts with the action's product, and both selectors offer any distinct workspace product regardless of status. Comparison loads on submit and displays the Phase 3B hierarchy, a separate target table, and A/B values with pt-BR civil dates. The default filter shows all items. The differences filter includes one-sided rows, and both narrower filters retain ancestor rows for context. Ambiguous cells explicitly report an unresolved correspondence.
+
+When the window regains focus, the view checks the same pair through the read-only endpoint. A changed product version or schedule cursor marks the displayed snapshot stale. The user explicitly refreshes it to replace the comparison. A failed freshness check is shown separately. The view reserves correspondence editing for Phase 3C.2.
+
+### D069 Product Schedule Comparison Phase 3C.2
+
+Users can pair an unmatched or ambiguous A item with an available B item of the same kind. The contextual dialog lists unpaired B items with their location and position, including root activities and targets. It groups suggested candidates separately and allows explicit pairs across locations to compare moves. To use a B item that is already paired, the user first unlinks its existing pair. Unlinking records an override for that exact pair so the engine does not immediately suggest it again. Users can explicitly pair it again.
+
+Pairing decisions live in the current view and recalculate the Phase 3B result, including filtered rows and summary counts. Changing either product or explicitly refreshing the comparison clears the decisions. A stale or unverified snapshot prevents pairing until refreshed. The only network requests are the existing read-only comparison reads.
+
+### D069 Product Schedule Comparison final verification
+
+The user reported all eight manual browser acceptance scenarios passed. A disposable Development child verified on real Neon that the comparison uses a read-only repeatable-read transaction and holds both products on one snapshot across a concurrent audited date change. A read-committed control exposed the mixed snapshot that repeatable read prevents. Focused and full regression checks passed. The [Phase 3 verification record](verification/phase3-product-comparison-validation.md) documents the evidence, integrity results, and deferred scope.

@@ -28,7 +28,7 @@ export interface ProductRepository {
   changeStatus(workspaceId: string, productId: string, actorId: string, status: Product["status"], version: number, reason: string): Promise<ProductMutation>;
 }
 
-function mapProduct(row: Record<string, unknown>): Product {
+export function mapProduct(row: Record<string, unknown>): Product {
   const timestamp = (value: unknown) => new Date(value as string).toISOString();
   return {
     id: String(row["id"]), workspaceId: String(row["workspaceId"]),

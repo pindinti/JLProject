@@ -6,6 +6,8 @@ import { ExecutiveGanttHome } from "./ExecutiveGanttHome";
 import { ExecutiveGanttFull } from "./ExecutiveGanttFull";
 
 const ImportPreview = lazy(() => import("./ImportPreview").then((module) => ({ default: module.ImportPreview })));
+const ProductComparisonPage = lazy(() => import("./ProductComparison").then((module) => ({ default: module.ProductComparisonPage })));
+const comparisonPath = /^\/produtos\/([0-9a-f-]{36})\/comparar$/i;
 
 interface Product {
   id: string;
@@ -51,6 +53,8 @@ export function Products({ workspace, userId, onAccessLost }: {
   const [scheduleProductId, setScheduleProductId] = useState<string | null>(() =>
     window.location.pathname.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null
   );
+  const [comparisonProductId, setComparisonProductId] = useState(() =>
+    window.location.pathname.match(comparisonPath)?.[1].toLowerCase() ?? null);
   const [showImport, setShowImport] = useState(() => window.location.pathname === "/produtos/importar");
   const [showExecutive, setShowExecutive] = useState(() =>
     window.location.pathname === "/produtos/cronograma-executivo");
@@ -64,7 +68,7 @@ export function Products({ workspace, userId, onAccessLost }: {
     product.name.toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR")));
   const statusLabel = (status: Product["status"]) => messages.productStatus[status];
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (includeCounts = true) => {
     setState("loading");
     try {
       const response = await authenticatedFetch(endpoint);
@@ -76,6 +80,7 @@ export function Products({ workspace, userId, onAccessLost }: {
         status: product.status ?? (product.active ? "vigente" : "arquivado") })));
       setProductCounts({});
       setState("ready");
+      if (!includeCounts) { setCountsLoading(false); return; }
       setCountsLoading(data.products.length > 0);
       const countResults = await Promise.all(data.products.map(async (product) => {
         try {
@@ -124,7 +129,8 @@ export function Products({ workspace, userId, onAccessLost }: {
     setCountsLoading(false);
   }, [endpoint, onAccessLost, products]);
 
-  useEffect(() => { if (!showExecutive) queueMicrotask(() => void load()); }, [load, showExecutive]);
+  useEffect(() => { if (!showExecutive) queueMicrotask(() => void load(!comparisonProductId)); },
+    [load, showExecutive, comparisonProductId]);
 
   useEffect(() => {
     const syncRoute = () => {
@@ -132,6 +138,8 @@ export function Products({ workspace, userId, onAccessLost }: {
       setShowExecutive(path === "/produtos/cronograma-executivo");
       setShowImport(path === "/produtos/importar");
       setScheduleProductId(path.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null);
+      setComparisonProductId(path.match(comparisonPath)?.[1].toLowerCase() ?? null);
+      setOpenMenuProductId(null);
       setScheduleReturnToExecutive(window.history.state?.returnToExecutive === true);
     };
     window.addEventListener("popstate", syncRoute);
@@ -263,6 +271,12 @@ export function Products({ workspace, userId, onAccessLost }: {
     finally { setBusy(false); }
   }
 
+  if (comparisonProductId) return <Suspense fallback={<p role="status">{messages.comparison.loading}</p>}>
+    <ProductComparisonPage key={comparisonProductId} initialProductId={comparisonProductId} products={products}
+      catalogState={state} workspaceId={workspace.id} onRetryCatalog={() => void load(false)} onAccessLost={onAccessLost}
+      onBack={() => { window.history.pushState(null, "", "/produtos"); setComparisonProductId(null); }} />
+  </Suspense>;
+
   if (showImport && canEdit) return <Suspense fallback={<p role="status">{messages.importLoading}</p>}>
     <ImportPreview workspaceId={workspace.id} onAccessLost={onAccessLost}
       onImported={(productId) => {
@@ -362,7 +376,7 @@ export function Products({ workspace, userId, onAccessLost }: {
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16M4 10h16M4 14.5h10M4 19h10" /></svg>
                 </button>
                 <span className="visually-hidden" id={`product-history-help-${product.id}`}>{messages.productHistoryUnavailable}</span>
-                {canEdit && <div className="product-card__menu">
+                <div className="product-card__menu">
                   <button type="button" className="product-card__menu-trigger"
                     aria-label={`${messages.productActions}: ${product.name}`} title={messages.productActions}
                     aria-controls={`product-menu-${product.id}`} aria-expanded={openMenuProductId === product.id}
@@ -370,16 +384,23 @@ export function Products({ workspace, userId, onAccessLost }: {
                     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg>
                   </button>
                   {openMenuProductId === product.id && <div className="product-card__menu-items" id={`product-menu-${product.id}`}>
-                    {product.active && <button type="button" onClick={() => {
+                    <a href={`/produtos/${product.id}/comparar`} onClick={(event) => {
+                      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                      event.preventDefault();
+                      window.history.pushState(null, "", event.currentTarget.href);
+                      setComparisonProductId(product.id);
+                      setOpenMenuProductId(null);
+                    }}>{messages.comparison.open}</a>
+                    {canEdit && product.active && <button type="button" onClick={() => {
                       selectProduct(product);
                       setOpenMenuProductId(null);
                     }}>{messages.editProduct}</button>}
-                    <button type="button" onClick={() => startClone(product)}>{messages.cloneProduct}</button>
-                    {(["vigente", "em_estudo", "arquivado"] as const).filter((status) => status !== product.status)
+                    {canEdit && <button type="button" onClick={() => startClone(product)}>{messages.cloneProduct}</button>}
+                    {canEdit && (["vigente", "em_estudo", "arquivado"] as const).filter((status) => status !== product.status)
                       .map((status) => <button key={status} type="button"
                         onClick={() => void changeStatus(product, status)}>{status === "arquivado" ? messages.archiveProduct : messages.productStatusSet(statusLabel(status))}</button>)}
                   </div>}
-                </div>}
+                </div>
               </div>
             </li>
           ))}
