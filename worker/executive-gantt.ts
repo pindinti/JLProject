@@ -149,11 +149,14 @@ export function createExecutiveGanttRepository(environment: WorkerEnvironment): 
     async read(workspaceId) {
       const [products, disciplines, stages, activities, targets] = await sql.transaction([
         sql`SELECT id::text AS id, name, active FROM public.products
-          WHERE workspace_id = ${workspaceId}::uuid ORDER BY active DESC, name, id`,
+          WHERE workspace_id = ${workspaceId}::uuid AND active = true
+            AND planning_classification = 'vigente' ORDER BY name, id`,
         sql`SELECT id::text AS id, product_id::text AS "productId", name,
           short_code AS "shortCode", color, display_order AS "displayOrder"
           FROM public.product_disciplines WHERE workspace_id = ${workspaceId}::uuid
-          AND deleted_at IS NULL ORDER BY product_id, display_order, id`,
+          AND deleted_at IS NULL AND product_id IN (SELECT id FROM public.products
+            WHERE workspace_id = ${workspaceId}::uuid AND active AND planning_classification = 'vigente')
+          ORDER BY product_id, display_order, id`,
         sql`SELECT s.id::text AS id, s.product_id::text AS "productId",
           s.discipline_id::text AS "disciplineId", d.code, d.color,
           s.display_name AS "displayName", s.display_order AS "displayOrder",
@@ -164,6 +167,8 @@ export function createExecutiveGanttRepository(environment: WorkerEnvironment): 
             AND pd.workspace_id = s.workspace_id AND pd.product_id = s.product_id AND pd.deleted_at IS NULL
           JOIN public.stage_definitions AS d ON d.id = s.definition_id AND d.workspace_id = s.workspace_id
           WHERE s.workspace_id = ${workspaceId}::uuid AND s.deleted_at IS NULL
+            AND s.product_id IN (SELECT id FROM public.products WHERE workspace_id = ${workspaceId}::uuid
+              AND active AND planning_classification = 'vigente')
           ORDER BY s.product_id, s.discipline_id, s.display_order, s.id`,
         sql`SELECT a.id::text AS id, a.product_id::text AS "productId",
           a.discipline_id::text AS "disciplineId", a.stage_id::text AS "stageId",
@@ -177,6 +182,8 @@ export function createExecutiveGanttRepository(environment: WorkerEnvironment): 
           LEFT JOIN public.product_disciplines AS d ON d.id = a.discipline_id
             AND d.workspace_id = a.workspace_id AND d.product_id = a.product_id AND d.deleted_at IS NULL
           WHERE a.workspace_id = ${workspaceId}::uuid AND a.deleted_at IS NULL
+            AND a.product_id IN (SELECT id FROM public.products WHERE workspace_id = ${workspaceId}::uuid
+              AND active AND planning_classification = 'vigente')
             AND ((a.stage_id IS NULL AND a.discipline_id IS NULL)
               OR (s.id IS NOT NULL AND d.id IS NOT NULL AND s.discipline_id = d.id))
           ORDER BY a.product_id, a.discipline_id NULLS FIRST, a.stage_id NULLS FIRST,
@@ -185,7 +192,9 @@ export function createExecutiveGanttRepository(environment: WorkerEnvironment): 
           display_order AS "displayOrder", to_char(target_date, 'YYYY-MM-DD') AS "targetDate",
           to_char(operational_date, 'YYYY-MM-DD') AS "operationalDate"
           FROM public.business_targets WHERE workspace_id = ${workspaceId}::uuid
-            AND deleted_at IS NULL ORDER BY product_id, display_order, id`
+            AND deleted_at IS NULL AND product_id IN (SELECT id FROM public.products
+              WHERE workspace_id = ${workspaceId}::uuid AND active AND planning_classification = 'vigente')
+          ORDER BY product_id, display_order, id`
       ], { isolationLevel: "RepeatableRead", readOnly: true });
       return assembleExecutiveGantt({ products, disciplines, stages, activities, targets });
     }

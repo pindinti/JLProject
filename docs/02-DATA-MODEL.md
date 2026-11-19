@@ -154,3 +154,6 @@ The migration seeds existing products at version and watermark zero. It does not
 - **Detailed Gantt:** join selected `schedule_versions` / `activity_schedules` with activities, stages, and disciplines and render expandable groups.
 - **Portfolio Gantt:** for each product choose its official or selected version, group activities by discipline/stage, calculate min/max dates, and pack overlapping intervals into visual lanes without modifying data.
 - **Revision comparison:** join by stable IDs and detect inserted/removed activities, date differences, target differences, and dependency changes.
+## Phase 2 status model supersession
+
+D068 supersedes the forward-looking `schedule_versions` scenario/revision model above. The canonical working schedule remains product-scoped. `products.active` determines archival read-only behavior; a constrained active planning classification distinguishes `vigente` and `em_estudo`. The API derives `arquivado` from `active = false`. A cloned product has independent working rows and a new immutable R00. No product family, parent clone pointer, formal R01+, scenario table, or adopted-revision pointer is part of this phase. Existing historical R00 and audit rows are unchanged.

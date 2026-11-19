@@ -7,6 +7,7 @@ export interface Product {
   name: string;
   description: string | null;
   active: boolean;
+  status: "vigente" | "em_estudo" | "arquivado";
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -14,7 +15,7 @@ export interface Product {
 
 export interface ProductInput { name: string; description: string | null }
 export type ProductMutation = { status: "ok"; product: Product } |
-  { status: "duplicate" | "not_found" | "stale" };
+  { status: "duplicate" | "not_found" | "stale" | "denied" | "invalid" };
 export type ProductCloneMutation = { status: "ok"; product: Product; revisionId: string } |
   { status: "duplicate" | "not_found" | "denied" | "invalid" };
 
@@ -24,7 +25,7 @@ export interface ProductRepository {
   create(workspaceId: string, actorId: string, input: ProductInput): Promise<ProductMutation>;
   clone(workspaceId: string, sourceProductId: string, actorId: string, name: string): Promise<ProductCloneMutation>;
   update(workspaceId: string, productId: string, actorId: string, input: ProductInput, version: number): Promise<ProductMutation>;
-  archive(workspaceId: string, productId: string, actorId: string, version: number): Promise<ProductMutation>;
+  changeStatus(workspaceId: string, productId: string, actorId: string, status: Product["status"], version: number, reason: string): Promise<ProductMutation>;
 }
 
 function mapProduct(row: Record<string, unknown>): Product {
@@ -32,7 +33,9 @@ function mapProduct(row: Record<string, unknown>): Product {
   return {
     id: String(row["id"]), workspaceId: String(row["workspaceId"]),
     name: String(row["name"]), description: row["description"] === null ? null : String(row["description"]),
-    active: row["active"] === true, version: Number(row["version"]),
+    active: row["active"] === true,
+    status: row["active"] === true ? row["planningClassification"] === "em_estudo" ? "em_estudo" : "vigente" : "arquivado",
+    version: Number(row["version"]),
     createdAt: timestamp(row["createdAt"]), updatedAt: timestamp(row["updatedAt"])
   };
 }
@@ -48,7 +51,7 @@ export function createProductRepository(environment: WorkerEnvironment): Product
   async function find(workspaceId: string, productId: string): Promise<Product | null> {
     const rows = await sql`
       SELECT id::text AS id, workspace_id::text AS "workspaceId", name, description,
-             active, version, created_at AS "createdAt", updated_at AS "updatedAt"
+             active, planning_classification AS "planningClassification", version, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM public.products
       WHERE workspace_id = ${workspaceId}::uuid AND id = ${productId}::uuid
       LIMIT 1
@@ -64,7 +67,7 @@ export function createProductRepository(environment: WorkerEnvironment): Product
     async list(workspaceId) {
       const rows = await sql`
         SELECT id::text AS id, workspace_id::text AS "workspaceId", name, description,
-               active, version, created_at AS "createdAt", updated_at AS "updatedAt"
+               active, planning_classification AS "planningClassification", version, created_at AS "createdAt", updated_at AS "updatedAt"
         FROM public.products
         WHERE workspace_id = ${workspaceId}::uuid
         ORDER BY active DESC, name, id
@@ -78,7 +81,7 @@ export function createProductRepository(environment: WorkerEnvironment): Product
         VALUES (${workspaceId}::uuid, ${input.name}, ${input.description}, ${actorId}::uuid, ${actorId}::uuid)
         ON CONFLICT DO NOTHING
         RETURNING id::text AS id, workspace_id::text AS "workspaceId", name, description,
-                  active, version, created_at AS "createdAt", updated_at AS "updatedAt"
+                  active, planning_classification AS "planningClassification", version, created_at AS "createdAt", updated_at AS "updatedAt"
       `;
       return rows[0] ? { status: "ok", product: mapProduct(rows[0]) } : { status: "duplicate" };
     },
@@ -109,7 +112,7 @@ export function createProductRepository(environment: WorkerEnvironment): Product
           WHERE workspace_id = ${workspaceId}::uuid AND id = ${productId}::uuid
             AND version = ${version} AND active = true
           RETURNING id::text AS id, workspace_id::text AS "workspaceId", name, description,
-                    active, version, created_at AS "createdAt", updated_at AS "updatedAt"
+                    active, planning_classification AS "planningClassification", version, created_at AS "createdAt", updated_at AS "updatedAt"
         `;
         return rows[0] ? { status: "ok", product: mapProduct(rows[0]) } : missingOrStale(workspaceId, productId);
       } catch (error) {
@@ -117,16 +120,16 @@ export function createProductRepository(environment: WorkerEnvironment): Product
         throw error;
       }
     },
-    async archive(workspaceId, productId, actorId, version) {
+    async changeStatus(workspaceId, productId, actorId, status, version, reason) {
       const rows = await sql`
-        UPDATE public.products
-        SET active = false, updated_by = ${actorId}::uuid, updated_at = now(), version = version + 1
-        WHERE workspace_id = ${workspaceId}::uuid AND id = ${productId}::uuid
-          AND version = ${version} AND active = true
-        RETURNING id::text AS id, workspace_id::text AS "workspaceId", name, description,
-                  active, version, created_at AS "createdAt", updated_at AS "updatedAt"
+        SELECT public.change_product_status(${workspaceId}::uuid, ${productId}::uuid,
+          ${actorId}::uuid, ${status}, ${version}, ${reason}) AS result
       `;
-      return rows[0] ? { status: "ok", product: mapProduct(rows[0]) } : missingOrStale(workspaceId, productId);
+      const result = rows[0]?.["result"] as { status: string; product?: Record<string, unknown> } | undefined;
+      if (result?.status === "updated" && result.product) return { status: "ok", product: mapProduct(result.product) };
+      if (result?.status === "not_found" || result?.status === "stale" ||
+          result?.status === "denied" || result?.status === "invalid") return { status: result.status };
+      throw new Error("Unexpected product status result.");
     }
   };
 }

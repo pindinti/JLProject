@@ -89,7 +89,7 @@ describe("compact Executive Gantt Home", () => {
     expect(screen.getByRole("button", { name: "Abrir cronograma executivo" })).toBeDisabled();
   });
 
-  it("clusters same-day targets, keeps their colors, and toggles targets and archived products", async () => {
+  it("clusters same-day targets, keeps their colors, and toggles targets", async () => {
     const { container } = render(<ExecutiveGanttHome workspaceId={workspace} onAccessLost={vi.fn()} />);
     await screen.findByRole("table", { name: "Cronograma executivo" });
     const cluster = container.querySelector<HTMLElement>('[data-target-date="2025-01-02"]')!;
@@ -100,9 +100,7 @@ describe("compact Executive Gantt Home", () => {
     expect(cluster.querySelectorAll(".executive-gantt__diamond")[1]).toHaveStyle({ backgroundColor: "#445566" });
     fireEvent.click(screen.getByLabelText("Mostrar metas"));
     expect(container.querySelector("[data-target-date]")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Mostrar arquivados"));
-    expect(within(chart()).getAllByRole("row")).toHaveLength(2);
-    expect(container.querySelector('[data-product-id="archived"]')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Mostrar arquivados")).not.toBeInTheDocument();
     expect(auth.fetch.mock.calls.filter(([path]) => String(path).endsWith("/executive-gantt")))
       .toEqual([[`/api/workspaces/${workspace}/executive-gantt`]]);
     await act(async () => { await Promise.resolve(); });

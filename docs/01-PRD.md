@@ -70,9 +70,9 @@ Select a predecessor from a searchable picker organized by discipline and stage.
 
 When a date changes, move only downstream activities that violate newly applicable dependency constraints. Preserve unaffected dates, existing duration, and the configured calendar. Preview impacts before saving; commit dates and audit changes atomically. Never automatically move successors earlier. With zero dependencies, only the edited activity changes.
 
-### F11 — Revisions and scenarios
+### F11 — Product status and study workflow
 
-Keep the original imported `R00` immutable. Support independent draft scenarios, preview and comparison of date/goal/dependency differences, and controlled publication of new immutable revisions (`R01`, `R02`, ...). Restoring a historical revision creates another revision, never deletes intermediate history.
+Keep each original `R00` immutable. Products are manually classified as `vigente`, `em_estudo`, or `arquivado`. A clone is an independent editable product that begins `em_estudo` with its own R00. Only `vigente` products appear in the Executive Gantt. Comparison of two selected products is a possible later phase; formal revisions and separate scenario storage are outside the approved workflow.
 
 ## Explicitly out of scope for MVP
 

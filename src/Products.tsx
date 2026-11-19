@@ -13,6 +13,7 @@ interface Product {
   name: string;
   description: string | null;
   active: boolean;
+  status: "vigente" | "em_estudo" | "arquivado";
   version: number;
 }
 
@@ -45,6 +46,8 @@ export function Products({ workspace, userId, onAccessLost }: {
   const [cloneName, setCloneName] = useState("");
   const [cloneError, setCloneError] = useState("");
   const [openMenuProductId, setOpenMenuProductId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | Product["status"]>("all");
   const [scheduleProductId, setScheduleProductId] = useState<string | null>(() =>
     window.location.pathname.match(/^\/produtos\/([0-9a-f-]{36})\/cronograma$/i)?.[1] ?? null
   );
@@ -56,6 +59,10 @@ export function Products({ workspace, userId, onAccessLost }: {
   const canEdit = workspace.role === "admin" || workspace.role === "editor";
   const endpoint = `/api/workspaces/${workspace.id}/products`;
   const selected = products.find((product) => product.id === selectedId) ?? null;
+  const visibleProducts = products.filter((product) =>
+    (statusFilter === "all" || product.status === statusFilter) &&
+    product.name.toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR")));
+  const statusLabel = (status: Product["status"]) => messages.productStatus[status];
 
   const load = useCallback(async () => {
     setState("loading");
@@ -65,7 +72,8 @@ export function Products({ workspace, userId, onAccessLost }: {
       if (!response.ok) throw new Error("Product lookup failed.");
       const data = await response.json() as { products: Product[] };
       if (!Array.isArray(data.products)) throw new Error("Product response is invalid.");
-      setProducts(data.products);
+      setProducts(data.products.map((product) => ({ ...product,
+        status: product.status ?? (product.active ? "vigente" : "arquivado") })));
       setProductCounts({});
       setState("ready");
       setCountsLoading(data.products.length > 0);
@@ -190,26 +198,30 @@ export function Products({ workspace, userId, onAccessLost }: {
     finally { setBusy(false); }
   }
 
-  async function archive(product: Product | null = selected) {
-    if (!canEdit || !product?.active || busy || !window.confirm(messages.confirmProductArchive(product.name))) return;
+  async function changeStatus(product: Product, status: Product["status"]) {
+    if (!canEdit || busy || status === product.status) return;
+    if (status === "vigente" && !window.confirm(messages.confirmProductVisible(product.name))) return;
+    if (status === "arquivado" && !window.confirm(messages.confirmProductArchive(product.name))) return;
+    const reason = window.prompt(messages.productStatusReason);
+    if (!reason?.trim() || reason.trim().length < 10) return;
     setBusy(true);
     setFeedback("");
     try {
-      const response = await authenticatedFetch(`${endpoint}/${product.id}/archive`, {
+      const response = await authenticatedFetch(`${endpoint}/${product.id}/status`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: product.version })
+        body: JSON.stringify({ status, version: product.version, reason: reason.trim() })
       });
       if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
       if (!response.ok) {
         const data = await response.json() as { code?: string };
-        setFeedback(data.code === "stale" ? messages.productStale : messages.productArchiveError);
+        setFeedback(data.code === "stale" ? messages.productStale : messages.productStatusError);
         return;
       }
       await load();
       if (selectedId === product.id) setSelectedId(null);
       setOpenMenuProductId(null);
-      setFeedback(messages.productArchived);
-    } catch { setFeedback(messages.productArchiveError); }
+      setFeedback(messages.productStatusSaved);
+    } catch { setFeedback(messages.productStatusError); }
     finally { setBusy(false); }
   }
 
@@ -309,9 +321,20 @@ export function Products({ workspace, userId, onAccessLost }: {
       {state === "loading" && <p role="status">{messages.productsLoading}</p>}
       {state === "error" && <div role="alert"><p>{messages.productsError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}
       {state === "ready" && products.length === 0 && <p>{messages.productsEmpty}</p>}
-      {state === "ready" && products.length > 0 && (
+      {state === "ready" && products.length > 0 && <div className="product-filters">
+        <label>{messages.productSearch}<input value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <label>{messages.productStatusFilter}<select value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+          <option value="all">{messages.productStatusAll}</option>
+          {(["vigente", "em_estudo", "arquivado"] as const).map((status) =>
+            <option key={status} value={status}>{statusLabel(status)}</option>)}
+        </select></label>
+      </div>}
+      {state === "ready" && products.length > 0 && visibleProducts.length === 0 &&
+        <p>{messages.productFilterEmpty}</p>}
+      {state === "ready" && visibleProducts.length > 0 && (
         <ul className="product-list">
-          {products.map((product) => (
+          {visibleProducts.map((product) => (
             <li className="product-card" key={product.id}>
               <a className="product-card__body" href={`/produtos/${product.id}/cronograma`}
                 onClick={(event) => { event.preventDefault(); openSchedule(product); }}>
@@ -320,7 +343,7 @@ export function Products({ workspace, userId, onAccessLost }: {
                   {product.name}
                   </span>
                   <span className={`product-card__status${product.active ? "" : " product-card__status--archived"}`}>
-                    {product.active ? messages.active : messages.archived}
+                    {statusLabel(product.status)}
                   </span>
                 </div>
                 <dl className="product-card__counts" aria-label={messages.scheduleCounts}>
@@ -339,7 +362,7 @@ export function Products({ workspace, userId, onAccessLost }: {
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16M4 10h16M4 14.5h10M4 19h10" /></svg>
                 </button>
                 <span className="visually-hidden" id={`product-history-help-${product.id}`}>{messages.productHistoryUnavailable}</span>
-                {canEdit && product.active && <div className="product-card__menu">
+                {canEdit && <div className="product-card__menu">
                   <button type="button" className="product-card__menu-trigger"
                     aria-label={`${messages.productActions}: ${product.name}`} title={messages.productActions}
                     aria-controls={`product-menu-${product.id}`} aria-expanded={openMenuProductId === product.id}
@@ -347,12 +370,14 @@ export function Products({ workspace, userId, onAccessLost }: {
                     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg>
                   </button>
                   {openMenuProductId === product.id && <div className="product-card__menu-items" id={`product-menu-${product.id}`}>
-                    <button type="button" onClick={() => {
+                    {product.active && <button type="button" onClick={() => {
                       selectProduct(product);
                       setOpenMenuProductId(null);
-                    }}>{messages.editProduct}</button>
+                    }}>{messages.editProduct}</button>}
                     <button type="button" onClick={() => startClone(product)}>{messages.cloneProduct}</button>
-                    <button type="button" onClick={() => void archive(product)}>{messages.archiveProduct}</button>
+                    {(["vigente", "em_estudo", "arquivado"] as const).filter((status) => status !== product.status)
+                      .map((status) => <button key={status} type="button"
+                        onClick={() => void changeStatus(product, status)}>{status === "arquivado" ? messages.archiveProduct : messages.productStatusSet(statusLabel(status))}</button>)}
                   </div>}
                 </div>}
               </div>
@@ -393,8 +418,10 @@ export function Products({ workspace, userId, onAccessLost }: {
           ) : (
             <dl><dt>{messages.productName}</dt><dd>{selected.name}</dd><dt>{messages.productDescription}</dt><dd>{selected.description || messages.noDescription}</dd></dl>
           )}
-          {canEdit && selected.active && <div className="product-detail-actions">
-            <button type="button" disabled={busy} onClick={() => void archive(selected)}>{messages.archiveProduct}</button>
+          {canEdit && <div className="product-detail-actions">
+            {(["vigente", "em_estudo", "arquivado"] as const).filter((status) => status !== selected.status)
+              .map((status) => <button key={status} type="button" disabled={busy}
+                onClick={() => void changeStatus(selected, status)}>{status === "arquivado" ? messages.archiveProduct : messages.productStatusSet(statusLabel(status))}</button>)}
           </div>}
         </section>
       )}

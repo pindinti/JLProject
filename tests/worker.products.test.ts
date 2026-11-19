@@ -12,7 +12,7 @@ const base = `https://app.test/api/workspaces/${workspace}/products`;
 const environment = { NEON_AUTH_BASE_URL: "https://auth.example.neon.tech/neondb/auth" };
 const product: Product = {
   id: productId, workspaceId: workspace, name: "Synthetic product", description: null,
-  active: true, version: 1, createdAt: "2026-11-07T00:00:00.000Z", updatedAt: "2026-11-07T00:00:00.000Z"
+  active: true, status: "vigente", version: 1, createdAt: "2026-11-07T00:00:00.000Z", updatedAt: "2026-11-07T00:00:00.000Z"
 };
 
 function membership(role: WorkspaceRole | null, active = true): MembershipRepository {
@@ -30,7 +30,7 @@ function products(): ProductRepository {
     create: vi.fn(async () => ({ status: "ok" as const, product })),
     clone: vi.fn(async () => ({ status: "ok" as const, product: { ...product, id: "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", name: "Cloned product" }, revisionId: "c3aa998a-a2c3-4376-9105-90af0d1dbfe3" })),
     update: vi.fn(async () => ({ status: "ok" as const, product: { ...product, version: 2 } })),
-    archive: vi.fn(async () => ({ status: "ok" as const, product: { ...product, active: false, version: 2 } }))
+    changeStatus: vi.fn(async () => ({ status: "ok" as const, product: { ...product, active: false, status: "arquivado" as const, version: 2 } }))
   };
 }
 
@@ -47,6 +47,26 @@ async function call(input: Request, role: WorkspaceRole | null, repository = pro
 }
 
 describe("product API", () => {
+  it("controls every status transition with a reason, version, and workspace role", async () => {
+    const repository = products();
+    for (const status of ["vigente", "em_estudo", "arquivado"] as const) {
+      const response = await call(request(`${base}/${productId}/status`, "POST",
+        { status, version: 1, reason: "Reviewed product status" }), "editor", repository);
+      expect(response.status).toBe(200);
+      expect(repository.changeStatus).toHaveBeenCalledWith(workspace, productId, actor,
+        status, 1, "Reviewed product status");
+    }
+    expect((await call(request(`${base}/${productId}/status`, "POST",
+      { status: "em_estudo", version: 1, reason: "Reviewed product status" }), "viewer", repository)).status).toBe(403);
+    expect((await call(request(`${base}/${productId}/status`, "POST",
+      { status: "em_estudo", version: 1, reason: "short" }), "editor", repository)).status).toBe(400);
+    expect((await call(request(`${base}/${productId}/status`, "POST",
+      { status: "em_estudo", version: 1, reason: "Reviewed product status" }), "editor",
+      { ...repository, changeStatus: async () => ({ status: "stale" }) })).status).toBe(409);
+    expect((await call(request(`${base}/${productId}/status`, "POST",
+      { status: "em_estudo", version: 1, reason: "Reviewed product status" }), "editor",
+      { ...repository, changeStatus: async () => ({ status: "denied" }) })).status).toBe(403);
+  });
   it("lists and reads only within an active authorized workspace", async () => {
     const repository = products();
     const list = await call(request(), "viewer", repository);
@@ -66,8 +86,8 @@ describe("product API", () => {
     expect(repository.create).toHaveBeenCalledWith(workspace, actor, input);
     expect((await call(request(`${base}/${productId}`, "PATCH", { ...input, version: 1 }), "admin", repository)).status).toBe(200);
     expect(repository.update).toHaveBeenCalledWith(workspace, productId, actor, input, 1);
-    expect((await call(request(`${base}/${productId}/archive`, "POST", { version: 1 }), "editor", repository)).status).toBe(200);
-    expect(repository.archive).toHaveBeenCalledWith(workspace, productId, actor, 1);
+    expect((await call(request(`${base}/${productId}/archive`, "POST", { status: "arquivado", version: 1, reason: "Archive for study" }), "editor", repository)).status).toBe(200);
+    expect(repository.changeStatus).toHaveBeenCalledWith(workspace, productId, actor, "arquivado", 1, "Archive for study");
   });
 
   it("clones for active editors and admins using the verified identity and workspace", async () => {
@@ -123,7 +143,7 @@ describe("product API", () => {
     expect((await call(request(base.replace(workspace, otherWorkspace)), "admin", repository)).status).toBe(403);
     expect(repository.create).not.toHaveBeenCalled();
     expect(repository.update).not.toHaveBeenCalled();
-    expect(repository.archive).not.toHaveBeenCalled();
+    expect(repository.changeStatus).not.toHaveBeenCalled();
   });
 
   it("rejects malformed data, stale versions, duplicates, and foreign product IDs", async () => {

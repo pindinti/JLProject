@@ -122,7 +122,8 @@ describe("executive Gantt projection", () => {
     for (const query of queries) {
       expect(query.text.trim()).toMatch(/^SELECT /);
       expect(query.text).toContain("workspace_id = ?::uuid");
-      expect(query.values).toEqual([workspaceId]);
+      expect(query.values.every((value) => value === workspaceId)).toBe(true);
+      expect(query.text).toContain("planning_classification = 'vigente'");
     }
   });
 });

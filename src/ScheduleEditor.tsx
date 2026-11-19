@@ -14,7 +14,7 @@ import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import type { SkippedDateReason, SkippedWorkingDate } from "../domain/working-day-calculation";
 import { rememberRecentCustomColor } from "./recent-color-history";
 
-export interface ScheduleProduct { id: string; name: string; active: boolean }
+export interface ScheduleProduct { id: string; name: string; active: boolean; status?: "vigente" | "em_estudo" | "arquivado" }
 interface Activity {
   id: string; stageId: string | null; name: string; activityType: string | null;
   plannedStart: string | null; plannedEnd: string | null;
@@ -883,7 +883,10 @@ export function ScheduleEditor({ workspace, product, userId = null, onBack, onAc
           <span aria-hidden="true">‹</span> {messages.products}
         </button>
         <h2 id="schedule-title">{product.name}</h2>
+        <span className="product-card__status">{messages.productStatus[product.status ?? (product.active ? "vigente" : "arquivado")]}</span>
       </header>
+      {product.status === "em_estudo" && <p className="product-study-notice" role="status">{messages.productStudyNotice}</p>}
+      {product.status === "arquivado" && <p className="product-study-notice" role="status">{messages.productArchivedNotice}</p>}
       {state === "loading" && <p role="status">{messages.scheduleLoading}</p>}
       {state === "notFound" && <p role="alert">{messages.scheduleNotFound}</p>}
       {state === "error" && <div role="alert"><p>{messages.scheduleLoadError}</p><button type="button" onClick={() => void load()}>{messages.retry}</button></div>}

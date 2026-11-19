@@ -38,7 +38,6 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
   const [products, setProducts] = useState<ExecutiveProduct[]>([]);
   const [loadedWorkspaceId, setLoadedWorkspaceId] = useState(workspaceId);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [showArchived, setShowArchived] = useState(true);
   const [showTargets, setShowTargets] = useState(true);
   const [zoom, setZoom] = useState<"week" | "month">("month");
   const [today, setToday] = useState(() => saoPauloCivilDate(new Date()));
@@ -87,9 +86,8 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
   }, []);
 
   const displayStatus = loadedWorkspaceId === workspaceId ? status : "loading";
-  const visibleProducts = useMemo(() => loadedWorkspaceId !== workspaceId ? []
-    : showArchived ? products : products.filter((product) => product.active),
-  [loadedWorkspaceId, workspaceId, products, showArchived]);
+  const visibleProducts = useMemo(() => loadedWorkspaceId !== workspaceId ? [] : products,
+    [loadedWorkspaceId, workspaceId, products]);
   const timeline = useMemo(() => makeExecutiveTimeline(visibleProducts, zoom, today), [visibleProducts, zoom, today]);
   const calendarYearKey = useMemo(() => {
     const first = Number(civilFromDay(timeline.startDay).slice(0, 4));
@@ -136,7 +134,7 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
     const labelWidth = viewportRef.current.querySelector(".executive-gantt__header-label")?.getBoundingClientRect().width || 220;
     viewportRef.current.scrollLeft = Math.max(0, (focus - timeline.startDay) * timeline.dayWidth -
       (viewportRef.current.clientWidth - labelWidth) / 2);
-  }, [displayStatus, workspaceId, zoom, showArchived, visibleProducts, timeline, today]);
+  }, [displayStatus, workspaceId, zoom, visibleProducts, timeline, today]);
 
   function openDetails(event: MouseEvent<HTMLButtonElement>, productName: string, stages: StageDetail[]) {
     detailTrigger.current = event.currentTarget;
@@ -159,9 +157,6 @@ export function ExecutiveGanttHome({ workspaceId, onAccessLost, onOpenFull }: {
           <button key={value} type="button" aria-pressed={zoom === value}
             onClick={() => setZoom(value)}>{label}</button>)}
       </div>
-      <label className="executive-gantt__toggle"><input type="checkbox" checked={showArchived}
-        onChange={(event) => setShowArchived(event.target.checked)} />
-        {messages.executiveShowArchived}</label>
       <label className="executive-gantt__toggle"><input type="checkbox" checked={showTargets}
         onChange={(event) => setShowTargets(event.target.checked)} />
         {messages.executiveShowTargets}</label>

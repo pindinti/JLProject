@@ -88,7 +88,6 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [level, setLevel] = useState<ExecutiveDetailLevel>("products");
   const [zoom, setZoom] = useState<Zoom>("month");
-  const [showArchived, setShowArchived] = useState(true);
   const [showTargets, setShowTargets] = useState(true);
   const [productFilter, setProductFilter] = useState("");
   const [disciplineFilter, setDisciplineFilter] = useState("");
@@ -138,8 +137,7 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
 
   const displayStatus = loadedWorkspaceId === workspaceId ? status : "loading";
   const availableProducts = loadedWorkspaceId === workspaceId ? products : noProducts;
-  const productOptions = useMemo(() => availableProducts.filter((product) => showArchived || product.active),
-    [availableProducts, showArchived]);
+  const productOptions = useMemo(() => availableProducts, [availableProducts]);
   const disciplineOptions = useMemo(() => productOptions.filter((product) => !productFilter || product.id === productFilter)
     .flatMap((product) => product.disciplines.map((discipline) => ({ product, discipline }))),
   [productOptions, productFilter]);
@@ -225,14 +223,6 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
         {zoomLevels.map((value) => <button key={value} type="button" aria-pressed={zoom === value}
           onClick={() => setZoom(value)}>{messages.executiveZoom[value]}</button>)}
       </div>
-      <label><input type="checkbox" checked={showArchived} onChange={(event) => {
-        const checked = event.target.checked;
-        setShowArchived(checked);
-        if (!checked && products.find((product) => product.id === productFilter)?.active === false) {
-          setProductFilter(""); setDisciplineFilter("");
-        }
-      }} />
-        {messages.executiveShowArchived}</label>
       <label><input type="checkbox" checked={showTargets} onChange={(event) => setShowTargets(event.target.checked)} />
         {messages.executiveShowTargets}</label>
       <button type="button" className="back-button executive-full__refresh" onClick={() => void load()}>
@@ -253,7 +243,7 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
           {product.name} · {discipline.name}</option>)}
       </select>
       <button type="button" className="back-button" onClick={() => {
-        setProductFilter(""); setDisciplineFilter(""); setShowArchived(true);
+        setProductFilter(""); setDisciplineFilter("");
       }}>{messages.executiveResetFilters}</button>
       <div className="executive-full__expansion-actions">
         <button type="button" className="back-button" disabled={level === "products"} onClick={() => {

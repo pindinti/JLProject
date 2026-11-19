@@ -78,6 +78,7 @@ const detailLabels: Record<string, string> = {
   activity_type: messages.productHistoryFieldActivityType,
   notes: messages.productHistoryFieldNotes,
   active: messages.productHistoryFieldActive,
+  planning_classification: messages.productHistoryFieldPlanningClassification,
   is_active: messages.productHistoryFieldActive,
 };
 
@@ -173,6 +174,7 @@ const operationTypeLabels: Record<string, string> = {
   product_created: messages.productHistoryTypeProductCreated,
   product_metadata_updated: messages.productHistoryOperationProductMetadata,
   product_archived: messages.productHistoryOperationProductArchived,
+  product_status_changed: messages.productHistoryOperationProductStatus,
   schedule_imported: messages.productHistoryTypeImport,
   activity_created_with_dates: messages.productHistoryOperationActivityCreated,
   stage_created_with_dates: messages.productHistoryOperationStageCreated,
@@ -252,6 +254,8 @@ function displayScalar(value: unknown, key: string): string | null {
           value === "business_target" ? messages.productHistoryTarget : value;
     if (key === "planning_mode") return value === "working_days" ? messages.productHistoryPlanningByWorkingDays :
       value === "manual" ? messages.productHistoryPlanningManual : value;
+    if (key === "planning_classification") return value === "em_estudo"
+      ? messages.productStatus.em_estudo : messages.productStatus.vigente;
     return value;
   }
   if (typeof value === "boolean" && (key === "active" || key === "is_active"))

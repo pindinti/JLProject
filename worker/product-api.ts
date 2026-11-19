@@ -3,7 +3,7 @@ import type { Identity } from "./auth";
 import { createProductRepository, type ProductCloneMutation, type ProductInput, type ProductMutation, type ProductRepository } from "./products";
 import type { WorkerEnvironment } from "./database";
 
-const productPath = /^\/api\/workspaces\/([^/]+)\/products(?:\/([^/]+)(?:\/(archive|clone))?)?$/;
+const productPath = /^\/api\/workspaces\/([^/]+)\/products(?:\/([^/]+)(?:\/(archive|clone|status))?)?$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ProductRepositoryFactory = (environment: WorkerEnvironment) => ProductRepository;
@@ -39,9 +39,16 @@ function parseProductInput(body: Record<string, unknown>, editing: boolean):
   return { input: { name, description }, ...(editing ? { version: Number(body["version"]) } : {}) };
 }
 
-function parseArchiveBody(body: Record<string, unknown>): number | null {
-  return Object.keys(body).length === 1 && Number.isSafeInteger(body["version"]) && Number(body["version"]) > 0
-    ? Number(body["version"]) : null;
+function parseStatusBody(body: Record<string, unknown>): { status: "vigente" | "em_estudo" | "arquivado"; version: number; reason: string } | null {
+  if (Object.keys(body).sort().join(",") !== "reason,status,version" ||
+      !["vigente", "em_estudo", "arquivado"].includes(String(body["status"])) ||
+      !Number.isSafeInteger(body["version"]) || Number(body["version"]) < 1 ||
+      typeof body["reason"] !== "string") return null;
+  const reason = body["reason"].trim();
+  return reason.length >= 10 && reason.length <= 2000 &&
+    !Array.from(reason).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+    ? { status: body["status"] as "vigente" | "em_estudo" | "arquivado", version: Number(body["version"]), reason }
+    : null;
 }
 
 function parseCloneBody(body: Record<string, unknown>): string | null {
@@ -56,6 +63,8 @@ function mutationResponse(result: ProductMutation, workspaceId: string, created 
     : response({ error: "Serviço indisponível." }, 503);
   if (result.status === "duplicate") return response({ code: "duplicate", error: "Já existe um produto com esse nome neste espaço de trabalho." }, 409);
   if (result.status === "not_found") return response({ error: "Produto não encontrado." }, 404);
+  if (result.status === "denied") return response({ error: "Acesso não autorizado." }, 403);
+  if (result.status === "invalid") return response({ error: "Dados do produto inválidos." }, 400);
   return response({ code: "stale", error: "O produto foi alterado. Atualize a página e tente novamente." }, 409);
 }
 
@@ -115,11 +124,13 @@ export async function handleProductRequest(
     if (!parsed || parsed.version === undefined) return response({ error: "Dados do produto inválidos." }, 400);
     return mutationResponse(await repository.update(scope, target, identity.subject, parsed.input, parsed.version), scope);
   }
-  if (request.method === "POST" && target && action === "archive") {
+  if (request.method === "POST" && target && (action === "archive" || action === "status")) {
     const body = await readBody(request);
-    const version = body && parseArchiveBody(body);
-    if (version === null) return response({ error: "Dados do produto inválidos." }, 400);
-    return mutationResponse(await repository.archive(scope, target, identity.subject, version), scope);
+    const parsed = body && parseStatusBody(body);
+    if (!parsed || (action === "archive" && parsed.status !== "arquivado"))
+      return response({ error: "Dados do produto inválidos." }, 400);
+    return mutationResponse(await repository.changeStatus(scope, target, identity.subject,
+      parsed.status, parsed.version, parsed.reason), scope);
   }
   if (request.method === "POST" && target && action === "clone") {
     const body = await readBody(request);

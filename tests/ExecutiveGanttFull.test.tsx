@@ -105,12 +105,11 @@ describe("full Executive Gantt", () => {
       String(path).endsWith("/executive-gantt"))).toHaveLength(2));
   });
 
-  it("filters archives and disciplines, collapses groups, and navigates to a product", async () => {
+  it("filters disciplines, collapses groups, and navigates to a product", async () => {
     const { container } = render(<ExecutiveGanttFull {...props} />);
     await screen.findByRole("table", { name: "Cronograma executivo" });
     fireEvent.click(screen.getByRole("button", { name: "Etapas" }));
-    fireEvent.click(screen.getByLabelText("Mostrar arquivados"));
-    expect(container.querySelector('[data-row-key="product:archived"]')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Mostrar arquivados")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Disciplina"), { target: { value: "d2" } });
     expect(container.querySelector('[data-row-key="stage:s0"]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-row-key="stage:s1"]')).toBeInTheDocument();

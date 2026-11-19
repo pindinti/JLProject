@@ -324,3 +324,6 @@ public/brand/jlproject-mark-dark.svg
 - Existing persisted dates, bar colors, milestone colors, audit history, authorization rules, and immutable R00 must take precedence over visual styling changes.
 
 **When instructions conflict:** the user's latest approved layout decisions and this document's no-sidebar/full-width Gantt requirements override older layout sketches. Existing application security and persistence invariants remain mandatory.
+## Product status presentation
+
+Product cards and the schedule header show the pt-BR labels `Vigente`, `Em estudo`, and `Arquivado`. Study schedules use a compact persistent notice explaining Executive Gantt exclusion. Archived schedules remain available for read-only consultation. Product lists offer search and status filtering. Both Executive Gantts contain only `Vigente` products and have no archived-product toggle. Status controls stay in the existing product actions; no sidebar is introduced.

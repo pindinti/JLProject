@@ -53,11 +53,11 @@ Phase 3A.5a adds optional individual activity color overrides with stage-color i
 
 **Acceptance:** no Excel dependency inference, multiple predecessors, cycles blocked, only required successors move, never automatic early moves, operation-grouped audit history, rollback on failure.
 
-## Phase 7 — Scenarios, revisions, comparison
+## Phase 7 — Product status and optional comparison
 
-**Goal:** independent scenarios, immutable publication `R01+`, comparison of dates/targets/links, restore by publishing a new snapshot.
+**Goal:** classify products as `vigente`, `em_estudo`, or `arquivado`; use independent product clones for studies. A later, separately approved phase may compare any two selected products.
 
-**Acceptance:** editing scenario leaves official revision untouched; R00 never mutates; restoring prior state creates a new revision and preserves all predecessors.
+**Acceptance:** study edits do not change their source product; R00 never mutates; only `vigente` products appear in the Executive Gantt.
 
 ## Phase 8 — Export, hardening, production deployment
 

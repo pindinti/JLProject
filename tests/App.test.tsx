@@ -197,8 +197,8 @@ describe("products UI", () => {
       screen.getByRole("button", { name: "Cadastrar produto" }));
     expect(homeHeader?.querySelector(".products-primary-actions")).toContainElement(
       screen.getByRole("button", { name: "Importar planilha" }));
-    expect(homeHeader?.nextElementSibling).toHaveClass("product-list");
-    expect(homeHeader?.nextElementSibling?.nextElementSibling).toHaveClass("executive-gantt");
+    expect(homeHeader?.nextElementSibling).toHaveClass("product-filters");
+    expect(homeHeader?.nextElementSibling?.nextElementSibling).toHaveClass("product-list");
     expect(screen.queryByRole("button", { name: "Voltar" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cadastrar produto" }));
     fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Novo teste" } });
@@ -209,6 +209,22 @@ describe("products UI", () => {
       `/api/workspaces/${workspace.id}/products`, expect.objectContaining({ method: "POST" })
     ));
     expect(await screen.findByText("Produto criado.")).toBeInTheDocument();
+  });
+
+  it("filters products by name and status without hiding archived consultation", async () => {
+    const study = { ...product, id: "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", name: "Study product", status: "em_estudo" };
+    const archived = { ...product, id: "c3aa998a-a2c3-4376-9105-90af0d1dbfe3", name: "Archived product", active: false, status: "arquivado" };
+    auth.authenticatedFetch.mockImplementation((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path.endsWith("/hierarchy") ? { hierarchy: { disciplines: [] } } :
+        { products: [{ ...product, status: "vigente" }, study, archived] }
+    ), { status: 200 })));
+    render(<App />);
+    expect(await screen.findByRole("link", { name: /Study product/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Filtrar por status"), { target: { value: "arquivado" } });
+    expect(screen.getByRole("link", { name: /Archived product/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Study product/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Buscar produto"), { target: { value: "missing" } });
+    expect(screen.getByText("Nenhum produto corresponde aos filtros.")).toBeInTheDocument();
   });
 
   it("opens a product schedule and restores the route after remount", async () => {
@@ -334,6 +350,7 @@ describe("products UI", () => {
 
   it("confirms archive and reports a duplicate without leaking response details", async () => {
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const reason = vi.spyOn(window, "prompt").mockReturnValue("Archive for study");
     render(<App />);
     fireEvent.click(await screen.findByLabelText(`Configurações do produto: ${product.name}`));
     fireEvent.click(screen.getByRole("button", { name: "Editar produto" }));
@@ -345,8 +362,9 @@ describe("products UI", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ products: [{ ...product, active: false }] }), { status: 200 }));
     fireEvent.click(screen.getByRole("button", { name: "Arquivar produto" }));
     await waitFor(() => expect(confirmation).toHaveBeenCalledWith("Arquivar o produto Synthetic product?"));
-    expect(await screen.findByText("Produto arquivado.")).toBeInTheDocument();
+    expect(await screen.findByText("Status do produto atualizado.")).toBeInTheDocument();
     confirmation.mockRestore();
+    reason.mockRestore();
   });
 
   it("shows real hierarchy counts on cards and marks product history unavailable", async () => {
