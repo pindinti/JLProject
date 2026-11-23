@@ -23,7 +23,10 @@ describe("product row locks for clone consistency", () => {
     database.calls.length = 0;
     database.query.mockReset();
     database.query.mockImplementation(async (strings: TemplateStringsArray) => {
-      database.calls.push(strings.join(" "));
+      const query = strings.join(" ");
+      database.calls.push(query);
+      if (query.includes("public.change_activity_dates(") || query.includes("public.change_activity_planning("))
+        return [{ result: { status: "not_found" } }];
       return [];
     });
   });
@@ -58,6 +61,9 @@ describe("product row locks for clone consistency", () => {
     await schedules.changeActivityDates(workspaceId, productId, null, null,
       "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, "2026-11-10", "2026-11-11",
       "Synthetic root date lock test", 1, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
+    await schedules.changeActivityWorkingPlan(workspaceId, productId, null, null,
+      "b3aa998a-a2c3-4376-9105-90af0d1dbfe3", actorId, "2026-11-10", "2026-11-11", 2, 0,
+      "Synthetic working plan lock test", 1, "c3aa998a-a2c3-4376-9105-90af0d1dbfe3");
     await schedules.createTarget(workspaceId, productId, actorId, {
       name: "Synthetic target", description: null, color: "#336699", targetDate: "2026-11-10",
       reason: "Synthetic target planning"
@@ -70,12 +76,16 @@ describe("product row locks for clone consistency", () => {
 
     expect(database.query).toHaveBeenCalled();
     const writes = database.calls.filter((query) => query.includes("locked_product"));
-    expect(writes).toHaveLength(11);
+    expect(writes).toHaveLength(9);
     for (const query of writes) {
       expect(query).toContain("FROM public.products");
       expect(query).toMatch(/active = true/);
       expect(query).toContain("FOR UPDATE");
     }
+    const dateCalls = database.calls.filter((query) => query.includes("public.change_activity_dates(") ||
+      query.includes("public.change_activity_planning("));
+    expect(dateCalls).toHaveLength(3);
+    for (const query of dateCalls) expect(query).not.toContain("FOR UPDATE");
   });
 
   it("sets actor, operation, and reason context on direct date-bearing creates", async () => {

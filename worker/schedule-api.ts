@@ -4,8 +4,9 @@ import { detectCalendarImpact } from "../domain/calendar-impact";
 import { createCalendarRepository, type CalendarRepository } from "./calendar-repository";
 import type { Identity } from "./auth";
 import type { WorkerEnvironment } from "./database";
-import { createScheduleRepository, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
-  type CalendarRescheduleProposal, type DeletionKind, type DisciplineInput, type HierarchyMoveInput, type Mutation,
+import { createScheduleRepository, type ActivityCreationMutation, type ActivityInput, type ActivityMetadataInput, type WorkingActivityInput,
+  type CalendarRescheduleProposal, type DeletionDependencyConflict, type DeletionKind, type DependencyDateRejection,
+  type DisciplineInput, type HierarchyMoveInput, type Mutation,
   type ProductChangeHistoryCursor, type ScheduleRepository, type StageCreateMutation, type StageDateInput,
   type StageInput, type TargetInput } from "./schedule-repository";
 
@@ -377,6 +378,11 @@ function mutation<T>(result: Mutation<T>, noun: string, created = false): Respon
   if (result.status === "conflict") return response({ error: "O código da etapa já possui outra cor neste espaço de trabalho." }, 409);
   return response({ error: "O item foi alterado. Atualize os dados e tente novamente." }, 409);
 }
+function activityCreationMutation(result: ActivityCreationMutation): Response {
+  if (result.status === "dependency_conflict") return response({ code: result.status, details: result.conflict,
+    error: "A criação da atividade entra em conflito com uma dependência do cronograma." }, 409);
+  return mutation(result, "activity", true);
+}
 function stageCreateMutation(result: StageCreateMutation): Response {
   if (result.status === "ok") return response({ stage: result.value,
     ...(result.operationId ? { operationId: result.operationId } : {}) }, 201);
@@ -400,7 +406,18 @@ function stageCreateMutation(result: StageCreateMutation): Response {
   if (result.status === "forbidden") return response({ error: "Acesso nÃ£o autorizado." }, 403);
   return response({ error: "Etapa nÃ£o encontrada." }, 404);
 }
+function dependencyDateConflict({ status, ...details }: DependencyDateRejection): Response {
+  return response({ code: status, details, error: status === "dependency_preview_required"
+    ? "A alteração requer uma prévia dos impactos nas dependências."
+    : "A alteração entra em conflito com uma dependência do cronograma." }, 409);
+}
+function deletionDependencyConflict(conflict: DeletionDependencyConflict): Response {
+  return response({ code: "dependency_conflict", details: conflict,
+    error: "A exclusão não pode ser concluída enquanto houver dependências vinculadas ou conflitos nos limites das etapas." }, 409);
+}
+
 function stageDateMutation(result: Awaited<ReturnType<ScheduleRepository["changeStageDates"]>>): Response {
+  if ("dependencyId" in result) return dependencyDateConflict(result);
   if (result.status === "updated" || result.status === "unchanged")
     return response({ stage: result.stage, changed: result.status === "updated",
       operationId: result.operationId }, 200);
@@ -464,6 +481,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
         return response({ changed: true, operationId, version: result.version }, 200);
       if (result.status === "unchanged")
         return response({ changed: false, version: result.version }, 200);
+      if (result.status === "dependency_conflict") return response({ code: result.status,
+        details: result.conflict, error: "O movimento entra em conflito com uma dependência do cronograma." }, 409);
       if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
       if (result.status === "not_found") return response({ error: "Item ou destino não encontrado." }, 404);
       if (result.status === "invalid") return response({ error: "Movimento de hierarquia inválido." }, 400);
@@ -486,6 +505,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       const result = await repository.previewDeletion(ws, productId, identity.subject,
         kind as DeletionKind, targetId.toLowerCase());
       if (result.status === "ok") return response({ counts: result.counts, fingerprint: result.fingerprint }, 200);
+      if (result.status === "dependency_conflict") return deletionDependencyConflict(result.conflict);
       if (result.status === "not_found") return response({ error: "Item não encontrado." }, 404);
       if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
       return response({ error: "Consulta inválida." }, 400);
@@ -507,6 +527,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       const result = await repository.deleteSubtree(ws, productId, identity.subject,
         crypto.randomUUID(), kind as DeletionKind, targetId.toLowerCase(), fingerprint, reason);
       if (result.status === "deleted") return response({ operationId: result.operationId, counts: result.counts }, 200);
+      if (result.status === "dependency_conflict") return deletionDependencyConflict(result.conflict);
       if (result.status === "not_found") return response({ error: "Item não encontrado." }, 404);
       if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
       if (result.status === "stale") return response({ error: "A estrutura mudou. Atualize a prévia e tente novamente." }, 409);
@@ -590,6 +611,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       const result = await repository.applyCalendarReschedule(ws, productId, identity.subject,
         crypto.randomUUID(), calendar.version, parsed.reason, proposals);
       if (result.status === "updated") return response({ changedCount: result.count, operationId: result.operationId }, 200);
+      if (result.status === "dependency_conflict") return response({ code: result.status, details: result.conflict,
+        error: "A reprogramação entra em conflito com uma dependência do cronograma." }, 409);
       if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
       if (result.status === "not_found") return response({ error: "Produto ou atividade não encontrado." }, 404);
       if (result.status === "invalid") return response({ error: "Seleção ou justificativa inválida." }, 400);
@@ -607,6 +630,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
         route.operationId!.toLowerCase(), crypto.randomUUID(), reason);
       if (result.status === "reversed") return response({ reversedCount: result.count,
         originalOperationId: result.originalOperationId, operationId: result.operationId }, 200);
+      if (result.status === "dependency_conflict") return response({ code: result.status, details: result.conflict,
+        error: "A reversão entra em conflito com uma dependência do cronograma." }, 409);
       if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
       if (result.status === "not_found") return response({ error: "Reprogramação não encontrada." }, 404);
       if (result.status === "already_reversed") return response({ error: "Esta reprogramação já foi revertida.",
@@ -657,6 +682,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
     const result = await repository.changeActivityDates(ws, productId, activityDisciplineId,
       activityStageId, activityId,
       identity.subject, parsed.start, parsed.end, parsed.reason, parsed.version, crypto.randomUUID());
+    if ("dependencyId" in result) return dependencyDateConflict(result);
     if (result.status === "forbidden") return response({ error: "Acesso não autorizado." }, 403);
     if (result.status === "not_found") return response({ error: "Não encontrado." }, 404);
     if (result.status === "stale") return response({ error: "A atividade foi alterada. Atualize os dados e tente novamente." }, 409);
@@ -679,6 +705,7 @@ export async function handleScheduleRequest(request: Request, identity: Identity
         activityStageId, activityId,
         identity.subject, parsed.start, calculation.endDate, parsed.duration, calendar.version,
         parsed.reason, parsed.version, crypto.randomUUID());
+      if ("dependencyId" in result) return dependencyDateConflict(result);
       if (result.status === "forbidden") return response({ error: "Acesso nÃ£o autorizado." }, 403);
       if (result.status === "not_found") return response({ error: "NÃ£o encontrado." }, 404);
       if (result.status === "stale" || result.status === "stale_calendar")
@@ -709,8 +736,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
       const value = await body(request); const parsed = value && activityInput(value, false, true);
       if (!parsed) return response({ error: "Dados invÃ¡lidos." }, 400);
       if (!parsed.workingPlan)
-        return mutation(await repository.createActivity(ws, productId, null, null, identity.subject,
-          parsed.input as ActivityInput, parsed.reason ?? null, crypto.randomUUID()), "activity", true);
+        return activityCreationMutation(await repository.createActivity(ws, productId, null, null, identity.subject,
+          parsed.input as ActivityInput, parsed.reason ?? null, crypto.randomUUID()));
       try {
         const calendar = await calendarFactory(environment).readForCalculation(ws);
         if (parsed.workingPlan.calendarVersion !== calendar.version)
@@ -724,8 +751,8 @@ export async function handleScheduleRequest(request: Request, identity: Identity
           plannedEnd: calculation.endDate, workingDays: parsed.workingPlan.duration,
           calendarVersion: calendar.version
         };
-        return mutation(await repository.createWorkingActivity(ws, productId, null, null,
-          identity.subject, workingInput, parsed.reason!, crypto.randomUUID()), "activity", true);
+        return activityCreationMutation(await repository.createWorkingActivity(ws, productId, null, null,
+          identity.subject, workingInput, parsed.reason!, crypto.randomUUID()));
       } catch { return response({ error: "NÃ£o foi possÃ­vel calcular ou salvar a atividade. Tente novamente." }, 503); }
     }
   }
@@ -786,11 +813,11 @@ export async function handleScheduleRequest(request: Request, identity: Identity
             identity.subject, workingInput, parsed.reason!, crypto.randomUUID());
           if (created.status === "invalid")
             return response({ error: "Dados do planejamento em dias úteis inválidos." }, 400);
-          return mutation(created, "activity", true);
+          return activityCreationMutation(created);
         } catch { return response({ error: "Não foi possível calcular ou salvar a atividade. Tente novamente." }, 503); }
       }
-      return mutation(await repository.createActivity(ws, productId, disciplineId, stageId, identity.subject,
-        parsed.input as ActivityInput, parsed.reason ?? null, crypto.randomUUID()), "activity", true);
+      return activityCreationMutation(await repository.createActivity(ws, productId, disciplineId, stageId, identity.subject,
+        parsed.input as ActivityInput, parsed.reason ?? null, crypto.randomUUID()));
     }
     if (request.method === "PATCH" && activityId) {
       const value = await body(request); const parsed = value && activityInput(value, true);

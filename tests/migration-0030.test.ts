@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const migration = readFileSync("db/migrations/0030_multi_entity_audit_grouping.sql", "utf8");
 const integration = readFileSync("db/verification/phase1-0030-rollback.sql", "utf8");
+const stageDateAudit = readFileSync("db/migrations/0028_stage_date_planning_audit.sql", "utf8");
+const scheduleAudit = readFileSync("db/migrations/0029_living_schedule_audit_concurrency.sql", "utf8");
 
 describe("migration 0030 multi-entity audit grouping", () => {
   it("is a guarded transactional Development correction with additive audit storage", () => {
@@ -44,6 +46,23 @@ describe("migration 0030 multi-entity audit grouping", () => {
     expect(migration).toContain("source.source_event_id = reversal.original_date_operation_id");
     expect(migration).not.toMatch(/UPDATE\s+public\.product_schedule_operation_links/i);
     expect(migration).not.toMatch(/DELETE\s+FROM\s+public\.product_schedule_operation_links/i);
+  });
+
+  it("associates standalone stage-date ledger events after the Living Schedule event exists", () => {
+    const stageAuditLink = migration.match(/CREATE OR REPLACE FUNCTION public\.link_product_schedule_audit_source\(\)[\s\S]*?\n\$\$;/)?.[0];
+    const operationEventLink = migration.match(/CREATE FUNCTION public\.link_product_schedule_operation_source_events\(\)[\s\S]*?\n\$\$;/)?.[0];
+
+    expect(stageAuditLink).toBeDefined();
+    expect(stageAuditLink).toContain("IF NOT FOUND THEN RETURN NEW; END IF;");
+    expect(stageAuditLink).toContain("product_schedule_operation_links");
+    expect(stageDateAudit).toMatch(/CREATE TRIGGER discipline_stages_dates_audited\s+BEFORE INSERT OR UPDATE ON public\.discipline_stages/);
+    expect(stageDateAudit).toContain("INSERT INTO public.stage_date_changes (");
+    expect(scheduleAudit).toMatch(/CREATE TRIGGER discipline_stages_schedule_audit\s+AFTER INSERT OR UPDATE OR DELETE ON public\.discipline_stages/);
+    expect(scheduleAudit).toMatch(/CREATE TRIGGER stage_date_changes_schedule_link\s+AFTER INSERT ON public\.stage_date_changes/);
+    expect(operationEventLink).toBeDefined();
+    expect(operationEventLink).toContain("'stage_date_changes', audit.operation_id, audit.event_id, 'audit_detail'");
+    expect(migration).toContain("CREATE TRIGGER product_schedule_operation_events_source_links");
+    expect(migration).toContain("AFTER INSERT ON public.product_schedule_operation_events");
   });
 
   it("preserves history keys, returns operation IDs, and keeps privileged readers private", () => {

@@ -1,5 +1,6 @@
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import type { CalendarImpactCandidate } from "../domain/calendar-impact";
+import { assessDependencyBoundaryChange, type DependencyBoundaryState } from "../domain/schedule-dependencies";
 import type { WorkerEnvironment } from "./database";
 
 export interface DisciplineInput {
@@ -46,7 +47,7 @@ export type StageCreateMutation = { status: "ok"; value: Stage; operationId?: st
   { status: "conflict"; definition?: StageDefinitionColorConflict } |
   { status: "not_found" | "invalid" | "forbidden" };
 export type StageDateChangeResult = { status: "updated" | "unchanged"; stage: Stage; operationId: string } |
-  { status: "not_found" | "stale" | "invalid" | "forbidden" };
+  { status: "not_found" | "stale" | "invalid" | "forbidden" } | DependencyDateRejection;
 export type StageDefinitionColorMutation = { status: "ok"; value: StageDefinition } |
   { status: "not_found" } | { status: "stale" };
 export interface BusinessTarget { id: string; name: string; description: string | null; color: string;
@@ -57,18 +58,35 @@ export interface DateChange { operationId: string; changedAt: string;
   previousStart: string | null; previousEnd: string | null;
   newStart: string; newEnd: string; reason: string }
 export type DateChangeResult = { status: "updated" | "unchanged"; activity: Activity } |
-  { status: "not_found" | "stale" | "invalid" | "forbidden" };
+  { status: "not_found" | "stale" | "invalid" | "forbidden" } | DependencyDateRejection;
 export type WorkingPlanResult = { status: "updated" | "unchanged"; activity: Activity } |
-  { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
+  { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" } | DependencyDateRejection;
+interface DependencyConflictEvidence {
+  dependencyId: string;
+  reason: NonNullable<ReturnType<typeof assessDependencyBoundaryChange>>;
+  before: DependencyBoundaryState;
+  after: DependencyBoundaryState;
+}
+export interface DependencyDateRejection extends DependencyConflictEvidence {
+  status: "dependency_conflict" | "dependency_preview_required";
+  direction: "inbound" | "outbound";
+}
+export interface CalendarDependencyEndpoint { id: string; kind: "activity" | "stage" }
+export interface CalendarDependencyConflict extends DependencyConflictEvidence {
+  predecessor: CalendarDependencyEndpoint;
+  successor: CalendarDependencyEndpoint;
+}
 export interface CalendarRescheduleProposal {
   activityId: string; disciplineId: string | null; stageId: string | null; expectedVersion: number;
   startDate: string; currentEndDate: string; proposedEndDate: string;
   workingDays: number; savedCalendarVersion: number;
 }
 export type CalendarRescheduleResult = { status: "updated"; count: number; operationId: string } |
+  { status: "dependency_conflict"; conflict: CalendarDependencyConflict } |
   { status: "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
 export type CalendarRescheduleReversalResult =
   { status: "reversed"; count: number; operationId: string; originalOperationId: string } |
+  { status: "dependency_conflict"; conflict: CalendarDependencyConflict } |
   { status: "stale"; activityId: string } |
   { status: "not_found" | "already_reversed" | "invalid" | "forbidden" };
 export interface CalendarRescheduleHistoryActivity {
@@ -112,11 +130,19 @@ export type ProductChangeHistoryResult = { status: "ok"; events: ProductChangeEv
   nextCursor: ProductChangeHistoryCursor | null } | { status: "not_found" | "forbidden" | "invalid" };
 export type Mutation<T> = { status: "ok"; value: T } |
   { status: "not_found" | "duplicate" | "stale" | "stale_calendar" | "conflict" | "invalid" | "forbidden" };
+export type ActivityCreationMutation = Mutation<Activity> |
+  { status: "dependency_conflict"; conflict: CalendarDependencyConflict };
 export type DeletionKind = "activity" | "stage" | "discipline";
 export interface DeletionCounts { disciplines: number; stages: number; activities: number }
+export type DeletionDependencyConflict =
+  { dependencyId: string; reason: "linked_endpoint"; predecessor: CalendarDependencyEndpoint;
+    successor: CalendarDependencyEndpoint; linkedEndpoint: CalendarDependencyEndpoint } |
+  CalendarDependencyConflict;
 export type DeletionPreview = { status: "ok"; fingerprint: string; counts: DeletionCounts } |
+  { status: "dependency_conflict"; conflict: DeletionDependencyConflict } |
   { status: "not_found" | "invalid" | "forbidden" };
 export type DeletionResult = { status: "deleted"; operationId: string; counts: DeletionCounts } |
+  { status: "dependency_conflict"; conflict: DeletionDependencyConflict } |
   { status: "not_found" | "invalid" | "forbidden" | "stale" };
 export type HierarchyItemKind = "activity" | "stage" | "discipline";
 export interface HierarchyMoveInput {
@@ -133,6 +159,7 @@ export interface HierarchyMoveInput {
 export type HierarchyMoveResult =
   { status: "moved"; operationId: string; version: number } |
   { status: "unchanged"; version: number } |
+  { status: "dependency_conflict"; conflict: CalendarDependencyConflict } |
   { status: "not_found" | "invalid" | "forbidden" | "stale" | "conflict" | "duplicate" };
 
 export interface ScheduleRepository {
@@ -174,9 +201,9 @@ export interface ScheduleRepository {
   listProductChangeHistory(workspaceId: string, productId: string, actorId: string, limit: number,
     cursor: ProductChangeHistoryCursor | null): Promise<ProductChangeHistoryResult>;
   createActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
-    actorId: string, input: ActivityInput, reason: string | null, operationId: string): Promise<Mutation<Activity>>;
+    actorId: string, input: ActivityInput, reason: string | null, operationId: string): Promise<ActivityCreationMutation>;
   createWorkingActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
-    actorId: string, input: WorkingActivityInput, reason: string, operationId: string): Promise<Mutation<Activity>>;
+    actorId: string, input: WorkingActivityInput, reason: string, operationId: string): Promise<ActivityCreationMutation>;
   updateActivity(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null, activityId: string, actorId: string, input: ActivityMetadataInput, version: number): Promise<Mutation<Activity>>;
   changeActivityDates(workspaceId: string, productId: string, disciplineId: string | null, stageId: string | null,
     activityId: string, actorId: string, start: string, end: string, reason: string | null,
@@ -213,6 +240,90 @@ const specializedHistoryEventTypes = new Set<string>([
 function jsonRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
+}
+
+function dependencyBoundary(value: unknown): DependencyBoundaryState | null {
+  const record = jsonRecord(value);
+  if (!record) return null;
+  const { predecessorFinish, successorStart, earliestStart } = record;
+  return (predecessorFinish === null || typeof predecessorFinish === "string") &&
+    (successorStart === null || typeof successorStart === "string") &&
+    (earliestStart === null || typeof earliestStart === "string") ? { predecessorFinish, successorStart, earliestStart } : null;
+}
+
+function dependencyConflictEvidence(record: Record<string, unknown>): DependencyConflictEvidence | null {
+  const { dependencyId } = record;
+  const before = dependencyBoundary(record.before);
+  const after = dependencyBoundary(record.after);
+  const reason = before && after ? assessDependencyBoundaryChange(before, after) : null;
+  return typeof dependencyId === "string" && before && after && reason && reason === record.reason
+    ? { dependencyId, reason, before, after } : null;
+}
+
+function dependencyDateRejection(value: unknown): DependencyDateRejection | null {
+  const record = jsonRecord(value);
+  if (!record || (record.status !== "dependency_conflict" && record.status !== "dependency_preview_required")) return null;
+  const { status, direction } = record;
+  const evidence = dependencyConflictEvidence(record);
+  if (!evidence || (direction !== "inbound" && direction !== "outbound") || status !==
+      (direction === "outbound" && evidence.reason === "finish_to_start" ? "dependency_preview_required" : "dependency_conflict"))
+    throw new Error("Unexpected dependency date rejection.");
+  return { status, direction, ...evidence };
+}
+
+function calendarDependencyEndpoint(value: unknown): CalendarDependencyEndpoint | null {
+  const entry = jsonRecord(value);
+  return entry && typeof entry.id === "string" && (entry.kind === "activity" || entry.kind === "stage")
+    ? { id: entry.id, kind: entry.kind } : null;
+}
+
+function calendarDependencyConflict(value: unknown): CalendarDependencyConflict {
+  const record = jsonRecord(value);
+  const evidence = record && dependencyConflictEvidence(record);
+  const predecessor = calendarDependencyEndpoint(record?.predecessor);
+  const successor = calendarDependencyEndpoint(record?.successor);
+  if (!evidence || !predecessor || !successor || predecessor.id === successor.id || predecessor.kind !== successor.kind)
+    throw new Error("Unexpected calendar dependency rejection.");
+  return { ...evidence, predecessor, successor };
+}
+
+function deletionDependencyConflict(value: unknown): DeletionDependencyConflict {
+  const record = jsonRecord(value);
+  if (record?.reason === "linked_endpoint") {
+    const { dependencyId } = record;
+    const predecessor = calendarDependencyEndpoint(record.predecessor);
+    const successor = calendarDependencyEndpoint(record.successor);
+    const linkedEndpoint = calendarDependencyEndpoint(record.linkedEndpoint);
+    if (typeof dependencyId !== "string" || !predecessor || !successor || !linkedEndpoint ||
+        predecessor.kind !== successor.kind || linkedEndpoint.kind !== predecessor.kind ||
+        linkedEndpoint.id !== predecessor.id && linkedEndpoint.id !== successor.id)
+      throw new Error("Unexpected linked deletion dependency rejection.");
+    return { dependencyId, reason: "linked_endpoint", predecessor, successor, linkedEndpoint };
+  }
+  const conflict = calendarDependencyConflict(value);
+  if (conflict.predecessor.kind !== "stage" || conflict.successor.kind !== "stage")
+    throw new Error("Unexpected non-stage deletion boundary rejection.");
+  return conflict;
+}
+
+function activityCreationConflict(value: unknown): ActivityCreationMutation | null {
+  const record = jsonRecord(value);
+  if (!record || record["status"] !== "dependency_conflict") return null;
+  const conflict = calendarDependencyConflict(record["conflict"]);
+  if (conflict.predecessor.kind !== "stage" || conflict.successor.kind !== "stage")
+    throw new Error("Activity creation returned a non-stage dependency rejection.");
+  return { status: "dependency_conflict", conflict };
+}
+
+function activityCreationConflictFromError(error: unknown): ActivityCreationMutation | null {
+  const record = jsonRecord(error);
+  if (!record || record["code"] !== "P4D01" || typeof record["detail"] !== "string") return null;
+  let detail: unknown;
+  try { detail = JSON.parse(record["detail"]); }
+  catch { throw new Error("Activity creation returned malformed dependency conflict details."); }
+  const conflict = activityCreationConflict(detail);
+  if (!conflict) throw new Error("Activity creation returned malformed dependency conflict details.");
+  return conflict;
 }
 
 function productChangeEvent(value: unknown): ProductChangeEvent {
@@ -653,24 +764,33 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         ${input.destinationIndex}, ${JSON.stringify(input.expectedSourceOrder)}::jsonb,
         ${JSON.stringify(input.expectedDestinationOrder)}::jsonb) AS result
       FROM schedule_context`;
-      const result = rows[0]?.["result"] as { status?: string; version?: number } | undefined;
+      const result = rows[0]?.["result"] as { status?: string; version?: number; conflict?: unknown } | undefined;
       if (!result || !["moved", "unchanged", "not_found", "invalid", "forbidden", "stale",
-        "conflict", "duplicate"].includes(result.status ?? ""))
+        "conflict", "duplicate", "dependency_conflict"].includes(result.status ?? ""))
         throw new Error("Unexpected hierarchy movement result.");
       if (result.status === "moved")
         return { status: "moved", operationId, version: Number(result.version) };
       if (result.status === "unchanged")
         return { status: "unchanged", version: Number(result.version) };
+      if (result.status === "dependency_conflict") {
+        const conflict = calendarDependencyConflict(result.conflict);
+        if (conflict.predecessor.kind !== "stage" || conflict.successor.kind !== "stage")
+          throw new Error("Unexpected non-stage hierarchy dependency rejection.");
+        return { status: "dependency_conflict", conflict };
+      }
       return { status: result.status as "not_found" | "invalid" | "forbidden" | "stale" |
         "conflict" | "duplicate" };
     },
     async previewDeletion(ws, productId, actorId, kind, targetId) {
       const rows = await sql`SELECT public.preview_schedule_deletion(
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${kind}, ${targetId}::uuid) AS result`;
-      const result = rows[0]?.["result"] as DeletionPreview | undefined;
-      if (result?.status === "ok") return { status: "ok", fingerprint: result.fingerprint,
-        counts: result.counts };
-      if (result && ["not_found", "invalid", "forbidden"].includes(result.status))
+      const result = rows[0]?.["result"] as { status?: string; fingerprint?: string;
+        counts?: DeletionCounts; conflict?: unknown } | undefined;
+      if (result?.status === "dependency_conflict")
+        return { status: "dependency_conflict", conflict: deletionDependencyConflict(result.conflict) };
+      if (result?.status === "ok" && typeof result.fingerprint === "string" && result.counts)
+        return { status: "ok", fingerprint: result.fingerprint, counts: result.counts };
+      if (result && typeof result.status === "string" && ["not_found", "invalid", "forbidden"].includes(result.status))
         return { status: result.status as "not_found" | "invalid" | "forbidden" };
       throw new Error("Unexpected deletion preview result.");
     },
@@ -685,9 +805,13 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
         ${kind}, ${targetId}::uuid, ${fingerprint}, ${reason}) AS result
       FROM schedule_context`;
-      const result = rows[0]?.["result"] as DeletionResult | undefined;
-      if (result?.status === "deleted") return { status: "deleted", operationId, counts: result.counts };
-      if (result && ["not_found", "invalid", "forbidden", "stale"].includes(result.status))
+      const result = rows[0]?.["result"] as { status?: string; operationId?: string;
+        counts?: DeletionCounts; conflict?: unknown } | undefined;
+      if (result?.status === "deleted" && result.counts)
+        return { status: "deleted", operationId, counts: result.counts };
+      if (result?.status === "dependency_conflict")
+        return { status: "dependency_conflict", conflict: deletionDependencyConflict(result.conflict) };
+      if (result && typeof result.status === "string" && ["not_found", "invalid", "forbidden", "stale"].includes(result.status))
         return { status: result.status as "not_found" | "invalid" | "forbidden" | "stale" };
       throw new Error("Unexpected deletion result.");
     },
@@ -799,6 +923,8 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         ${input.plannedEnd}::date, ${input.reason}, ${version}::bigint) AS result
       FROM schedule_context`;
       const result = rows[0]?.["result"] as { status?: string } | undefined;
+      const rejected = dependencyDateRejection(result);
+      if (rejected) return rejected;
       if (!result || !["updated", "unchanged", "not_found", "stale", "invalid", "forbidden"]
         .includes(result.status ?? "")) throw new Error("Unexpected stage date change result.");
       if (result.status !== "updated" && result.status !== "unchanged")
@@ -840,9 +966,15 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
         ${calendarVersion}::bigint, ${reason}, ${JSON.stringify(proposals)}::jsonb) AS result
       FROM schedule_context`;
-      const result = rows[0]?.["result"] as { status?: string; count?: number } | undefined;
+      const result = rows[0]?.["result"] as { status?: string; count?: number; conflict?: unknown } | undefined;
       if (result?.status === "updated" && result.count === proposals.length)
         return { status: "updated", count: result.count, operationId };
+      if (result?.status === "dependency_conflict") {
+        const conflict = calendarDependencyConflict(result.conflict);
+        if (conflict.before.successorStart !== conflict.after.successorStart || conflict.reason === "missing_boundary")
+          throw new Error("Unexpected finish-only calendar dependency rejection.");
+        return { status: "dependency_conflict", conflict };
+      }
       if (result && ["not_found", "stale", "stale_calendar", "invalid", "forbidden"].includes(result.status ?? ""))
         return { status: result.status as "not_found" | "stale" | "stale_calendar" | "invalid" | "forbidden" };
       throw new Error("Unexpected calendar reschedule result.");
@@ -859,9 +991,11 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
         ${ws}::uuid, ${productId}::uuid, ${actorId}::uuid,
         ${originalOperationId}::uuid, ${operationId}::uuid, ${reason}) AS result
       FROM schedule_context`;
-      const result = rows[0]?.["result"] as { status?: string; count?: number; activityId?: string } | undefined;
+      const result = rows[0]?.["result"] as { status?: string; count?: number; activityId?: string; conflict?: unknown } | undefined;
       if (result?.status === "reversed" && Number.isSafeInteger(result.count) && Number(result.count) > 0)
         return { status: "reversed", count: Number(result.count), operationId, originalOperationId };
+      if (result?.status === "dependency_conflict")
+        return { status: "dependency_conflict", conflict: calendarDependencyConflict(result.conflict) };
       if (result?.status === "stale" && typeof result.activityId === "string")
         return { status: "stale", activityId: result.activityId };
       if (result && ["not_found", "already_reversed", "invalid", "forbidden"].includes(result.status ?? ""))
@@ -989,15 +1123,21 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
     },
     async createActivity(ws, productId, disciplineId, stageId, actorId, input, reason, operationId) {
       const hasDates = input.plannedStart !== null || input.plannedEnd !== null;
-      const rows = await sql`WITH schedule_context AS MATERIALIZED (
+      let rows: readonly Record<string, unknown>[];
+      try { rows = await sql`WITH schedule_context AS MATERIALIZED (
         SELECT set_config('jlproject.schedule_actor_id', ${actorId}, true),
           set_config('jlproject.schedule_operation_id', ${operationId}, true),
           set_config('jlproject.schedule_operation_type', ${hasDates ? "activity_created_with_dates" : "activity_created"}, true),
           set_config('jlproject.schedule_justification', ${reason ?? ""}, true)
+      ), locked_workspace AS MATERIALIZED (
+        SELECT workspace.id FROM public.workspaces AS workspace, schedule_context
+        WHERE workspace.id = ${ws}::uuid FOR SHARE
       ), locked_product AS MATERIALIZED (
-        SELECT product.workspace_id, product.id FROM public.products AS product, schedule_context
+        SELECT product.workspace_id, product.id FROM public.products AS product
+        JOIN locked_workspace ON locked_workspace.id = product.workspace_id
+        CROSS JOIN schedule_context
         WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
-        FOR UPDATE
+        FOR UPDATE OF product
       )
       INSERT INTO public.stage_activities
         (workspace_id, product_id, discipline_id, stage_id, name, activity_type,
@@ -1012,7 +1152,12 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           AND s.id = ${stageId}::uuid AND s.deleted_at IS NULL
         WHERE (${disciplineId}::uuid IS NULL AND ${stageId}::uuid IS NULL) OR
           (s.id IS NOT NULL AND ${disciplineId}::uuid IS NOT NULL AND ${stageId}::uuid IS NOT NULL)
-        RETURNING id::text AS id`;
+        RETURNING id::text AS id`; }
+      catch (error) {
+        const conflict = activityCreationConflictFromError(error);
+        if (conflict) return conflict;
+        throw error;
+      }
       if (!rows[0]) return { status: "not_found" };
       const value = await findActivity(ws, productId, disciplineId, stageId, text(rows[0]["id"]));
       return value ? { status: "ok", value } : { status: "not_found" };
@@ -1038,8 +1183,10 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
       )
       SELECT c.result AS result, (SELECT count(*) FROM colored) AS color_updates FROM created AS c`;
       const result = rows[0]?.["result"] as { status?: string; id?: string } | undefined;
-      if (!result || !["created", "not_found", "forbidden", "stale_calendar", "invalid"].includes(result.status ?? ""))
+      if (!result || !["created", "not_found", "forbidden", "stale_calendar", "invalid", "dependency_conflict"].includes(result.status ?? ""))
         throw new Error("Unexpected working-day activity creation result.");
+      const conflict = activityCreationConflict(result);
+      if (conflict) return conflict;
       if (result.status !== "created" || !result.id)
         return { status: result.status as "not_found" | "forbidden" | "stale_calendar" | "invalid" };
       const value = await findActivity(ws, productId, disciplineId, stageId, result.id);
@@ -1075,18 +1222,15 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           set_config('jlproject.schedule_operation_id', ${operationId}, true),
           set_config('jlproject.schedule_operation_type', 'activity_dates_changed', true),
           set_config('jlproject.schedule_justification', ${reason}, true)
-      ), locked_product AS MATERIALIZED (
-        SELECT product.id FROM public.products AS product, schedule_context
-        WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
-        FOR UPDATE OF product
       )
       SELECT public.change_activity_dates(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${activityId}::uuid, ${actorId}::uuid, ${operationId}::uuid,
         ${start}::date, ${end}::date, ${reason}, ${version}::bigint) AS result
-      FROM locked_product, schedule_context`;
-      if (!rows[0]) return { status: "not_found" };
+      FROM schedule_context`;
       const result = rows[0]?.["result"] as { status?: string } | undefined;
+      const rejected = dependencyDateRejection(result);
+      if (rejected) return rejected;
       if (!result || !["updated", "unchanged", "not_found", "stale", "invalid", "forbidden"].includes(result.status ?? ""))
         throw new Error("Unexpected date change result.");
       if (result.status !== "updated" && result.status !== "unchanged")
@@ -1101,19 +1245,16 @@ export function createScheduleRepository(environment: WorkerEnvironment): Schedu
           set_config('jlproject.schedule_operation_id', ${operationId}, true),
           set_config('jlproject.schedule_operation_type', 'activity_working_plan_changed', true),
           set_config('jlproject.schedule_justification', ${reason}, true)
-      ), locked_product AS MATERIALIZED (
-        SELECT product.id FROM public.products AS product, schedule_context
-        WHERE product.workspace_id = ${ws}::uuid AND product.id = ${productId}::uuid AND product.active = true
-        FOR UPDATE OF product
       )
       SELECT public.change_activity_planning(
         ${ws}::uuid, ${productId}::uuid, ${disciplineId}::uuid, ${stageId}::uuid,
         ${activityId}::uuid, ${actorId}::uuid, ${operationId}::uuid, 'working_days',
         ${start}::date, ${end}::date, ${workingDays}, ${calendarVersion}::bigint,
         ${reason}, ${version}::bigint) AS result
-      FROM locked_product, schedule_context`;
-      if (!rows[0]) return { status: "not_found" };
+      FROM schedule_context`;
       const result = rows[0]?.["result"] as { status?: string } | undefined;
+      const rejected = dependencyDateRejection(result);
+      if (rejected) return rejected;
       if (!result || !["updated", "unchanged", "not_found", "stale", "stale_calendar", "invalid", "forbidden"].includes(result.status ?? ""))
         throw new Error("Unexpected working-day activity result.");
       if (result.status !== "updated" && result.status !== "unchanged")

@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => {
   const calls: string[] = [];
-  const query = vi.fn(async (strings: TemplateStringsArray) => {
+  const query = vi.fn(async (strings: TemplateStringsArray): Promise<Array<{ result: {
+    status?: string; version?: number; conflict?: unknown
+  } }>> => {
     calls.push(strings.join(" "));
     return [{ result: { status: "moved", version: 4 } }];
   });
@@ -52,5 +54,22 @@ describe("hierarchy movement repository", () => {
       destinationDisciplineId: null, destinationStageId: null, destinationIndex: 0,
       expectedSourceOrder: [activityId], expectedDestinationOrder: [activityId]
     })).rejects.toThrow("Unexpected hierarchy movement result");
+  });
+
+  it("returns verified final-state dependency conflicts from the atomic database move", async () => {
+    const conflict = { dependencyId: "b5555555-5555-4555-8555-555555555555", reason: "finish_to_start",
+      predecessor: { id: "b6666666-6666-4666-8666-666666666666", kind: "stage" },
+      successor: { id: "b7777777-7777-4777-8777-777777777777", kind: "stage" },
+      before: { predecessorFinish: "2026-11-09", successorStart: "2026-11-10", earliestStart: "2026-11-10" },
+      after: { predecessorFinish: "2026-11-10", successorStart: "2026-11-10", earliestStart: "2026-11-11" } };
+    database.query.mockResolvedValueOnce([{ result: { status: "dependency_conflict", conflict } }]);
+    const repository = createScheduleRepository({ DATABASE_URL: "postgresql://localhost/neondb" });
+    await expect(repository.moveHierarchyItem(workspaceId, productId, actorId, operationId, {
+      kind: "activity", targetId: activityId, expectedVersion: 3, reason: "Synthetic move reason",
+      destinationDisciplineId: null, destinationStageId: null, destinationIndex: 0,
+      expectedSourceOrder: [activityId], expectedDestinationOrder: []
+    })).resolves.toEqual({ status: "dependency_conflict", conflict });
+    expect(database.query).toHaveBeenCalledTimes(1);
+    expect(database.query.mock.calls[0]?.[0]?.join(" ")).toContain("public.move_schedule_item");
   });
 });

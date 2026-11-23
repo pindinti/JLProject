@@ -1,0 +1,263 @@
+{
+  "types": {
+    "verified": [
+      "phase4b5_disposable_child_verified",
+      "phase4b5_disposable_branch_verified"
+    ],
+    "branch": [
+      "phase4b5_branch_id"
+    ],
+    "uint": [
+      "test_collision_cursor_before",
+      "test_collision_version_before",
+      "test_r00_count",
+      "test_linked_schedule_version_before",
+      "test_violation_schedule_version_before",
+      "test_linked_schedule_version",
+      "test_violation_schedule_version",
+      "test_fixed_schedule_version_before",
+      "test_fixed_schedule_version",
+      "test_partial_schedule_version_before",
+      "test_partial_schedule_version",
+      "historical_r00_count"
+    ],
+    "fingerprint": [
+      "test_collision_state_fingerprint",
+      "test_r00_fingerprint",
+      "historical_r00_fingerprint",
+      "vigente_fingerprint",
+      "study_fingerprint",
+      "archived_fingerprint",
+      "empty_fingerprint"
+    ],
+    "name": [
+      "missing_target_name"
+    ],
+    "boolean": [
+      "probe_fail",
+      "phase4b5_expect_owner_set"
+    ],
+    "workspaceOrNone": [
+      "excluded_clone_workspace"
+    ]
+  },
+  "fixtures": {
+    "phase4b5-concurrency-role-check.sql": {
+      "role": "neondb_owner",
+      "readOnly": true,
+      "inputs": ["phase4b5_expect_owner_set"]
+    },
+    "phase4b5-concurrency-seed.sql": {
+      "role": "neondb_owner",
+      "inputs": ["phase4b5_disposable_branch_verified", "phase4b5_branch_id", "phase4b5_admin_user_id", "phase4b5_viewer_user_id"]
+    },
+    "phase4b5-seed-auth-identities-owner.sql": {
+      "role": "neondb_owner",
+      "readOnly": true,
+      "inputs": ["phase4b5_branch_id", "phase4b5_admin_user_id", "phase4b5_viewer_user_id"]
+    },
+    "phase4b3c1-activity-creation-seed-owner.sql": {
+      "role": "neondb_owner",
+      "inputs": ["phase4b5_disposable_child_verified", "phase4b5_branch_id", "phase4b5_admin_user_id", "phase4b5_viewer_user_id"],
+      "exports": [
+        {
+          "prefix": "Worker psql variables: ",
+          "names": ["test_workspace", "test_actor", "test_viewer", "test_linked_product", "test_violation_product", "test_derived_predecessor_stage", "test_derived_successor_stage", "test_explicit_stage", "test_partial_stage", "fixed_successor_stage", "test_violation_stage", "violation_successor_stage", "test_empty_product", "test_empty_stage", "test_r00_count", "test_r00_fingerprint"]
+        }
+      ]
+    },
+    "phase4b3c1-activity-creation-seed-worker-stage-dates.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["phase4b5_disposable_child_verified", "test_workspace", "test_actor", "test_linked_product", "test_violation_product", "test_explicit_stage", "test_partial_stage", "fixed_successor_stage", "violation_successor_stage", "test_violation_stage", "test_derived_predecessor_stage", "test_derived_successor_stage"],
+      "exports": [
+        {
+          "prefix": "Worker psql variables: ",
+          "names": ["test_workspace", "test_actor", "test_linked_product", "test_violation_product", "test_explicit_stage", "test_partial_stage", "fixed_successor_stage", "violation_successor_stage", "test_linked_schedule_version_before", "test_violation_schedule_version_before", "test_linked_schedule_version", "test_violation_schedule_version"]
+        }
+      ]
+    },
+    "phase4b3c1-activity-creation-seed-owner-dependencies.sql": {
+      "role": "neondb_owner",
+      "inputs": ["test_workspace", "test_actor", "test_linked_product", "test_violation_product", "test_derived_predecessor_stage", "test_derived_successor_stage", "test_explicit_stage", "test_partial_stage", "fixed_successor_stage", "test_violation_stage", "violation_successor_stage", "test_linked_schedule_version_before", "test_violation_schedule_version_before", "test_linked_schedule_version", "test_violation_schedule_version", "test_r00_count", "test_r00_fingerprint", "phase4b5_disposable_child_verified"]
+    },
+    "phase4b3c1-activity-creation.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["test_workspace", "test_actor", "test_viewer", "test_linked_product", "test_derived_predecessor_stage", "test_derived_successor_stage", "test_explicit_stage", "test_partial_stage", "test_violation_product", "test_violation_stage", "test_empty_product", "test_empty_stage"]
+    },
+    "phase4b3c2-hierarchy-move-seed-owner.sql": {
+      "role": "neondb_owner",
+      "inputs": ["phase4b5_disposable_child_verified", "phase4b5_branch_id", "phase4b5_admin_user_id", "phase4b5_viewer_user_id"],
+      "exports": [
+        {
+          "prefix": "Owner edge variables: ",
+          "names": ["conflict_destination_successor", "conflict_source_successor", "valid_successor_stage", "root_successor_stage"]
+        },
+        {
+          "prefix": "Worker psql variables A: ",
+          "names": ["test_workspace", "test_actor", "test_viewer", "test_conflict_product", "test_conflict_activity", "test_conflict_source_discipline", "test_conflict_source_stage", "test_conflict_destination_discipline", "test_conflict_destination_stage", "test_conflict_dependency", "test_valid_product", "test_valid_activity", "test_valid_source_discipline", "test_valid_source_stage"]
+        },
+        {
+          "prefix": "Worker psql variables B: ",
+          "names": ["test_valid_destination_discipline", "test_valid_destination_stage", "test_fixed_product", "test_fixed_activity", "test_fixed_source_discipline", "test_explicit_stage", "test_fixed_destination_discipline", "test_partial_stage", "fixed_successor_stage", "test_root_product", "test_root_activity", "test_root_stage", "test_root_discipline"]
+        },
+        {
+          "prefix": "Worker psql variables C: ",
+          "names": ["test_empty_product", "test_empty_activity", "test_empty_source_discipline", "test_empty_source_stage", "test_empty_destination_discipline", "test_empty_destination_stage", "test_r00_count", "test_r00_fingerprint"]
+        }
+      ]
+    },
+    "phase4b3c2-hierarchy-move-seed-worker-stage-dates.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["phase4b5_disposable_child_verified", "test_workspace", "test_actor", "test_fixed_product", "test_explicit_stage", "test_partial_stage", "fixed_successor_stage"],
+      "exports": [
+        {
+          "prefix": "Worker psql variables: ",
+          "names": ["test_workspace", "test_actor", "test_fixed_product", "test_explicit_stage", "test_partial_stage", "fixed_successor_stage", "test_fixed_schedule_version_before", "test_fixed_schedule_version"]
+        }
+      ]
+    },
+    "phase4b3c2-hierarchy-move-seed-owner-dependencies.sql": {
+      "role": "neondb_owner",
+      "inputs": ["test_workspace", "test_actor", "test_fixed_product", "test_explicit_stage", "test_partial_stage", "fixed_successor_stage", "test_fixed_schedule_version_before", "test_fixed_schedule_version", "test_r00_count", "test_r00_fingerprint", "phase4b5_disposable_child_verified", "test_conflict_product", "test_conflict_dependency", "test_conflict_destination_stage", "conflict_destination_successor", "test_conflict_source_stage", "conflict_source_successor", "test_valid_product", "test_valid_destination_stage", "valid_successor_stage", "test_root_product", "test_root_stage", "root_successor_stage"]
+    },
+    "phase4b3c2-hierarchy-move.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["test_workspace", "test_actor", "test_viewer", "test_conflict_product", "test_conflict_activity", "test_conflict_source_discipline", "test_conflict_source_stage", "test_conflict_destination_discipline", "test_conflict_destination_stage", "test_conflict_dependency", "test_valid_product", "test_valid_activity", "test_valid_source_discipline", "test_valid_source_stage", "test_valid_destination_discipline", "test_valid_destination_stage", "test_fixed_product", "test_fixed_activity", "test_fixed_source_discipline", "test_explicit_stage", "test_fixed_destination_discipline", "test_partial_stage", "test_root_product", "test_root_activity", "test_root_stage", "test_root_discipline", "test_empty_product", "test_empty_activity", "test_empty_source_discipline", "test_empty_source_stage", "test_empty_destination_discipline", "test_empty_destination_stage"]
+    },
+    "phase4b3c2-hierarchy-move-postflight-owner.sql": {
+      "role": "neondb_owner",
+      "readOnly": true,
+      "inputs": ["test_workspace", "test_actor", "test_conflict_product", "test_valid_product", "test_fixed_product", "test_root_product", "test_empty_product", "test_conflict_dependency", "test_conflict_destination_stage", "conflict_destination_successor", "test_conflict_source_stage", "conflict_source_successor", "test_valid_destination_stage", "valid_successor_stage", "test_explicit_stage", "fixed_successor_stage", "test_partial_stage", "test_root_stage", "root_successor_stage"]
+    },
+    "phase4b3c3-schedule-deletion-seed-owner.sql": {
+      "role": "neondb_owner",
+      "inputs": ["phase4b5_disposable_child_verified", "phase4b5_branch_id", "phase4b5_admin_user_id", "phase4b5_viewer_user_id"],
+      "exports": [
+        {
+          "prefix": "Owner edge variables: ",
+          "names": ["linked_successor_activity", "linked_successor_stage", "descendant_successor_stage", "missing_successor_stage", "valid_successor_stage", "test_valid_dependency"]
+        },
+        {
+          "prefix": "Worker psql variables A: ",
+          "names": ["test_workspace", "test_actor", "test_viewer", "test_linked_product", "test_linked_activity", "test_linked_activity_dependency", "test_linked_stage", "test_linked_stage_dependency", "test_descendant_product", "test_descendant_discipline", "test_descendant_stage", "test_descendant_dependency"]
+        },
+        {
+          "prefix": "Worker psql variables B: ",
+          "names": ["test_missing_product", "test_missing_activity", "test_missing_stage", "test_missing_dependency", "test_valid_product", "test_valid_activity", "test_valid_stage", "test_fixed_product", "test_explicit_activity", "test_explicit_stage", "test_partial_activity", "test_partial_product", "test_partial_stage", "test_empty_product", "test_empty_activity", "test_collision_activity", "test_late_colliding_operation", "test_r00_count", "test_r00_fingerprint"]
+        }
+      ]
+    },
+    "phase4b3c3-schedule-deletion-seed-worker-stage-dates.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["phase4b5_disposable_child_verified", "test_workspace", "test_actor", "test_fixed_product", "test_partial_product", "test_explicit_stage", "test_partial_stage"],
+      "exports": [
+        {
+          "prefix": "Worker psql variables: ",
+          "names": ["test_workspace", "test_actor", "test_fixed_product", "test_explicit_stage", "test_fixed_schedule_version_before", "test_fixed_schedule_version", "test_partial_product", "test_partial_stage", "test_partial_schedule_version_before", "test_partial_schedule_version"]
+        }
+      ]
+    },
+    "phase4b3c3-schedule-deletion-seed-owner-dependencies.sql": {
+      "role": "neondb_owner",
+      "inputs": ["test_workspace", "test_actor", "test_fixed_product", "test_partial_product", "test_explicit_stage", "test_partial_stage", "test_fixed_schedule_version_before", "test_fixed_schedule_version", "test_partial_schedule_version_before", "test_partial_schedule_version", "test_r00_count", "test_r00_fingerprint", "phase4b5_disposable_child_verified", "test_linked_product", "test_linked_activity_dependency", "test_linked_activity", "linked_successor_activity", "test_linked_stage_dependency", "test_linked_stage", "linked_successor_stage", "test_descendant_product", "test_descendant_dependency", "test_descendant_stage", "descendant_successor_stage", "test_missing_product", "test_missing_dependency", "test_missing_stage", "missing_successor_stage", "test_valid_product", "test_valid_dependency", "test_valid_stage", "valid_successor_stage"]
+    },
+    "phase4b3c3-schedule-deletion-seed-worker.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["test_workspace", "test_actor", "test_empty_product", "test_collision_activity", "test_late_colliding_operation", "test_collision_cursor_before", "test_collision_version_before"]
+    },
+    "phase4b3c3-schedule-deletion-collision-preflight-owner.sql": {
+      "role": "neondb_owner",
+      "readOnly": true,
+      "inputs": ["test_workspace", "test_actor", "test_empty_product", "test_collision_activity", "test_late_colliding_operation"],
+      "exports": [
+        {
+          "prefix": "Collision preflight variables: ",
+          "names": ["test_collision_cursor_before", "test_collision_version_before", "test_collision_state_fingerprint"]
+        }
+      ]
+    },
+    "phase4b3c3-schedule-deletion-collision-postflight-owner.sql": {
+      "role": "neondb_owner",
+      "readOnly": true,
+      "inputs": ["test_workspace", "test_actor", "test_empty_product", "test_collision_activity", "test_late_colliding_operation", "test_collision_cursor_before", "test_collision_version_before", "test_collision_state_fingerprint"]
+    },
+    "phase4b3c3-schedule-deletion.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["test_workspace", "test_actor", "test_viewer", "test_linked_product", "test_linked_activity", "test_linked_activity_dependency", "test_linked_stage", "test_descendant_product", "test_descendant_discipline", "test_descendant_stage", "test_descendant_dependency", "test_missing_product", "test_missing_activity", "test_missing_stage", "test_missing_dependency", "test_valid_product", "test_valid_activity", "test_valid_stage", "test_fixed_product", "test_explicit_activity", "test_explicit_stage", "test_partial_activity", "test_partial_product", "test_partial_stage", "test_empty_product", "test_empty_activity", "test_late_colliding_operation"]
+    },
+    "phase4b3c4-clone-seed-owner.sql": {
+      "role": "neondb_owner",
+      "inputs": ["phase4b5_disposable_child_verified", "phase4b5_branch_id", "phase4b5_admin_user_id", "phase4b5_viewer_user_id"],
+      "exports": [
+        {
+          "prefix": "Clone seed Worker variables: ",
+          "names": ["test_workspace", "test_actor", "test_viewer", "test_other_workspace"]
+        },
+        {
+          "prefix": "Historical R00 baseline: ",
+          "names": ["historical_r00_count", "historical_r00_fingerprint"]
+        }
+      ]
+    },
+    "phase4b3c4-clone-seed-worker-import.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["phase4b5_disposable_child_verified", "test_workspace", "test_actor"]
+    },
+    "phase4b3c4-clone-seed-worker-schedule.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["phase4b5_disposable_child_verified", "test_workspace", "test_actor"]
+    },
+    "phase4b3c4-clone-seed-worker-status.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["phase4b5_disposable_child_verified", "test_workspace", "test_actor"]
+    },
+    "phase4b3c4-clone-seed-owner-dependencies.sql": {
+      "role": "neondb_owner",
+      "inputs": ["phase4b5_disposable_child_verified", "test_workspace", "test_actor", "test_viewer", "test_other_workspace", "historical_r00_count", "historical_r00_fingerprint"],
+      "exports": [
+        {
+          "prefix": "Clone preflight and Worker variables: ",
+          "names": ["workspace", "editor", "viewer", "other_workspace", "vigente_source", "study_source", "archived_source", "empty_source"]
+        },
+        {
+          "prefix": "historical_r00_count=",
+          "names": ["historical_r00_count", "historical_r00_fingerprint"],
+          "prefixIsAssignment": true
+        }
+      ]
+    },
+    "phase4b3c4-clone-preflight-owner.sql": {
+      "role": "neondb_owner",
+      "inputs": ["workspace", "editor", "viewer", "other_workspace", "vigente_source", "study_source", "archived_source", "empty_source"],
+      "readOnly": true,
+      "records": [
+        "SOURCE_FINGERPRINT",
+        "HISTORICAL_R00_BASELINE",
+        "ROOT_EDGE"
+      ]
+    },
+    "phase4b3c4-clone-dependencies.sql": {
+      "role": "jlproject_worker",
+      "inputs": ["workspace", "editor", "viewer", "other_workspace", "vigente_source", "study_source", "archived_source", "empty_source", "missing_target_name", "root_edge_predecessor", "root_edge_successor"],
+      "records": [
+        "CLONE_RESULT",
+        "MISSING_REMAP_TARGET"
+      ]
+    },
+    "phase4b3c4-clone-postflight-owner.sql": {
+      "role": "neondb_owner",
+      "inputs": ["workspace", "editor", "historical_r00_count", "historical_r00_fingerprint", "vigente_source", "vigente_fingerprint", "vigente_clone", "vigente_revision", "study_source", "study_fingerprint", "study_clone", "study_revision", "archived_source", "archived_fingerprint", "archived_clone", "archived_revision", "empty_source", "empty_fingerprint", "empty_clone", "empty_revision", "missing_target_id"],
+      "readOnly": true
+    },
+    "phase4b5-handoff-probe.sql": {
+      "role": "neondb_owner",
+      "readOnly": true,
+      "inputs": ["test_workspace", "fixed_successor_stage", "violation_successor_stage", "missing_target_name", "probe_fail"]
+    },
+    "phase4b5-historical-r00.sql": {
+      "role": "neondb_owner",
+      "readOnly": true,
+      "inputs": ["excluded_clone_workspace"]
+    }
+  }
+}

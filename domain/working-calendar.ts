@@ -67,15 +67,20 @@ function isoDate(year: number, month: number, day: number): string {
   return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
 }
 
-export function parseCivilDate(value: string): { year: number; month: number; day: number } | null {
+export function parseScheduleCivilDate(value: string): { year: number; month: number; day: number } | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  if (year < 2026 || year > 2100 || month < 1 || month > 12) return null;
+  if (year < 1000 || month < 1 || month > 12) return null;
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return day >= 1 && day <= lastDay ? { year, month, day } : null;
+}
+
+export function parseCivilDate(value: string): { year: number; month: number; day: number } | null {
+  const date = parseScheduleCivilDate(value);
+  return date && date.year >= 2026 && date.year <= 2100 ? date : null;
 }
 
 export function easterSunday(year: number): string {

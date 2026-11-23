@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest } from "../worker/index";
-import { assembleHierarchy, type ScheduleRepository } from "../worker/schedule-repository";
+import { assembleHierarchy, type DependencyDateRejection, type ScheduleRepository } from "../worker/schedule-repository";
 import type { MembershipRepository, WorkspaceRole } from "../worker/authorization";
 import type { CalendarRepository } from "../worker/calendar-repository";
 import type { CalendarException } from "../domain/working-calendar";
@@ -171,6 +171,22 @@ describe("schedule hierarchy API", () => {
     expect(await failed.text()).not.toContain("private movement detail");
   });
 
+  it("returns structured dependency details for blocked reparenting without bypassing move authorization", async () => {
+    const repo = repository();
+    const conflict = { dependencyId: targetId, reason: "finish_to_start" as const,
+      predecessor: { id: "b6666666-6666-4666-8666-666666666666", kind: "stage" as const },
+      successor: { id: "b7777777-7777-4777-8777-777777777777", kind: "stage" as const },
+      before: { predecessorFinish: "2026-11-09", successorStart: "2026-11-10", earliestStart: "2026-11-10" },
+      after: { predecessorFinish: "2026-11-10", successorStart: "2026-11-10", earliestStart: "2026-11-11" } };
+    vi.mocked(repo.moveHierarchyItem).mockResolvedValueOnce({ status: "dependency_conflict", conflict });
+    expect((await call(request(movePath, "POST", moveBody), "viewer", repo)).status).toBe(403);
+    expect(repo.moveHierarchyItem).not.toHaveBeenCalled();
+    const rejected = await call(request(movePath, "POST", moveBody), "editor", repo);
+    expect(rejected.status).toBe(409);
+    await expect(rejected.json()).resolves.toMatchObject({ code: "dependency_conflict", details: conflict });
+    expect(repo.moveHierarchyItem).toHaveBeenCalledExactlyOnceWith(ws, product, actor, expect.any(String), moveBody);
+  });
+
   const previewPath = `${base}/hierarchy/deletion-preview?kind=discipline&targetId=${discipline}`;
   const deletePath = `${base}/hierarchy/deletions`;
   const deletionBody = { kind: "discipline", targetId: discipline,
@@ -252,6 +268,28 @@ describe("schedule hierarchy API", () => {
     expect(failed.status).toBe(503);
     expect(await failed.text()).not.toContain("private SQL detail");
   });
+
+  it("returns structured dependency conflicts from deletion preview and commit after authorization", async () => {
+    const repo = repository();
+    const conflict = { dependencyId: targetId, reason: "linked_endpoint" as const,
+      predecessor: { id: activity, kind: "activity" as const },
+      successor: { id: rootActivity, kind: "activity" as const },
+      linkedEndpoint: { id: activity, kind: "activity" as const } };
+    vi.mocked(repo.previewDeletion).mockResolvedValueOnce({ status: "dependency_conflict", conflict });
+    expect((await call(request(previewPath), "viewer", repo)).status).toBe(403);
+    expect(repo.previewDeletion).not.toHaveBeenCalled();
+    const preview = await call(request(previewPath), "editor", repo);
+    expect(preview.status).toBe(409);
+    await expect(preview.json()).resolves.toMatchObject({ code: "dependency_conflict", details: conflict });
+
+    vi.mocked(repo.deleteSubtree).mockResolvedValueOnce({ status: "dependency_conflict", conflict });
+    expect((await call(request(deletePath, "POST", deletionBody), "viewer", repo)).status).toBe(403);
+    expect(repo.deleteSubtree).not.toHaveBeenCalled();
+    const rejected = await call(request(deletePath, "POST", deletionBody), "admin", repo);
+    expect(rejected.status).toBe(409);
+    await expect(rejected.json()).resolves.toMatchObject({ code: "dependency_conflict", details: conflict });
+  });
+
   const applyPath = `${base}/calendar-impact/apply`;
   const originalOperationId = "a1111111-1111-4111-8111-111111111111";
   const reversePath = `${base}/calendar-reschedules/${originalOperationId}/reverse`;
@@ -335,6 +373,26 @@ describe("schedule hierarchy API", () => {
     expect(await failed.text()).not.toContain("private SQL detail");
   });
 
+  it("submits one complete batch and reports a derived-stage dependency conflict without retrying subsets", async () => {
+    const repo = repository();
+    vi.mocked(repo.listWorkingPlans).mockResolvedValue([planned, { ...planned, id: rootActivity, disciplineId: null, stageId: null }]);
+    const details = { dependencyId: targetId, reason: "finish_to_start" as const,
+      predecessor: { id: stage, kind: "stage" as const }, successor: { id: targetId, kind: "stage" as const },
+      before: { predecessorFinish: "2026-11-10", successorStart: "2026-11-11", earliestStart: "2026-11-11" },
+      after: { predecessorFinish: "2026-11-11", successorStart: "2026-11-11", earliestStart: "2026-11-12" } };
+    vi.mocked(repo.applyCalendarReschedule).mockResolvedValueOnce({ status: "dependency_conflict", conflict: details });
+    const payload = { calendarVersion: 2, reason: "Synthetic calendar adjustment", selections: [selection,
+      { activityId: rootActivity, version: 3 }] };
+    const result = await call(request(applyPath, "POST", payload), "editor", repo, true, calculationCalendar(2, [closure]));
+    expect(result.status).toBe(409);
+    const body = await result.json();
+    expect(body).toMatchObject({ code: "dependency_conflict", details });
+    expect(body).not.toHaveProperty("operationId");
+    expect(repo.applyCalendarReschedule).toHaveBeenCalledExactlyOnceWith(ws, product, actor, expect.any(String), 2,
+      payload.reason, [expect.objectContaining({ activityId: activity, proposedEndDate: "2026-11-11" }),
+        expect.objectContaining({ activityId: rootActivity, proposedEndDate: "2026-11-11" })]);
+  });
+
   it("reverses one explicit operation with the verified actor and a justification", async () => {
     const repo = repository();
     const result = await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "editor", repo);
@@ -384,6 +442,24 @@ describe("schedule hierarchy API", () => {
     const failed = await call(request(reversePath, "POST", { reason: "Synthetic reversal reason" }), "admin", repo);
     expect(failed.status).toBe(503);
     expect(await failed.text()).not.toContain("private SQL detail");
+  });
+
+  it("returns the database's final-state dependency conflict for reversal without issuing another mutation", async () => {
+    const repo = repository();
+    const details = { dependencyId: targetId, reason: "finish_to_start" as const,
+      predecessor: { id: stage, kind: "stage" as const }, successor: { id: targetId, kind: "stage" as const },
+      before: { predecessorFinish: "2026-11-11", successorStart: "2026-11-12", earliestStart: "2026-11-12" },
+      after: { predecessorFinish: "2026-11-13", successorStart: "2026-11-12", earliestStart: "2026-11-16" } };
+    vi.mocked(repo.reverseCalendarReschedule).mockResolvedValueOnce({ status: "dependency_conflict", conflict: details });
+    const reason = "Synthetic blocked reversal";
+    const rejected = await call(request(reversePath, "POST", { reason }), "editor", repo);
+    expect(rejected.status).toBe(409);
+    const body = await rejected.json();
+    expect(body).toMatchObject({ code: "dependency_conflict", details });
+    expect(body).not.toHaveProperty("operationId");
+    expect(repo.reverseCalendarReschedule).toHaveBeenCalledExactlyOnceWith(ws, product, actor,
+      originalOperationId, expect.any(String), reason);
+    expect(repo.applyCalendarReschedule).not.toHaveBeenCalled();
   });
   it("returns scoped rescheduling history to active members without accepting actor claims", async () => {
     const repo = repository();
@@ -1069,6 +1145,35 @@ describe("schedule hierarchy API", () => {
     await expect(invalid.json()).resolves.toMatchObject({ error: expect.stringMatching(/dias úteis inválidos/) });
   });
 
+  it("returns structured dependency conflicts for stage-child creation and preserves editor authorization", async () => {
+    const details = { dependencyId: targetId, reason: "finish_to_start",
+      predecessor: { id: "b6666666-6666-4666-8666-666666666666", kind: "stage" },
+      successor: { id: stage, kind: "stage" },
+      before: { predecessorFinish: "2026-11-09", successorStart: "2026-11-10", earliestStart: "2026-11-10" },
+      after: { predecessorFinish: "2026-11-10", successorStart: "2026-11-10", earliestStart: "2026-11-11" } } as const;
+    const rejection = { status: "dependency_conflict" as const, conflict: details };
+    const manualPath = request(activities, "POST", { name: "Synthetic blocked child", displayOrder: 2,
+      plannedStart: "2026-11-10", plannedEnd: "2026-11-12", reason: "Synthetic dependency check" });
+    const manualWriter = vi.fn(async () => rejection);
+    const manualRepository = { ...repository(), createActivity: manualWriter };
+    expect((await call(manualPath, "viewer", manualRepository)).status).toBe(403);
+    expect(manualWriter).not.toHaveBeenCalled();
+    const manualResponse = await call(manualPath, "editor", manualRepository);
+    expect(manualResponse.status).toBe(409);
+    await expect(manualResponse.json()).resolves.toMatchObject({ code: "dependency_conflict", details });
+
+    const workingPath = request(activities, "POST", { name: "Synthetic blocked working child", displayOrder: 2,
+      planningMode: "working_days", plannedStart: "2026-11-10", workingDays: 3, calendarVersion: 2,
+      reason: "Synthetic dependency check" });
+    const workingWriter = vi.fn(async () => rejection);
+    const workingRepository = { ...repository(), createWorkingActivity: workingWriter };
+    expect((await call(workingPath, "viewer", workingRepository)).status).toBe(403);
+    expect(workingWriter).not.toHaveBeenCalled();
+    const workingResponse = await call(workingPath, "editor", workingRepository);
+    expect(workingResponse.status).toBe(409);
+    await expect(workingResponse.json()).resolves.toMatchObject({ code: "dependency_conflict", details });
+  });
+
   it("recalculates edited plans server-side, requires a current calendar, and preserves role boundaries", async () => {
     const repo = repository();
     const path = `${activities}/${activity}/working-plan`;
@@ -1117,6 +1222,37 @@ describe("schedule hierarchy API", () => {
       plannedStart: "2026-11-02", plannedEnd: "2026-11-06", version: 1
     }), "admin", { ...repo, changeActivityDates: async () => ({ status: "invalid" }) });
     expect(missingReason.status).toBe(400);
+  });
+
+  it("returns structured dependency conflicts on every individual date route without applying a cascade", async () => {
+    const repo = repository();
+    const reason = "Synthetic linked date correction";
+    const manualInput = { plannedStart: "2026-11-05", plannedEnd: "2026-11-09", reason, version: 1 };
+    const before = { predecessorFinish: "2026-11-05", successorStart: "2026-11-09", earliestStart: "2026-11-06" };
+    const outbound: DependencyDateRejection = { status: "dependency_preview_required", dependencyId: targetId,
+      direction: "outbound", reason: "finish_to_start", before,
+      after: { ...before, predecessorFinish: "2026-11-09", earliestStart: "2026-11-10" } };
+    const inbound: DependencyDateRejection = { ...outbound, status: "dependency_conflict", direction: "inbound",
+      after: { ...before, successorStart: "2026-11-05" } };
+    const cases = [
+      { path: `${activities}/${activity}/dates`, input: manualInput, result: outbound, writer: "changeActivityDates" },
+      { path: `${rootActivities}/${rootActivity}/dates`, input: manualInput, result: inbound, writer: "changeActivityDates" },
+      { path: `${activities}/${activity}/working-plan`, input: { startDate: "2026-11-05", workingDays: 3,
+        calendarVersion: 2, version: 1, reason }, result: outbound, writer: "changeActivityWorkingPlan" },
+      { path: `${stages}/${stage}/dates`, input: manualInput, result: inbound, writer: "changeStageDates" },
+    ] as const;
+    for (const { path, input, result, writer } of cases) {
+      const write = vi.fn(async () => result);
+      const guarded = { ...repo, [writer]: write };
+      expect((await call(request(path, "PATCH", input), "viewer", guarded)).status).toBe(403);
+      expect(write).not.toHaveBeenCalled();
+      const response = await call(request(path, "PATCH", input), "editor", guarded);
+      expect(response.status).toBe(409);
+      const { status, ...details } = result;
+      expect(await response.json()).toMatchObject({ code: status, details });
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(repo.applyCalendarReschedule).not.toHaveBeenCalled();
+    }
   });
 
   it("scopes date writes and history to active workspace membership and activity ownership", async () => {

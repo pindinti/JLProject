@@ -44,7 +44,7 @@ function addCivilDay(date: string): string {
     .toString().padStart(2, "0")}-${next.getUTCDate().toString().padStart(2, "0")}`;
 }
 
-function validateExceptions(exceptions: readonly WorkingCalendarException[]): void {
+export function validateWorkingCalendarExceptions(exceptions: readonly CalendarExceptionDates[]): void {
   const supportedKinds = new Set<CalendarExceptionKind>([
     "municipal_holiday", "collective_vacation", "company_shutdown"
   ]);
@@ -97,7 +97,7 @@ export function calculateWorkingDayEndDate(
   if (!Number.isSafeInteger(workingDays) || workingDays < 1) {
     throw new RangeError("Working-day duration must be a positive safe integer.");
   }
-  validateExceptions(exceptions);
+  validateWorkingCalendarExceptions(exceptions);
 
   let currentDate = startDate;
   let elapsedWorkingDays = 0;

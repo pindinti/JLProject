@@ -5,6 +5,7 @@ export interface WorkerEnvironment {
   JLPROJECT_ENV?: string;
   NEON_AUTH_BASE_URL?: string;
   NEON_MANAGEMENT_API_KEY?: string;
+  DEPENDENCY_PREVIEW_SIGNING_KEY?: string;
 }
 
 export async function verifyDatabaseConnectivity(

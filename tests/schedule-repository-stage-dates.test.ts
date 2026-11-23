@@ -73,4 +73,20 @@ describe("stage date persistence adapter", () => {
         1, operationId)).resolves.toEqual({ status: "stale" });
     expect(sql).toHaveBeenCalledTimes(1);
   });
+
+  it("returns verified dependency evidence without reading the stage or retrying a blocked write", async () => {
+    const rejection = { status: "dependency_conflict", dependencyId: operationId, direction: "inbound", reason: "missing_boundary",
+      before: { predecessorFinish: "2026-11-03", successorStart: "2026-11-05", earliestStart: "2026-11-04" },
+      after: { predecessorFinish: "2026-11-03", successorStart: null, earliestStart: "2026-11-04" } };
+    sql.mockResolvedValueOnce([{ result: rejection }]);
+    const repository = createScheduleRepository({ DATABASE_URL: "postgresql://example.invalid" });
+    const edit = { plannedStart: null, plannedEnd: "2026-11-10", reason: "Synthetic partial correction" };
+    await expect(repository.changeStageDates(workspaceId, productId, disciplineId, stageId, actorId,
+      edit, 1, operationId)).resolves.toEqual(rejection);
+    expect(sql).toHaveBeenCalledTimes(1);
+    sql.mockResolvedValueOnce([{ result: { ...rejection, reason: "finish_to_start" } }]);
+    await expect(repository.changeStageDates(workspaceId, productId, disciplineId, stageId, actorId,
+      edit, 1, operationId)).rejects.toThrow("Unexpected dependency date rejection.");
+    expect(sql).toHaveBeenCalledTimes(2);
+  });
 });
