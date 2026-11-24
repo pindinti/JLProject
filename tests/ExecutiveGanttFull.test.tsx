@@ -45,6 +45,124 @@ beforeEach(() => {
 });
 
 describe("full Executive Gantt", () => {
+  it("disables printing until executive rows are ready", async () => {
+    render(<ExecutiveGanttFull {...props} />);
+    const button = screen.getByRole("button", { name: "Imprimir cronograma executivo" });
+    expect(button).toBeDisabled();
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    expect(button).toBeEnabled();
+  });
+
+  it("prints current executive rows and milestone names without changing schedule data", async () => {
+    let printable = "";
+    let stageLabels: (string | null)[] = [];
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      printable = document.body.querySelector(".print-document")?.textContent ?? "";
+      stageLabels = [...document.body.querySelectorAll(".print-table__bar--stage")].map((bar) => bar.textContent);
+    });
+    render(<ExecutiveGanttFull {...props} />);
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma executivo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+    expect(print).toHaveBeenCalledOnce();
+    expect(printable).toContain("Product A");
+    expect(printable).toContain("Milestone one");
+    expect(printable).toContain("Milestone two");
+    expect(stageLabels).toEqual(["D1 · EC", "D2 · EC"]);
+    expect(auth.fetch.mock.calls.every(([path, options]) => !String(path).match(/(schedule|targets)/i) ||
+      !["POST", "PUT", "PATCH", "DELETE"].includes((options as RequestInit | undefined)?.method ?? "GET"))).toBe(true);
+    print.mockRestore();
+  });
+
+  it("reflects the current collapsed executive hierarchy in print rows", async () => {
+    render(<ExecutiveGanttFull {...props} />);
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    fireEvent.click(screen.getByRole("button", { name: "Atividades" }));
+    fireEvent.click(screen.getByRole("button", { name: "Recolher tudo" }));
+    let printable = "";
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      printable = document.body.querySelector(".print-document")?.textContent ?? "";
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma executivo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+    expect(printable).toContain("Product A");
+    expect(printable).not.toContain("Activity 0");
+    print.mockRestore();
+  });
+
+  it("uses a different print detail without changing the selected executive view", async () => {
+    render(<ExecutiveGanttFull {...props} />);
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    const products = screen.getByRole("button", { name: /^Produtos$/ });
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      const paper = document.body.querySelector(".print-document")!;
+      expect(paper.querySelector(".print-table--executive-products")).toBeNull();
+      expect(paper.querySelector('[data-print-row="stage:s0"]')).toBeInTheDocument();
+      const owner = paper.querySelector('[data-print-row="product:p"]');
+      expect(owner?.querySelectorAll(".print-event")).toHaveLength(2);
+      expect(owner).toHaveTextContent("Milestone one");
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma executivo" }));
+      fireEvent.change(within(screen.getByRole("dialog", { name: "Configurar impressão" }))
+        .getByLabelText("Detalhamento"), { target: { value: "stages" } });
+      fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+      expect(print).toHaveBeenCalledOnce();
+      expect(products).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      print.mockRestore();
+    }
+  });
+
+  it("prints packed stage labels and milestones from the selected executive view", async () => {
+    render(<ExecutiveGanttFull {...props} />);
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    fireEvent.change(screen.getByLabelText("Disciplina"), { target: { value: "d2" } });
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      const paper = document.body.querySelector(".print-document")!;
+      expect(paper.querySelectorAll(".print-table__row")).toHaveLength(1);
+      expect(paper.querySelectorAll(".print-stage")).toHaveLength(1);
+      expect(paper).toHaveTextContent("D2 · EC");
+      expect(paper).not.toHaveTextContent("D1 · EC");
+      expect(paper).toHaveTextContent("Milestone one");
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma executivo" }));
+      fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+      expect(print).toHaveBeenCalledOnce();
+    } finally {
+      print.mockRestore();
+    }
+  });
+
+  it("orders discipline lanes before dates and adds lanes for overlaps inside a discipline", async () => {
+    const grouped = structuredClone(product);
+    const [first, second] = grouped.disciplines;
+    first.stages[0] = { ...first.stages[0], start: "2024-03-02", end: "2024-03-04" };
+    first.stages.push({ ...first.stages[0], id: "overlap", code: "EP", displayName: "Overlap", displayOrder: 1 });
+    second.stages[0] = { ...second.stages[0], start: "2024-02-29", end: "2024-03-01" };
+    grouped.disciplines.reverse();
+    auth.fetch.mockImplementation(async (path: string) => path.endsWith("/executive-gantt")
+      ? response([grouped]) : new Response(JSON.stringify({ calendar: { version: 1, exceptions: [] } }), { status: 200 }));
+    render(<ExecutiveGanttFull {...props} />);
+    await screen.findByRole("table", { name: "Cronograma executivo" });
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      const paper = document.body.querySelector(".print-document")!;
+      const bars = [...paper.querySelectorAll<HTMLElement>(".print-table__bar--stage")];
+      expect(bars.map((bar) => bar.textContent)).toEqual(["D1 · EC", "D1 · EP", "D2 · EC"]);
+      expect(bars.map((bar) => bar.style.top)).toEqual(["0.5mm", "5.5mm", "10.5mm"]);
+      expect(parseFloat(bars[2].style.left)).toBeLessThan(parseFloat(bars[0].style.left));
+      expect(paper.querySelectorAll(".print-stage__group-rule")).toHaveLength(1);
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma executivo" }));
+      fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+      expect(print).toHaveBeenCalledOnce();
+    } finally {
+      print.mockRestore();
+    }
+  });
+
   it("shows planned full and partial intervals with their source at stage detail level", async () => {
     const planned = structuredClone(product);
     const stage = { ...planned.disciplines[1].stages[0], id: "planned-only", displayName: "Planned only",

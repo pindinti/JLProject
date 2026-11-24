@@ -16,7 +16,7 @@ export function ChangeHistoryDialog({ title, closeLabel, onClose, children, foot
     if (event.key !== "Tab" || !dialogRef.current) return;
     const items = [...dialogRef.current.querySelectorAll<HTMLElement>(
       "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex='0']"
-    )].filter((item) => item.getAttribute("aria-hidden") !== "true");
+    )].filter((item) => item.tabIndex >= 0 && item.getAttribute("aria-hidden") !== "true");
     if (!items.length) return;
     const first = items[0]; const last = items[items.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }

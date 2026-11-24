@@ -11,6 +11,11 @@ import { authenticatedFetch } from "./auth";
 import { formatCivilDate } from "./civil-date";
 import { ganttTextColor } from "./design/gantt-colors";
 import { messages } from "./locales/pt-BR";
+import { PrintSchedule, type PrintableScheduleRow } from "./PrintSchedule";
+import { printSchedule as openPrintDialog } from "./print-dialog";
+import { SchedulePrintDialog } from "./SchedulePrintDialog";
+import { visiblePrintRange, type PrintOptions } from "./schedule-print-options";
+import type { PrintDateSegment } from "./print-pagination";
 
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
 const emptyIds = () => new Set<string>();
@@ -95,6 +100,9 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
   const [collapsedDisciplines, setCollapsedDisciplines] = useState<Set<string>>(emptyIds);
   const [collapsedStages, setCollapsedStages] = useState<Set<string>>(emptyIds);
   const [selectedRow, setSelectedRow] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [printOptions, setPrintOptions] = useState<PrintOptions | null>(null);
+  const [printConfiguration, setPrintConfiguration] = useState<{ visibleRange?: PrintDateSegment } | null>(null);
   const [targetDialog, setTargetDialog] = useState<{ product: ExecutiveProduct; targets: ExecutiveTarget[] } | null>(null);
   const [calendarExceptions, setCalendarExceptions] = useState<CalendarExceptionDates[]>([]);
   const [today, setToday] = useState(() => saoPauloCivilDate(new Date()));
@@ -150,6 +158,45 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
   [collapsedProducts, collapsedDisciplines, collapsedStages]);
   const rows = useMemo(() => visibleExecutiveFullRows(visibleProducts, level, collapsed, disciplineFilter || null),
     [visibleProducts, level, collapsed, disciplineFilter]);
+  const printLevel = !printOptions || printOptions.detail === "current" ? level : printOptions.detail;
+  const selectedPrintRows = printLevel === level ? rows : visibleExecutiveFullRows(visibleProducts, printLevel,
+    { products: emptyIds(), disciplines: emptyIds(), stages: emptyIds() }, disciplineFilter || null);
+  const printRows: PrintableScheduleRow[] = printing ? selectedPrintRows.map((row, index) => {
+    const parent = row.depth ? [...selectedPrintRows.slice(0, index)].reverse()
+      .find((candidate) => candidate.depth === row.depth - 1) : null;
+    let laneOffset = 0;
+    const groups = printLevel === "products" ? [...row.product.disciplines]
+      .filter((discipline) => !disciplineFilter || discipline.id === disciplineFilter)
+      .sort((a, b) => a.displayOrder - b.displayOrder)
+      .map((discipline) => {
+        const packed = packExecutiveStages({ ...row.product, disciplines: [discipline] });
+        const offset = laneOffset;
+        laneOffset += packed.laneCount;
+        return { ...packed, offset };
+      }) : null;
+    return { key: row.key, parentKey: parent?.key ?? null, hasChildren: row.hasChildren,
+      label: row.label, kind: row.kind, depth: row.depth, start: row.start, end: row.end, color: row.color,
+      dateSource: row.stage?.dateSource,
+      milestones: row.kind === "product" ? row.product.targets.map((target) => ({
+        id: target.id, name: target.name, date: target.targetDate, color: target.color,
+      })) : undefined,
+      bars: groups?.flatMap(({ stages, undated, offset }) => [
+        ...stages.map(({ stage, discipline, lane, partial, anchorDate }) => ({
+          key: stage.id, label: executiveStageBarLabel(discipline, stage),
+          discipline: discipline.name.trim() || discipline.shortCode.trim(),
+          disciplineKey: discipline.id,
+          stageName: stage.displayName?.trim(),
+          stageCode: stage.code?.trim(),
+          start: partial && stage.start !== anchorDate ? null : stage.start,
+          end: partial && stage.end !== anchorDate ? null : stage.end, color: stage.color, lane: offset + lane,
+          dateSource: stage.dateSource,
+        })),
+        ...undated.map(({ stage, discipline }) => ({
+          key: stage.id, label: executiveStageBarLabel(discipline, stage),
+          start: null, end: null, color: stage.color, lane: 0,
+        })),
+      ]) };
+  }) : [];
   const timeline = useMemo(() => makeExecutiveTimeline(visibleProducts, zoom, today), [visibleProducts, zoom, today]);
   const calendarYearKey = useMemo(() => {
     const first = Number(civilFromDay(timeline.startDay).slice(0, 4));
@@ -215,6 +262,14 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
       <p>{messages.executiveFullDescription}</p></div>
       <button type="button" className="back-button" onClick={onBack}>{messages.backToProducts}</button></div>
     <div className="executive-full__toolbar" role="toolbar" aria-label={messages.executiveFullControls}>
+      <button type="button" className="back-button" disabled={displayStatus !== "ready" || rows.length === 0}
+        onClick={() => {
+          const plot = viewport.current;
+          const frozen = plot?.querySelector(".executive-full__label-head")?.getBoundingClientRect().width;
+          setPrintConfiguration({ visibleRange: plot && frozen !== undefined
+            ? visiblePrintRange(timeline.startDay, timeline.endDay, timeline.dayWidth, plot.scrollLeft, plot.clientWidth - frozen)
+            : undefined });
+        }}>{messages.printExecutiveSchedule}</button>
       <div className="executive-full__detail-control" role="group" aria-label={messages.executiveDetailLevel}>
         {detailLevels.map((value) => <button key={value} type="button" aria-pressed={level === value}
           onClick={() => { setLevel(value); setSelectedRow(null); }}>{messages.executiveLevel[value]}</button>)}
@@ -363,5 +418,19 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
         </li>)}</ul>
       </div>
     </div>}
+    {printConfiguration && <SchedulePrintDialog visibleRange={printConfiguration.visibleRange}
+      currentDetail={level} details={detailLevels.map((value) => ({ value, label: messages.executiveLevel[value] }))}
+      onClose={() => setPrintConfiguration(null)}
+      onPrint={(options, accept) => openPrintDialog((active) => {
+        setPrintOptions(active ? options : null);
+        setPrinting(active);
+      }, accept)} />}
+    {printing && displayStatus === "ready" && rows.length > 0 && <PrintSchedule title={messages.executiveFullTitle}
+      executiveProducts={printLevel === "products"}
+      detail={[productFilter && productOptions.find((product) => product.id === productFilter)?.name,
+        disciplineFilter && disciplineOptions.find((item) => item.discipline.id === disciplineFilter)?.discipline.name,
+        messages.executiveLevel[printLevel]].filter(Boolean).join(" · ")}
+      rows={printRows} milestones={[]} today={today} startDate={printOptions?.range?.start} endDate={printOptions?.range?.end}
+      fit={printOptions?.fit} showToday={printOptions?.showToday} showMilestones={printOptions?.showMilestones} />}
   </section>;
 }

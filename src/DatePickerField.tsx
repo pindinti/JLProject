@@ -13,6 +13,7 @@ interface DatePickerFieldProps {
   ariaRequired?: boolean;
   maxLength?: number;
   describedBy?: string;
+  portalWithinDialog?: boolean;
 }
 
 interface CivilParts { year: number; month: number; day: number }
@@ -93,8 +94,9 @@ function clampPopup(trigger: HTMLElement): PopupPosition {
 }
 
 export function DatePickerField({ id, label, value, onChange, disabled = false, required = false, ariaRequired,
-  maxLength = 10, describedBy }: DatePickerFieldProps) {
+  maxLength = 10, describedBy, portalWithinDialog }: DatePickerFieldProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const [portalTarget, setPortalTarget] = useState<Element | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -129,6 +131,7 @@ export function DatePickerField({ id, label, value, onChange, disabled = false, 
   }, [view.year, view.month]);
 
   function openPicker() {
+    if (portalWithinDialog) setPortalTarget(wrapperRef.current?.closest('[role="dialog"]') ?? null);
     if (disabled) return;
     const typedDate = parseBrazilianDate(value);
     const base = typedDate ? partsFromIso(typedDate)! : todayCivil();
@@ -267,6 +270,6 @@ export function DatePickerField({ id, label, value, onChange, disabled = false, 
           </div>)}
         </div>
         <small className="date-picker-popover__hint">{messages.datePickerKeyboardHint}</small>
-      </div>, document.body)}
+      </div>, portalTarget ?? document.body)}
   </div>;
 }

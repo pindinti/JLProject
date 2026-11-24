@@ -1674,3 +1674,132 @@ form button {
   .import-summary { grid-template-columns: 1fr; }
   .import-summary dd { margin-bottom: 0.5rem; }
 }
+
+.print-document { display: none; color: #222; font-family: var(--jl-font-sans); }
+.schedule-print-dialog { width: min(34rem, calc(100vw - 2rem)); }
+.schedule-print-dialog .change-history-dialog__body { padding: var(--jl-space-3) var(--jl-space-4); }
+.schedule-print-dialog__paper-summary { margin: 0 0 var(--jl-space-3); color: var(--jl-text-muted); font-size: var(--jl-font-size-sm); }
+.schedule-print-dialog form { gap: 0; }
+.schedule-print-dialog fieldset { display: grid; gap: var(--jl-space-2); min-width: 0; border: 0; margin: 0; padding: 0; }
+.schedule-print-dialog__field { display: grid; gap: var(--jl-space-1); }
+.schedule-print-dialog label > select { display: block; width: 100%; }
+.schedule-print-dialog label > small { color: var(--jl-text-muted); font-size: var(--jl-font-size-xs); font-weight: 400; }
+.schedule-print-dialog fieldset.schedule-print-dialog__additional { padding-top: var(--jl-space-2); border-top: 1px solid var(--jl-border); }
+.schedule-print-dialog__additional legend { padding: 0; font-size: var(--jl-font-size-sm); font-weight: 700; }
+.schedule-print-dialog__check { display: flex; align-items: center; gap: var(--jl-space-2); min-height: 1.8rem; cursor: pointer; }
+.schedule-print-dialog__check > input[type="checkbox"] { flex: 0 0 18px; width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; accent-color: var(--jl-primary); }
+.schedule-print-dialog__check > input[type="checkbox"]:disabled { cursor: not-allowed; }
+.schedule-print-dialog__check > span { min-width: 0; }
+.schedule-print-dialog__unavailable { display: grid; gap: var(--jl-space-1); }
+.schedule-print-dialog__unavailable > small { padding-left: 26px; color: var(--jl-text-muted); }
+.schedule-print-dialog__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--jl-space-2); }
+.schedule-print-dialog__actions > button { margin: 0; }
+.schedule-print-dialog__dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--jl-space-2); }
+@media (max-width: 30rem) {
+  .schedule-print-dialog__dates { grid-template-columns: 1fr; }
+}
+.print-page--single { position: relative; overflow: clip; }
+.print-single-content { transform-origin: top left; }
+.print-page {
+  page: jlproject-schedule;
+  display: flex;
+  flex-direction: column;
+  width: 420mm;
+  min-height: 296.5mm;
+  padding: 10mm;
+  break-after: page;
+}
+.print-page__header { display: flex; align-items: center; gap: 6mm; min-height: 19mm; border-bottom: 0.2mm solid #879087; }
+.print-page__header img { width: 36mm; max-height: 14mm; object-fit: contain; }
+.print-page__header h1 { margin: 0 0 1mm; font-size: 14pt; line-height: 5.6mm; overflow-wrap: anywhere; }
+.print-page__header p { margin: 0; font-size: 8pt; line-height: 3.6mm; overflow-wrap: anywhere; }
+.print-page__range { display: flex; justify-content: space-between; margin: 1.3mm 0; font-size: 8pt; line-height: 3.4mm; }
+.print-page__range > span { margin-left: auto; }
+.print-stage-legend { display: flex; gap: 3mm; align-items: center; color: #355f52; }
+.print-stage-legend span::before { display: inline-block; width: 4mm; margin-right: 0.7mm; border-bottom: 0.3mm solid; vertical-align: middle; content: ""; }
+.print-stage-legend [data-date-source="derived"]::before { border-bottom-style: dotted; }
+.print-table { flex: 0 0 auto; }
+.print-table__head,.print-table__row { display: grid; grid-template-columns: 92mm 20mm 20mm 268mm; break-inside: avoid; }
+.print-table__head { min-height: 7mm; border-bottom: 0.2mm solid #657166; font-size: 8pt; background: #f0f2ee; }
+.print-table__head > strong { display: flex; align-items: center; padding-left: 1mm; }
+.print-table__timeline { position: relative; }
+.print-table__timeline span { position: absolute; top: 1.5mm; white-space: nowrap; font-size: 8pt; transform: translateX(-50%); }
+.print-table__timeline .print-table__month--edge { top: 4.75mm; }
+.print-table__today-label { color: #355f52; font-weight: 600; }
+.print-table__row { min-height: 5.5mm; border-bottom: 0.2mm solid #d5dad4; }
+.print-table__row--product > :not(.print-table__chart),.print-table__row--discipline > :not(.print-table__chart) { background: #edf0eb; }
+.print-table__row--stage > :not(.print-table__chart) { background: #f7f8f6; }
+.print-table__row--activity .print-table__label strong { font-weight: 400; }
+.print-table__label { display: flex; align-items: center; gap: 1.4mm; min-width: 0; padding: 0.65mm 1mm; }
+.print-table__label > i,.print-event-continuation i { width: 2mm; height: 2mm; flex: 0 0 auto; border-radius: 50%; }
+.print-table__label strong { min-width: 0; overflow-wrap: anywhere; white-space: pre-line; font-size: 9pt; line-height: 3.8mm; }
+.print-table__date { display: flex; align-items: center; padding-left: 1mm; white-space: nowrap; font-size: 8pt; font-variant-numeric: tabular-nums; }
+.print-table__chart { position: relative; min-width: 0; }
+.print-table__bars { position: relative; min-height: 4.5mm; }
+.print-table__bar { position: absolute; top: 1.4mm; height: 2.4mm; border-radius: 0.25mm; }
+.print-table__bar[data-date-source="planned"] { border-bottom: 0.3mm solid currentColor; }
+.print-table__bar[data-date-source="derived"] { border-bottom: 0.3mm dotted currentColor; }
+.print-table__bar--stage { z-index: 2; height: 4mm; padding-inline: 0.65mm; overflow: hidden; white-space: nowrap; font-size: 8pt; line-height: 3.6mm; }
+.print-table__bar--stage:empty { padding: 0; }
+.print-table__bar-notes { position: relative; z-index: 2; overflow-wrap: anywhere; padding: 0 1mm 0.5mm; font-size: 8pt; line-height: 3.4mm; }
+.print-stage__callout,.print-stage__badge { position: absolute; z-index: 3; font-size: 8pt; white-space: nowrap; background: #fff; }
+.print-stage__callout { padding-inline: 0.5mm; line-height: 4mm; }
+.print-stage__leader { position: absolute; z-index: 3; width: 1.5mm; border-top: 0.25mm solid #455148; }
+.print-stage__seam { position: absolute; z-index: 3; height: 4mm; border-left: 0.18mm solid #fff; transform: translateX(-50%); }
+.print-stage__badge { border: 0.2mm solid #455148; border-radius: 0.4mm; text-align: center; line-height: 3mm; }
+.print-stage__reference-leaders { position: absolute; z-index: 2; top: 0; left: 0; width: 100%; pointer-events: none; }
+.print-stage__reference-leaders line { stroke: #455148; stroke-width: 0.25; }
+.print-table__rows { position: relative; }
+.print-table__guides { position: absolute; inset: 0 0 0 132mm; pointer-events: none; }
+.print-table__tick,.print-table__marker,.print-table__today { position: absolute; top: 0; bottom: 0; border-left: 0.18mm solid #dfe4de; }
+.print-table__marker { z-index: 1; border-left-width: 0.32mm; }
+.print-table__marker b { position: absolute; top: -3mm; font: 700 8pt/3mm var(--jl-font-sans); transform: translateX(-50%); background: #fff; }
+.print-table__boundary { position: absolute; z-index: 2; top: 0.5mm; height: 4mm; border-left: 0.35mm solid; transform: translateX(-50%); }
+.print-table__boundary[data-date-source="derived"] { border-left-style: dotted; }
+.print-table__today { z-index: 1; border-left: 0.35mm dashed #355f52; }
+.print-event-band { position: relative; margin-left: 132mm; }
+.print-event__guide { position: absolute; top: 0; bottom: 0; border-left: 0.32mm solid; }
+.print-event { position: absolute; z-index: 2; padding: 0.35mm 1mm; border-bottom: 0.3mm solid; background: #fff; font-size: 8pt; line-height: 3.25mm; overflow-wrap: anywhere; white-space: pre-line; }
+.print-event i { position: absolute; bottom: -0.45mm; width: 0.8mm; height: 0.8mm; transform: translateX(-50%); border-radius: 50%; }
+.print-table__references { position: absolute; bottom: 0; padding-right: 1mm; background: #fff; font-size: 8pt; }
+.print-event-continuation h2 { font-size: 10pt; margin: 0 0 2mm; }
+.print-event-continuation > div { display: grid; grid-template-columns: 4mm 32mm minmax(0, 1fr); align-items: center; padding: 0.8mm 0; break-inside: avoid; }
+.print-event-continuation > .print-event-outside-range { grid-template-columns: 4mm 52mm minmax(0, 1fr); }
+.print-event-continuation span { font-size: 8pt; }
+.print-event-continuation strong { font-size: 9pt; line-height: 3.8mm; overflow-wrap: anywhere; }
+.print-table--executive-products .print-table__head,
+.print-table--executive-products .print-table__row { grid-template-columns: 60mm 340mm; }
+.print-table--executive-products .print-table__label {
+  display: block;
+  background: #f7f8f7;
+  padding-block: 0.75mm;
+}
+.print-table--executive-products .print-table__label small { display: block; font-size: 8pt; line-height: 3.4mm; }
+.print-table--executive-products .print-event-band { margin-left: 60mm; }
+.print-event__guide b {
+  position: absolute; bottom: 0; font: 700 8pt/3mm var(--jl-font-sans); transform: translateX(-50%); background: #fff;
+}
+.print-table--executive-products .print-table__guides { inset: 0; }
+.print-table__bars > .print-table__guides { inset: 0; }
+.print-table__chart > .print-event-band { margin-left: 0; }
+.print-event-swatch { display: inline-block; width: 2mm; height: 2mm; margin-right: 0.6mm; border-radius: 50%; }
+.print-stage__group-rule { position: absolute; inset-inline: 0; border-top: 0.18mm solid #e1e6e1; }
+.print-table--executive-products .print-table__row > .print-table__bar-notes {
+  grid-column: 1 / -1; background: #fff; padding-block: 0.6mm;
+}
+.print-executive-key { padding: 0.7mm 1mm; font-size: 8pt; line-height: 3.4mm; overflow-wrap: anywhere; }
+.print-page__footer { display: flex; justify-content: space-between; gap: 4mm; margin-top: auto; padding-top: 1.5mm; border-top: 0.2mm solid #879087; font-size: 8pt; }
+.print-page__footer span:first-child { overflow-wrap: anywhere; }
+.print-page__footer span:last-child { white-space: nowrap; }
+@page jlproject-schedule { size: A3 landscape; margin: 0; }
+@media screen {
+  body.printing-schedule .print-document { display: block; position: fixed; top: 0; left: -10000px; width: 420mm; visibility: hidden; pointer-events: none; }
+}
+@media print {
+  body.printing-schedule { min-width: 0; min-height: 0; background: #fff; }
+  body.printing-schedule > * { display: none !important; }
+  body.printing-schedule > .print-document { position: static; display: block !important; visibility: visible !important; }
+  body.printing-schedule > .print-document * { visibility: visible !important; }
+  .print-page:last-child { break-after: auto; }
+  .print-page,.print-page * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}

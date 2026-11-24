@@ -17,6 +17,11 @@ import type { ActivityCalendarImpact } from "../domain/calendar-impact";
 import { nonWorkingDayRanges } from "../domain/non-working-day-ranges";
 import { parseCivilDate, type CalendarExceptionDates } from "../domain/working-calendar";
 import { authenticatedFetch } from "./auth";
+import { PrintSchedule, type PrintableScheduleRow } from "./PrintSchedule";
+import { printSchedule as openPrintDialog } from "./print-dialog";
+import { SchedulePrintDialog } from "./SchedulePrintDialog";
+import { visiblePrintRange, type PrintOptions } from "./schedule-print-options";
+import type { PrintDateSegment } from "./print-pagination";
 
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
 const noCalendarImpacts: ActivityCalendarImpact[] = [];
@@ -57,6 +62,9 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   onAccessLost?: () => void;
 }) {
   const [zoom, setZoom] = useState<Zoom>("week");
+  const [printing, setPrinting] = useState(false);
+  const [printOptions, setPrintOptions] = useState<PrintOptions | null>(null);
+  const [printConfiguration, setPrintConfiguration] = useState<{ visibleRange?: PrintDateSegment } | null>(null);
   const [tableWidth, setTableWidth] = useState(50);
   const [selected, setSelected] = useState<string | null>(null);
   const [hoveredRowKey, setHoveredRowKey] = useState<string | null>(null);
@@ -698,6 +706,20 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
   }
 
   const style = { "--table-width": `${tableWidth}%` } as CSSProperties;
+  const printDetail = printOptions?.detail ?? "current";
+  const selectedPrintRows = printDetail === "current" ? rows : visibleScheduleRows(product, tree,
+    new Set(printDetail === "disciplines" ? [] : tree.disciplines.map(({ id }) => id)),
+    new Set(printDetail === "activities" ? tree.disciplines.flatMap(({ stages }) => stages.map(({ id }) => id)) : []))
+    .filter((row) => printDetail === "activities" || row.kind !== "activity");
+  const printRows: PrintableScheduleRow[] = printing ? selectedPrintRows.map((row) => {
+    const parentKey = row.kind === "discipline" ? `product:${product.id}`
+      : row.kind === "stage" ? `discipline:${row.disciplineId}`
+      : row.kind === "activity" ? row.stageId ? `stage:${row.stageId}`
+        : row.disciplineId ? `discipline:${row.disciplineId}` : `product:${product.id}` : null;
+    const depth = row.kind === "product" ? 0 : row.kind === "discipline" ? 1
+      : row.kind === "stage" ? 2 : row.stageId ? 3 : row.disciplineId ? 2 : 1;
+    return { ...row, parentKey, depth };
+  }) : [];
   return <section className="schedule-workspace" data-density="compact" aria-label={messages.scheduleWorkspace}>
     {moveFeedback && <p className={moveFeedbackIsError ? "activity-move-feedback activity-move-feedback--error" : "activity-move-feedback"}
       role={moveFeedbackIsError ? "alert" : "status"}>{moveFeedback}</p>}
@@ -706,6 +728,11 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
     </p>}
     <div className="workspace-controls">
       <div className="workspace-toolbar-actions">
+        <button type="button" onClick={() => {
+          const chart = chartRef.current;
+          setPrintConfiguration({ visibleRange: chart && chart.clientWidth
+            ? visiblePrintRange(scale.startDay, scale.endDay, scale.dayWidth, chart.scrollLeft, chart.clientWidth) : undefined });
+        }}>{messages.printSchedule}</button>
         {canEdit && <button type="button" onClick={onAddDiscipline}>{messages.addDiscipline}</button>}
         <button type="button" onClick={() => { setCalendarExceptionsByYear({}); onRefresh(); }}>{messages.refreshHierarchy}</button>
         <button type="button" onClick={onProductHistory}>{messages.productHistoryOpen}</button>
@@ -1140,6 +1167,22 @@ export function ScheduleWorkspace({ product, tree, targets, workspaceId, openDis
         </form>
       </div>
     </div>}
+    {printConfiguration && <SchedulePrintDialog individual visibleRange={printConfiguration.visibleRange}
+      currentDetail="current" details={[
+        { value: "current", label: messages.printConfig.current },
+        { value: "activities", label: messages.printConfig.activities },
+        { value: "stages", label: messages.printConfig.stages },
+        { value: "disciplines", label: messages.printConfig.disciplines },
+      ]} onClose={() => setPrintConfiguration(null)}
+      onPrint={(options, accept) => openPrintDialog((active) => {
+        setPrintOptions(active ? options : null);
+        setPrinting(active);
+      }, accept)} />}
+    {printing && <PrintSchedule title={product.name} detail={messages.printLivingSchedule} rows={printRows}
+      milestones={targets.map((target) => ({ id: target.id, name: target.name,
+        date: target.targetDate, color: target.color }))} today={today}
+      startDate={printOptions?.range?.start} endDate={printOptions?.range?.end}
+      fit={printOptions?.fit} showToday={printOptions?.showToday} showMilestones={printOptions?.showMilestones} />}
   </section>;
 }
 

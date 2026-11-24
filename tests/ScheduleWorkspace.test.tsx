@@ -31,6 +31,80 @@ function mount(canEdit = true, calendarImpacts?: ActivityCalendarImpact[], works
 }
 
 describe("schedule workspace refinements", () => {
+  it("prints the visible product hierarchy and milestone names through the browser dialog", () => {
+    let printable = "";
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      expect(document.body).toHaveClass("printing-schedule");
+      printable = document.body.querySelector(".print-document")?.textContent ?? "";
+    });
+    const { container } = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+    expect(print).toHaveBeenCalledOnce();
+    expect(printable).toContain("Synthetic product");
+    expect(printable).toContain("Cronograma ativo");
+    expect(printable).toContain("Synthetic discipline");
+    expect(printable).toContain("Synthetic activity");
+    expect(printable).toContain("Synthetic target");
+    expect(document.body).not.toHaveClass("printing-schedule");
+    expect(container.querySelector(".print-document")).not.toBeInTheDocument();
+    print.mockRestore();
+  });
+
+  it("prints a shallower hierarchy and optional marks without changing the interactive schedule", () => {
+    const before = structuredClone(tree);
+    const { container } = mount();
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      const paper = document.body.querySelector(".print-document")!;
+      expect(paper).toHaveTextContent("Synthetic discipline");
+      expect(paper).not.toHaveTextContent("Synthetic stage");
+      expect(paper).not.toHaveTextContent("Synthetic activity");
+      expect(paper).not.toHaveTextContent("Synthetic target");
+      expect(paper.querySelector(".print-table__today")).toBeNull();
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma" }));
+      fireEvent.change(screen.getByLabelText("Detalhamento"), { target: { value: "disciplines" } });
+      fireEvent.click(screen.getByLabelText("Marcos e metas"));
+      fireEvent.click(screen.getByLabelText("Indicador de hoje"));
+      fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+      expect(print).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-row-key="activity:activity"]')).toBeInTheDocument();
+      expect(tree).toEqual(before);
+    } finally {
+      print.mockRestore();
+    }
+  });
+
+  it("honors a collapsed product by default and can explicitly print all stages or activities", () => {
+    const withRoot = { ...tree, rootActivities: [{
+      ...tree.disciplines[0].stages[0].activities[0], id: "root", name: "Synthetic root work",
+    }] };
+    const { container } = mount(true, undefined, undefined, withRoot);
+    const disclosure = container.querySelector<HTMLButtonElement>('[data-row-key="product:product"] .workspace-expand')!;
+    fireEvent.click(disclosure);
+    const sheets: string[] = [];
+    const print = vi.spyOn(window, "print").mockImplementation(() => {
+      sheets.push(document.body.querySelector(".print-document")!.textContent!);
+    });
+    try {
+      for (const detail of ["current", "stages", "activities"]) {
+        fireEvent.click(screen.getByRole("button", { name: "Imprimir cronograma" }));
+        fireEvent.change(screen.getByLabelText("Detalhamento"), { target: { value: detail } });
+        fireEvent.click(screen.getByRole("button", { name: "Abrir impressão" }));
+      }
+      expect(sheets).toHaveLength(3);
+      expect(sheets[0]).not.toContain("Synthetic discipline");
+      expect(sheets[1]).toContain("Synthetic stage");
+      expect(sheets[1]).not.toMatch(/Synthetic activity|Synthetic root work/);
+      expect(sheets[2]).toContain("Synthetic activity");
+      expect(sheets[2]).toContain("Synthetic root work");
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    } finally {
+      print.mockRestore();
+    }
+  });
+
   it("renders explicit stage dates and names out-of-interval activities without moving either schedule", () => {
     const planned: ScheduleTree = { disciplines: [{ ...tree.disciplines[0]!, stages: [{
       ...tree.disciplines[0]!.stages[0]!, plannedStart: "2026-11-03", plannedEnd: "2027-01-10",
