@@ -26,3 +26,7 @@ The retained pre-upgrade backup is the database recovery point; no automatic dat
 The known Excel import E2E investigation was inconclusive and is not recorded as a confirmed defect. Viewer-role testing remains deferred. Formal visual revision management after R00, Gantt timeline drag-to-reschedule, and Excel export are not implemented. See [the consolidated backlog](13-BACKLOG.md).
 
 Detailed, sanitized operator evidence remains outside the repository under the release evidence directory. Do not commit database snapshots, transcripts, freeze attestations, or account-specific smoke data.
+
+## Subsequent release record
+
+This report remains the historical 2026-11-13 REL-05 deployment record. The later Phase 4B.5 Production cutover was formally accepted PASS on 2026-11-24; see the [Phase 4B.5 Production cutover closeout](verification/REL-05-PHASE4B5-PRODUCTION-CUTOVER-CLOSEOUT.md). The separate [Production hotfix provenance supplement](verification/REL-05-PRODUCTION-HOTFIX-PROVENANCE.md) remains part of the release history.
