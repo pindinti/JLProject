@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { civilFromDay, dayNumber } from "../domain/schedule-workspace";
 import { formatCivilDate } from "./civil-date";
+import { schedulePrintTitle } from "./print-dialog";
 import { ganttTextColor } from "./design/gantt-colors";
 import { messages } from "./locales/pt-BR";
 import { paginatePrintRows, planPrintTimeline, selectPrintRows, type PrintDateSegment, type PrintRow } from "./print-pagination";
@@ -232,10 +233,10 @@ function eventContinuationRows(items: readonly (PrintableMilestone & { markerRef
   return items.map((item) => ({ ...item, key: item.id, heightUnits: Math.ceil(textLines(item.name, 320) * 3.8 + 2) }));
 }
 
-export function PrintSchedule({ title, detail, rows, milestones, startDate, endDate, today, executiveProducts = false,
+export function PrintSchedule({ title, detail, rows, milestones, startDate, endDate, today, executive = false, executiveProducts = false,
   fit = "automatic", showToday = true, showMilestones = true }: {
   title: string; detail?: string; rows: PrintableScheduleRow[]; milestones: PrintableMilestone[];
-  startDate?: string; endDate?: string; today: string; executiveProducts?: boolean;
+  startDate?: string; endDate?: string; today: string; executive?: boolean; executiveProducts?: boolean;
   fit?: PrintFit; showToday?: boolean; showMilestones?: boolean;
 }) {
   const printRoot = useRef<HTMLDivElement>(null);
@@ -331,6 +332,7 @@ export function PrintSchedule({ title, detail, rows, milestones, startDate, endD
   });
   const issued = formatCivilDate(today);
   return <div className="print-document" ref={printRoot}
+    data-print-title={schedulePrintTitle(issued, executive ? undefined : title)}
     data-print-density-warning={fit !== "automatic" && automatic.segments.length > 1}>
     {pages.map(({ interval, geometry, events, pageRows, continuedEvents, eventOwner, todayPosition, hasShortMonth, extraTracks,
       inlineContinuations }, index) => {

@@ -1,7 +1,15 @@
 import { flushSync } from "react-dom";
 import { printReadabilityThreshold, singleSheetScale } from "./schedule-print-options";
 
+export function schedulePrintTitle(issued: string, productName?: string): string {
+  const product = productName?.trim().replace(/(?:\.pdf\s*)+$/i, "")
+    .replace(/[\s_\p{Cc}<>:"/\\|?*]+/gu, "_").replace(/^[._]+|[._]+$/g, "");
+  // Chrome adds the .pdf extension to the print job title.
+  return `JLProject_crono_${productName === undefined ? "executivo" : product || "produto"}_${issued.replaceAll("/", "_")}`;
+}
+
 export function printSchedule(setPrinting: (printing: boolean) => void, acceptWarning = false): boolean {
+  const originalTitle = document.title;
   document.body.classList.add("printing-schedule");
   let restoreOutput: (() => void) | undefined;
   try {
@@ -25,9 +33,11 @@ export function printSchedule(setPrinting: (printing: boolean) => void, acceptWa
       restoreOutput = () => parent.insertBefore(output, next);
       document.body.append(output);
     }
+    if (output?.dataset.printTitle) document.title = output.dataset.printTitle;
     window.print();
     return true;
   } finally {
+    document.title = originalTitle;
     restoreOutput?.();
     document.body.classList.remove("printing-schedule");
     flushSync(() => setPrinting(false));

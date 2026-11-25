@@ -425,7 +425,7 @@ export function ExecutiveGanttFull({ workspaceId, onAccessLost, onBack, onOpenPr
         setPrintOptions(active ? options : null);
         setPrinting(active);
       }, accept)} />}
-    {printing && displayStatus === "ready" && rows.length > 0 && <PrintSchedule title={messages.executiveFullTitle}
+    {printing && displayStatus === "ready" && rows.length > 0 && <PrintSchedule title={messages.executiveFullTitle} executive
       executiveProducts={printLevel === "products"}
       detail={[productFilter && productOptions.find((product) => product.id === productFilter)?.name,
         disciplineFilter && disciplineOptions.find((item) => item.discipline.id === disciplineFilter)?.discipline.name,

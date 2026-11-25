@@ -61,3 +61,19 @@ On 2026-11-24, the user confirmed that all supported print configuration feature
 - Continuation pages retain document identification, hierarchy columns, timeline headers, footer, and page numbering.
 - Individual/executive selections match their approved current state, and printing leaves schedule data unchanged.
 - Phase 2 validates the available version, unavailable revision and dependency controls, each hierarchy option, complete/visible/custom dates, invalid and empty periods, horizontal and vertical continuations, width and single-sheet fitting, readability warnings, optional overlays, executive filters and ownership, cancellation, and both approved Phase 1 baselines. Printing actual snapshots remains contingent on an existing authorized reader.
+
+### Default PDF filenames
+
+Chrome Save as PDF suggests `JLProject_crono_[product_name]_[dd_mm_yyyy].pdf` for individual schedules and `JLProject_crono_executivo_[dd_mm_yyyy].pdf` for executive schedules. The filename uses the issue date printed on the document and applies to every print configuration. Product name capitalization is preserved, whitespace and incompatible characters are normalized, and duplicate underscores and trailing PDF suffixes are removed. The application restores its original title when native printing finishes, is canceled, or fails.
+
+Manual Chrome acceptance passed for the filename improvement before Production release.
+
+## Production release history
+
+### Initial schedule printing release
+
+- GitHub `main` advanced from `56d7af0` to the approved printing commit `2fe6060b26e55c3c60b31b719e72e98c5c2ded92`. No database migration was run.
+- The Workers Builds API returned HTTP 403 for trigger inspection. After the push, GitHub showed no check runs, commit statuses, deployments, or repository webhooks, and the active Worker version was unchanged. Wrangler uploaded and promoted the candidate on the canonical `jlproject` Worker. Candidate binding and runtime metadata matched the previous version. Wrangler reported no non-versioned settings to sync.
+- Cloudflare deployment `ee4a20ef-9a47-4bad-9116-99aa3fbacf06` started at `2026-11-25T00:13:14Z` (November 24 in São Paulo). It serves version `1df25d57-b2cb-4d9a-b8d7-26bd67b240b2` at 100%, tagged `2fe6060`.
+- The canonical Production URL returned HTTP 200 for the application, JavaScript, CSS, and `/api/health`. The HTML declared `pt-BR` and referenced the expected assets. The live asset hashes matched the approved build, which includes the printing UI and the verified Production Auth URL. Anonymous `/api/auth/session` returned HTTP 401. Authenticated sign-in and native print preview await human Production smoke testing.
+- Application rollback target is version `80cb6fc6-5ac7-49ae-8e4c-789084ca4b71` from prior deployment `16e10b4e-9bad-42a9-9907-26d1e2c88046`. The version was confirmed available before deployment. If rollback is authorized, run `npx wrangler rollback 80cb6fc6-5ac7-49ae-8e4c-789084ca4b71 --config wrangler.jsonc --env production --name jlproject` and recheck the live version, application, and API health.
