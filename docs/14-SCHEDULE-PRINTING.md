@@ -1,5 +1,7 @@
 # Schedule Printing Specification
 
+**Status:** Complete and accepted in Production. The final application release commit is `d6ab8c1`. See the [final Production acceptance](#final-production-acceptance) for the completed checklist.
+
 ## Goal
 
 Provide management-ready, read-only printing for individual product schedules and consolidated executive schedules. Users can print on paper or save as PDF through the native browser print dialog.
@@ -52,6 +54,7 @@ On 2026-11-24, the user confirmed that all supported print configuration feature
 
 - **Formal revision printing:** Offer only saved revisions that actually exist and read each immutable snapshot through an authorized path. Preserve R00 immutability; never reconstruct historical schedule values from the living schedule. This requires separate approval for any new read API, database access, or authorization change.
 - **Dependency printing:** Enable dependency lines only when the selected representation and revision have an existing authorized graph in frontend state. Keep the option disabled with a pt-BR explanation until that is available. Do not weaken authorization or add print-only access in this phase.
+- **Client bundle optimization:** Investigate splitting or reducing the main client chunk. The final Production build succeeded with Vite's advisory for a 668.47 kB minified chunk. Treat optimization as separate work.
 
 ## Acceptance
 
@@ -75,5 +78,23 @@ Manual Chrome acceptance passed for the filename improvement before Production r
 - GitHub `main` advanced from `56d7af0` to the approved printing commit `2fe6060b26e55c3c60b31b719e72e98c5c2ded92`. No database migration was run.
 - The Workers Builds API returned HTTP 403 for trigger inspection. After the push, GitHub showed no check runs, commit statuses, deployments, or repository webhooks, and the active Worker version was unchanged. Wrangler uploaded and promoted the candidate on the canonical `jlproject` Worker. Candidate binding and runtime metadata matched the previous version. Wrangler reported no non-versioned settings to sync.
 - Cloudflare deployment `ee4a20ef-9a47-4bad-9116-99aa3fbacf06` started at `2026-11-25T00:13:14Z` (November 24 in São Paulo). It serves version `1df25d57-b2cb-4d9a-b8d7-26bd67b240b2` at 100%, tagged `2fe6060`.
-- The canonical Production URL returned HTTP 200 for the application, JavaScript, CSS, and `/api/health`. The HTML declared `pt-BR` and referenced the expected assets. The live asset hashes matched the approved build, which includes the printing UI and the verified Production Auth URL. Anonymous `/api/auth/session` returned HTTP 401. Authenticated sign-in and native print preview await human Production smoke testing.
+- The canonical application, JavaScript, CSS, and `/api/health` returned HTTP 200. The HTML declared `pt-BR` and referenced the expected assets. The live asset hashes matched the approved build, which includes the printing UI and the verified Production Auth URL. Anonymous `/api/auth/session` returned HTTP 401.
 - Application rollback target is version `80cb6fc6-5ac7-49ae-8e4c-789084ca4b71` from prior deployment `16e10b4e-9bad-42a9-9907-26d1e2c88046`. The version was confirmed available before deployment. If rollback is authorized, run `npx wrangler rollback 80cb6fc6-5ac7-49ae-8e4c-789084ca4b71 --config wrangler.jsonc --env production --name jlproject` and recheck the live version, application, and API health.
+
+### Default PDF filename release
+
+- GitHub `main` advanced from `2fe6060` to `d6ab8c134860c1c9a35d61a400af12f8fa538153` after manual Chrome acceptance. All 61 focused regression tests passed, as did lint, typecheck, the Production build, and the Git diff check.
+- GitHub reported no build activity for the push and Production still served the initial printing release. Wrangler uploaded the verified candidate to the canonical `jlproject` Worker and promoted it after preview verification. The Worker JavaScript hash, binding metadata, and runtime metadata matched the initial release. No database migration ran.
+- Cloudflare deployment `9741d047-fa6e-40b0-b800-0e1caaba5fe0` started at `2026-11-25T00:43:14Z`. It serves version `384aec95-294c-418f-8743-872ec5a999d9` at 100%, tagged `d6ab8c1`.
+- The canonical application, JavaScript, CSS, and `/api/health` returned HTTP 200. The health payload reported `ok`, live JavaScript and CSS matched the release build, and anonymous `/api/auth/session` returned HTTP 401. The final human Production smoke test passed.
+- The immediate rollback target is the initial printing version `1df25d57-b2cb-4d9a-b8d7-26bd67b240b2` from deployment `ee4a20ef-9a47-4bad-9116-99aa3fbacf06`. Its availability was confirmed before promotion. If rollback is authorized, run `npx wrangler rollback 1df25d57-b2cb-4d9a-b8d7-26bd67b240b2 --config wrangler.jsonc --env production --name jlproject` and recheck the live version, application, and API health.
+
+### Final Production acceptance
+
+- [x] Phase 1 individual v0.3 and multi-product executive layouts accepted in Chrome.
+- [x] Phase 2 supported configuration options and final dialog appearance accepted in Chrome.
+- [x] Default PDF filenames accepted in Chrome before release.
+- [x] Final application release `d6ab8c1` deployed and verified on the canonical Worker.
+- [x] Final human Production smoke test passed, including individual and executive Save as PDF filenames.
+
+The external Cloudflare automatic deployment trigger remains unverified. The Workers Builds API returned HTTP 403, and neither application release push showed evidence of an automatic deployment. The two releases used the manual Wrangler procedure.

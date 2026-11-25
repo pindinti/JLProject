@@ -1,6 +1,6 @@
 # JLProject Schedule Printing Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Status:** Completed for the approved scope. The final Production smoke test passed on application release `d6ab8c1`, including both PDF filename conventions. See the [release history and deferred backlog](../../14-SCHEDULE-PRINTING.md).
 
 **Goal:** Deliver read-only browser printing for individual and consolidated schedules, then add configurable print options incrementally.
 

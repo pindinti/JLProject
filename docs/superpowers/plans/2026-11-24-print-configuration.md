@@ -1,6 +1,6 @@
 # Schedule Printing Phase 2 Implementation Plan
 
-**Status:** Implemented; all supported print configuration features passed manual functional and visual acceptance in Chrome on 2026-11-24. Formal revision and dependency printing are deferred backlog items. The approved Phase 1 individual v0.3 and executive Products PDFs remain visual regression baselines.
+**Status:** Completed for the approved scope and accepted in Production. All supported print configuration features passed manual functional and visual acceptance in Chrome on 2026-11-24. The approved Phase 1 individual v0.3 and executive Products PDFs remain visual regression baselines. See the [final acceptance checklist and deferred backlog](../../14-SCHEDULE-PRINTING.md).
 
 > **For agentic workers:** Use superpowers:executing-plans for native execution and one independent whole-branch review. Use the established Orca worktree and automatic agent/model routing. The user approved implementation with the narrower read boundary below.
 

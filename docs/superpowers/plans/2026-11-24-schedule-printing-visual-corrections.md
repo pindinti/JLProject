@@ -1,6 +1,6 @@
 # Phase 1 Schedule Printing Visual Corrections
 
-**Status:** Implemented and manually accepted in Chrome by the user. Individual v0.3 and the latest multi-product executive Products print are Phase 2 regression baselines.
+**Status:** Completed and accepted in Production. The approved individual v0.3 and multi-product executive Products prints remain the visual regression baselines. See the [final acceptance checklist](../../14-SCHEDULE-PRINTING.md#final-production-acceptance).
 
 **Specification:** [Schedule printing](../../14-SCHEDULE-PRINTING.md#phase-1-visual-correction)
 
